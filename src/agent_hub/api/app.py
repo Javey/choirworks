@@ -11,6 +11,7 @@ from agent_hub.a2a.reconcile import reconcile_once
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.api import agents as agents_routes
 from agent_hub.api import interventions as interventions_routes
+from agent_hub.api import rollback as rollback_routes
 from agent_hub.api import sse as sse_routes
 from agent_hub.api import tasks as tasks_routes
 from agent_hub.config import Settings
@@ -133,6 +134,7 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     app.include_router(agents_routes.router, prefix="/v1")
     app.include_router(sse_routes.router, prefix="/v1")
     app.include_router(interventions_routes.router, prefix="/v1")
+    app.include_router(rollback_routes.router, prefix="/v1")
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -169,6 +169,37 @@ class TaskService:
             created_at=datetime.now(UTC),
         )
 
+    async def retry_node(self, task_id: str, node_id: str) -> Node:
+        node = await projections.fetch_node(self._db, node_id)
+        if node is None or node.task_id != task_id:
+            raise TaskNotFound(f"node not found: {node_id}")
+        if node.status is not NodeStatus.FAILED:
+            raise ValueError(f"node {node_id} is {node.status.value}")
+        task = await projections.fetch_task(self._db, task_id)
+        if task is None:
+            raise TaskNotFound(task_id)
+        if task.status is TaskStatus.FAILED:
+            await self._events.append(
+                task_id,
+                EventType.TASK_STATE_CHANGED,
+                {
+                    "from": TaskStatus.FAILED.value,
+                    "to": TaskStatus.RUNNING.value,
+                },
+            )
+        await self._events.append(
+            task_id,
+            EventType.NODE_STATE_CHANGED,
+            {
+                "node_id": node_id,
+                "from": node.status.value,
+                "to": NodeStatus.READY.value,
+            },
+        )
+        refreshed = await projections.fetch_node(self._db, node_id)
+        assert refreshed is not None
+        return refreshed
+
     async def mark_running(self, task_id: str) -> OrchestrationTask:
         task = await projections.fetch_task(self._db, task_id)
         if task is None:

@@ -152,6 +152,32 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 ts,
             ),
         )
+    elif event_type is EventType.ROLLBACK_PERFORMED:
+        await conn.execute(
+            "UPDATE orchestration_tasks SET status = ?, plan_version = ?, updated_at = ?"
+            " WHERE id = ?",
+            (
+                TaskStatus.RUNNING.value,
+                payload["plan_version"],
+                ts,
+                event.task_id,
+            ),
+        )
+        for node_id in payload["reset_node_ids"]:
+            await conn.execute(
+                "UPDATE nodes SET status = 'pending', attempt = 0, output = NULL,"
+                " error = NULL, a2a_task_id = NULL, a2a_context_id = NULL,"
+                " started_at = NULL, ended_at = NULL WHERE id = ? AND task_id = ?",
+                (node_id, event.task_id),
+            )
+        await conn.execute(
+            "UPDATE interventions SET status = ? WHERE task_id = ? AND status = ?",
+            (
+                InterventionStatus.INVALIDATED.value,
+                event.task_id,
+                InterventionStatus.PENDING.value,
+            ),
+        )
     elif event_type is EventType.ERROR and payload.get("node_id"):
         await conn.execute(
             "UPDATE nodes SET error = ? WHERE id = ? AND task_id = ?",

@@ -166,3 +166,21 @@ async def test_human_intervention_endpoints(api_human):
         await asyncio.sleep(0.05)
     assert snapshot["task"]["status"] == "completed"
     assert snapshot["nodes"][0]["output"]["artifacts"][0]["text"] == "answered:Bob"
+
+
+async def test_cancel_task_endpoint(api_human):
+    client, _, agent_url = api_human
+    await client.post("/v1/agents", json={"name": "echo", "card_url": agent_url})
+    created = (await client.post("/v1/tasks", json={"request": "ask"})).json()
+    for _ in range(100):
+        snapshot = (await client.get(f"/v1/tasks/{created['task_id']}")).json()
+        if snapshot["task"]["status"] == "awaiting_input":
+            break
+        await asyncio.sleep(0.05)
+
+    resp = await client.post(f"/v1/tasks/{created['task_id']}/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["task"]["status"] == "canceled"
+
+    resp = await client.post(f"/v1/tasks/{created['task_id']}/cancel")
+    assert resp.status_code == 409

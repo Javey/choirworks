@@ -120,6 +120,23 @@ class Orchestrator:
         self._continuing.clear()
         self._timeout_tasks.clear()
 
+    async def stop_task(self, task_id: str) -> None:
+        run = self._runs.pop(task_id, None)
+        self._restart_requested.discard(task_id)
+        plan = await projections.fetch_current_plan(self._db, task_id)
+        if plan is not None:
+            for node in await projections.fetch_nodes(self._db, task_id, plan.id):
+                continuing = self._continuing.pop(node.id, None)
+                if continuing is not None:
+                    continuing.cancel()
+        for intervention in await projections.fetch_interventions(self._db, task_id):
+            timer = self._timeout_tasks.pop(intervention.id, None)
+            if timer is not None:
+                timer.cancel()
+        if run is not None:
+            run.cancel()
+            await asyncio.gather(run, return_exceptions=True)
+
     async def wait(
         self,
         task_id: str,

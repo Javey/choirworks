@@ -31,3 +31,8 @@ class RegisterAgentIn(BaseModel):
 class AnswerInterventionIn(BaseModel):
     text: str
     responder: str = "user"
+
+
+class RollbackIn(BaseModel):
+    checkpoint_id: str
+    mode: str = Field(default="restart", pattern="^(restart|dry_run)$")

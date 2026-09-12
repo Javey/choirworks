@@ -28,7 +28,7 @@ _TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.CANCELED,
     },
     TaskStatus.COMPLETED: set(),
-    TaskStatus.FAILED: set(),
+    TaskStatus.FAILED: {TaskStatus.RUNNING},
     TaskStatus.CANCELED: set(),
 }
 
