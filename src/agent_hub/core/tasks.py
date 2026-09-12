@@ -7,6 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agent_hub.a2a.registry import AgentRegistry
+from agent_hub.core.planner import PlanDraft, draft_to_dag
 from agent_hub.models.domain import Node, OrchestrationTask, Plan
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
 from agent_hub.store import projections
@@ -94,6 +95,63 @@ class TaskService:
         )
         return CreatedTask(task_id=task_id, plan_id=plan_id, node_ids=[node_id])
 
+    async def create_pending_task(self, request: str) -> str:
+        task_id = uuid4().hex
+        await self._events.append(
+            task_id, EventType.TASK_CREATED, {"request": request, "policy": None}
+        )
+        return task_id
+
+    async def create_plan_from_draft(
+        self, task_id: str, draft: PlanDraft, *, version: int
+    ) -> CreatedTask:
+        records = await self._registry.list()
+        agent_urls = {
+            record.name: self._registry.agent_url(record) for record in records
+        }
+        plan_id = uuid4().hex
+        dag = draft_to_dag(draft, agent_urls)
+        if version > 1:
+            previous = await projections.fetch_current_plan(self._db, task_id)
+            await self._events.append(
+                task_id,
+                EventType.PLAN_SUPERSEDED,
+                {
+                    "plan_id": previous.id if previous else None,
+                    "superseded_by_version": version,
+                },
+            )
+        await self._events.append(
+            task_id,
+            EventType.PLAN_CREATED,
+            {
+                "plan_id": plan_id,
+                "version": version,
+                "rationale": draft.rationale,
+                "dag": dag,
+            },
+        )
+        return CreatedTask(
+            task_id=task_id,
+            plan_id=plan_id,
+            node_ids=[f"{plan_id}:{node.id}" for node in draft.nodes],
+        )
+
+    async def mark_running(self, task_id: str) -> OrchestrationTask:
+        task = await projections.fetch_task(self._db, task_id)
+        if task is None:
+            raise TaskNotFound(task_id)
+        if task.status is TaskStatus.PLANNING:
+            await self._events.append(
+                task_id,
+                EventType.TASK_STATE_CHANGED,
+                {"from": TaskStatus.PLANNING.value, "to": TaskStatus.RUNNING.value},
+            )
+            refreshed = await projections.fetch_task(self._db, task_id)
+            assert refreshed is not None
+            return refreshed
+        return task
+
     async def get_snapshot(self, task_id: str) -> TaskSnapshot:
         task = await projections.fetch_task(self._db, task_id)
         if task is None:
@@ -103,7 +161,6 @@ class TaskService:
             self._db, task_id, plan.id if plan else None
         )
         return TaskSnapshot(task=task, plan=plan, nodes=nodes)
-
     async def finalize_if_complete(self, task_id: str) -> OrchestrationTask:
         task = await projections.fetch_task(self._db, task_id)
         if task is None:
