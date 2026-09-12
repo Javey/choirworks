@@ -33,10 +33,12 @@ class ScriptedExecutor(AgentExecutor):
 
     def __init__(self, behavior: str = "echo"):
         self._behavior = behavior
+        self._calls = 0
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         text = get_message_text(context.message) if context.message else ""
         if context.current_task is None:
+            self._calls += 1
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
             updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -46,11 +48,15 @@ class ScriptedExecutor(AgentExecutor):
                     updater.new_agent_message(parts=[Part(text="who are you?")])
                 )
                 return
-            if self._behavior == "fail":
+            if self._behavior == "fail" or (
+                self._behavior == "fail_once" and self._calls == 1
+            ):
                 await updater.failed(updater.new_agent_message(parts=[Part(text="boom")]))
                 return
             if self._behavior == "slow":
                 await asyncio.sleep(5)
+            if self._behavior == "delay":
+                await asyncio.sleep(0.4)
             await updater.add_artifact(
                 parts=[Part(text=f"echo:{text}")], name="response", last_chunk=True
             )
@@ -83,6 +89,12 @@ class FakeAgent:
         self.server.should_exit = True
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.task, timeout=5)
+        # sse-starlette 的 AppStatus.should_exit 是进程级全局变量，watcher 通过
+        # SIGTERM handler 反射 uvicorn Server；测试进程内多个 server 顺序启停时
+        # 旧 server 的退出会污染该标志，导致后续 SSE 流被提前终止。这里重置。
+        from sse_starlette.sse import AppStatus
+
+        AppStatus.should_exit = False
 
 
 def _free_port() -> int:
