@@ -109,3 +109,60 @@ async def test_planner_path_runs_to_completion(api_auto):
     assert snapshot is not None
     assert snapshot["task"]["status"] == "completed"
     assert snapshot["nodes"][0]["output"]["artifacts"][0]["text"] == "echo:hi"
+
+
+@pytest.fixture
+async def api_human(tmp_path, ask_agent):
+    plan = PlanDraft(
+        rationale="ask",
+        nodes=[
+            PlanNodeDraft(id="n1", name="n1", agent_name="echo", input={"text": "ask"})
+        ],
+    )
+    llm = FakeLLM(structured_results=[plan])
+    settings = Settings(
+        store={"db_path": tmp_path / "human.db"},
+        scheduler={"retry_backoff_seconds": 0.0},
+        policies={"default": "human", "timeout_seconds": 30},
+    )
+    app = create_app(settings, llm=llm)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            yield client, app, ask_agent.url
+
+
+async def test_human_intervention_endpoints(api_human):
+    client, _, agent_url = api_human
+    await client.post("/v1/agents", json={"name": "echo", "card_url": agent_url})
+    created = (await client.post("/v1/tasks", json={"request": "ask"})).json()
+
+    items = []
+    for _ in range(100):
+        resp = await client.get(
+            f"/v1/tasks/{created['task_id']}/interventions?status=pending"
+        )
+        items = resp.json()
+        if items:
+            break
+        await asyncio.sleep(0.05)
+    assert items
+    intervention_id = items[0]["id"]
+
+    resp = await client.post(
+        f"/v1/tasks/{created['task_id']}/interventions/{intervention_id}",
+        json={"text": "Bob"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "resolved"
+
+    snapshot = None
+    for _ in range(200):
+        snapshot = (await client.get(f"/v1/tasks/{created['task_id']}")).json()
+        if snapshot["task"]["status"] == "completed":
+            break
+        await asyncio.sleep(0.05)
+    assert snapshot["task"]["status"] == "completed"
+    assert snapshot["nodes"][0]["output"]["artifacts"][0]["text"] == "answered:Bob"

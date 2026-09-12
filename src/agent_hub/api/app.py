@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from agent_hub.a2a.client import RemoteAgentClient
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.api import agents as agents_routes
+from agent_hub.api import interventions as interventions_routes
 from agent_hub.api import sse as sse_routes
 from agent_hub.api import tasks as tasks_routes
 from agent_hub.config import Settings
@@ -15,6 +16,7 @@ from agent_hub.core.events import EventBus
 from agent_hub.core.llm import LiteLLMClient, LLMClient
 from agent_hub.core.orchestrator import Orchestrator
 from agent_hub.core.planner import Planner
+from agent_hub.core.policy import PolicyEngine
 from agent_hub.core.tasks import TaskService
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
@@ -54,6 +56,10 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
             planner,
             dispatcher,
             task_service,
+            registry=registry,
+            remote=remote,
+            llm=llm_client,
+            policy_engine=PolicyEngine(resolved.policies),
             max_parallel=resolved.scheduler.max_parallel_nodes,
             max_node_attempts=resolved.scheduler.max_node_attempts,
             retry_backoff_seconds=resolved.scheduler.retry_backoff_seconds,
@@ -81,6 +87,7 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     app.include_router(tasks_routes.router, prefix="/v1")
     app.include_router(agents_routes.router, prefix="/v1")
     app.include_router(sse_routes.router, prefix="/v1")
+    app.include_router(interventions_routes.router, prefix="/v1")
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

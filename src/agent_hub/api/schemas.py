@@ -26,3 +26,8 @@ class CreateTaskOut(BaseModel):
 class RegisterAgentIn(BaseModel):
     name: str
     card_url: str = Field(..., description="A2A agent base URL")
+
+
+class AnswerInterventionIn(BaseModel):
+    text: str
+    responder: str = "user"

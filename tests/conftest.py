@@ -17,3 +17,10 @@ async def echo_agent() -> FakeAgent:
     agent = await start_fake_agent("echo")
     yield agent
     await agent.stop()
+
+
+@pytest.fixture
+async def ask_agent() -> FakeAgent:
+    agent = await start_fake_agent("ask")
+    yield agent
+    await agent.stop()
