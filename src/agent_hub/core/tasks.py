@@ -47,6 +47,7 @@ class TaskSnapshot(BaseModel):
     task: OrchestrationTask
     plan: Plan | None
     nodes: list[Node]
+    last_seq: int = 0
 
 
 class TaskService:
@@ -267,7 +268,12 @@ class TaskService:
         nodes = await projections.fetch_nodes(
             self._db, task_id, plan.id if plan else None
         )
-        return TaskSnapshot(task=task, plan=plan, nodes=nodes)
+        return TaskSnapshot(
+            task=task,
+            plan=plan,
+            nodes=nodes,
+            last_seq=await self._events.latest_seq(task_id),
+        )
     async def finalize_if_complete(self, task_id: str) -> OrchestrationTask:
         task = await projections.fetch_task(self._db, task_id)
         if task is None:

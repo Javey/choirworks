@@ -4,7 +4,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from agent_hub.a2a.client import RemoteAgentClient
 from agent_hub.a2a.reconcile import reconcile_once
@@ -141,5 +142,14 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    frontend_dir = resolved.server.frontend_dir
+    if (frontend_dir / "index.html").exists():
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+    else:
+
+        @app.get("/")
+        async def root() -> dict[str, str]:
+            raise HTTPException(status_code=404, detail="frontend not built")
 
     return app

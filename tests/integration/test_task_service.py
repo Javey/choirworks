@@ -108,3 +108,17 @@ async def test_replan_emits_superseded_and_bumps_version(tmp_path, echo_agent):
         assert EventType.PLAN_SUPERSEDED in [event.type for event in events]
     finally:
         await db.close()
+
+
+async def test_snapshot_last_seq(tmp_path, echo_agent):
+    db, service = await make_service(tmp_path, echo_agent)
+    try:
+        pending = await service.create_pending_task("x")
+        assert (await service.get_snapshot(pending)).last_seq == 1
+
+        created = await service.create_task("y", TargetSpec(agent_name="echo"))
+        snapshot = await service.get_snapshot(created.task_id)
+        events = await EventStore(db).replay(created.task_id)
+        assert snapshot.last_seq == max(event.seq for event in events)
+    finally:
+        await db.close()

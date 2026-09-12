@@ -184,3 +184,35 @@ async def test_cancel_task_endpoint(api_human):
 
     resp = await client.post(f"/v1/tasks/{created['task_id']}/cancel")
     assert resp.status_code == 409
+
+
+async def test_root_serves_frontend_when_built(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>agent hub ui</html>", encoding="utf-8")
+    settings = Settings(
+        store={"db_path": tmp_path / "static.db"},
+        server={"frontend_dir": dist},
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/")
+            assert resp.status_code == 200
+            assert "agent hub ui" in resp.text
+            assert (await client.get("/healthz")).json() == {"status": "ok"}
+
+
+async def test_root_404_when_frontend_not_built(tmp_path):
+    settings = Settings(
+        store={"db_path": tmp_path / "nostatic.db"},
+        server={"frontend_dir": tmp_path / "missing"},
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/")
+            assert resp.status_code == 404
+            assert resp.json()["detail"] == "frontend not built"
