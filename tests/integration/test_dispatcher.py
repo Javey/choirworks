@@ -5,9 +5,9 @@ from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
 from agent_hub.core.tasks import TargetSpec, TaskService
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
+from agent_hub.sim.fake_agent import start_fake_agent
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
-from tests.fake_agents.echo_agent import start_fake_agent
 
 
 async def setup(tmp_path, agent):

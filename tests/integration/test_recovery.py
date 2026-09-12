@@ -10,10 +10,10 @@ from agent_hub.core.planner import Planner
 from agent_hub.core.recovery import recover_tasks
 from agent_hub.core.tasks import TargetSpec, TaskService
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
+from agent_hub.sim.fake_agent import start_fake_agent
 from agent_hub.store import projections
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
-from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
 

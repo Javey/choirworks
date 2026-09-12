@@ -1,6 +1,6 @@
 import pytest
 
-from tests.fake_agents.echo_agent import FakeAgent, start_fake_agent
+from agent_hub.sim.fake_agent import FakeAgent, start_fake_agent
 
 
 @pytest.fixture(autouse=True)

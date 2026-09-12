@@ -7,9 +7,9 @@ from agent_hub.core.orchestrator import Orchestrator
 from agent_hub.core.planner import PlanDraft, Planner, PlanNodeDraft
 from agent_hub.core.tasks import TaskService
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
+from agent_hub.sim.fake_agent import start_fake_agent
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
-from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
 

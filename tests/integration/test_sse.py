@@ -8,7 +8,7 @@ import uvicorn
 
 from agent_hub.api.app import create_app
 from agent_hub.config import Settings
-from tests.support.ports import free_port
+from agent_hub.sim.ports import free_port
 
 
 @pytest.fixture

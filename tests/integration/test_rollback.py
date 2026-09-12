@@ -8,10 +8,10 @@ from agent_hub.core.planner import PlanDraft, Planner, PlanNodeDraft
 from agent_hub.core.rollback import perform_rollback, plan_rollback
 from agent_hub.core.tasks import TargetSpec, TaskService
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
+from agent_hub.sim.fake_agent import start_fake_agent
 from agent_hub.store import projections
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
-from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
 
@@ -97,7 +97,7 @@ async def test_rollback_dry_run_and_restart(tmp_path):
 
 
 async def test_retry_failed_node_then_success(tmp_path):
-    from tests.fake_agents.echo_agent import start_fake_agent as start
+    from agent_hub.sim.fake_agent import start_fake_agent as start
 
     flaky = await start("fail_once")
     db, remote, events, tasks, dispatcher, orchestrator = await setup_env(

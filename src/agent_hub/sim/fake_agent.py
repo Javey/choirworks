@@ -20,21 +20,46 @@ from a2a.types import (
 )
 from starlette.applications import Starlette
 
-from tests.support.ports import free_port
+from agent_hub.sim.ports import free_port
+
+LEGACY_BEHAVIORS = {"echo", "ask", "fail", "fail_once", "slow", "delay"}
 
 
 class ScriptedExecutor(AgentExecutor):
-    """可控行为的假 agent：
+    """可控行为的假 agent。
 
+    测试行为（保持兼容）：
     - echo: 添加 artifact "echo:{text}" 后完成
     - ask:  先进入 input-required，收到后续消息后完成
     - fail: 直接失败
+    - fail_once: 首次失败，之后成功
     - slow: 等待 5 秒后完成（用于超时测试）
+    - delay: 等待 0.4 秒后完成
+
+    模拟演示行为：
+    - research: 等待 1.2 秒，返回「调研结果…」
+    - write:    返回「文稿…」
+    - review:   进入 input-required「请确认是否采用？」；收到答复后「已定稿」
+    - flaky_once:   首次失败，之后成功（自动重试演示）
+    - flaky_always: 始终失败（触发重规划演示）
     """
 
-    def __init__(self, behavior: str = "echo"):
+    def __init__(self, behavior: str = "echo", name: str = ""):
         self._behavior = behavior
+        self._name = name
         self._calls = 0
+
+    def _question_text(self) -> str:
+        if self._behavior == "review":
+            return "请确认是否采用该方案？"
+        return "who are you?"
+
+    def _success_text(self, text: str) -> str:
+        if self._behavior == "research":
+            return f"调研结果（{self._name or 'researcher'}）：关于「{text}」的模拟要点。"
+        if self._behavior == "write":
+            return f"文稿（{self._name or 'writer'}）：基于「{text}」生成的模拟报告。"
+        return f"echo:{text}"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         text = get_message_text(context.message) if context.message else ""
@@ -44,29 +69,37 @@ class ScriptedExecutor(AgentExecutor):
             await event_queue.enqueue_event(task)
             updater = TaskUpdater(event_queue, task.id, task.context_id)
             await updater.start_work()
-            if self._behavior == "ask":
+            if self._behavior in ("ask", "review"):
                 await updater.requires_input(
-                    updater.new_agent_message(parts=[Part(text="who are you?")])
+                    updater.new_agent_message(parts=[Part(text=self._question_text())])
                 )
                 return
-            if self._behavior == "fail" or (
-                self._behavior == "fail_once" and self._calls == 1
+            if self._behavior in ("fail", "flaky_always") or (
+                self._behavior in ("fail_once", "flaky_once") and self._calls == 1
             ):
                 await updater.failed(updater.new_agent_message(parts=[Part(text="boom")]))
                 return
             if self._behavior == "slow":
                 await asyncio.sleep(5)
+            if self._behavior == "research":
+                await asyncio.sleep(1.2)
             if self._behavior == "delay":
                 await asyncio.sleep(0.4)
             await updater.add_artifact(
-                parts=[Part(text=f"echo:{text}")], name="response", last_chunk=True
+                parts=[Part(text=self._success_text(text))],
+                name="response",
+                last_chunk=True,
             )
             await updater.complete()
         else:
             task = context.current_task
             updater = TaskUpdater(event_queue, task.id, task.context_id)
+            if self._behavior == "review":
+                answer = f"已按你的意见定稿：{text}"
+            else:
+                answer = f"answered:{text}"
             await updater.add_artifact(
-                parts=[Part(text=f"answered:{text}")],
+                parts=[Part(text=answer)],
                 name="response",
                 last_chunk=True,
             )
@@ -98,10 +131,11 @@ class FakeAgent:
         AppStatus.should_exit = False
 
 
-def _make_card(behavior: str, url: str) -> AgentCard:
+def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
+    card_name = name or f"fake-{behavior}"
     return AgentCard(
-        name=f"fake-{behavior}",
-        description=f"scripted test agent ({behavior})",
+        name=card_name,
+        description=f"simulated A2A agent ({behavior})",
         version="1.0.0",
         capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text/plain"],
@@ -110,8 +144,8 @@ def _make_card(behavior: str, url: str) -> AgentCard:
             AgentSkill(
                 id="echo",
                 name="echo",
-                description="echoes input",
-                tags=["test"],
+                description="模拟回复",
+                tags=["simulation"],
             )
         ],
         supported_interfaces=[
@@ -120,12 +154,12 @@ def _make_card(behavior: str, url: str) -> AgentCard:
     )
 
 
-async def start_fake_agent(behavior: str = "echo") -> FakeAgent:
+async def start_fake_agent(behavior: str = "echo", name: str = "") -> FakeAgent:
     port = free_port()
     url = f"http://127.0.0.1:{port}"
-    card = _make_card(behavior, url)
+    card = _make_card(behavior, url, name)
     handler = DefaultRequestHandler(
-        agent_executor=ScriptedExecutor(behavior),
+        agent_executor=ScriptedExecutor(behavior, name),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
