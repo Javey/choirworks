@@ -1974,3 +1974,15 @@ git commit -m "docs: M2/M3 README 更新"
 - [ ] `input-required` 节点使任务进入 `awaiting_input` 并停车（有测试）。
 - [ ] SSE 支持历史回放、实时推送、`Last-Event-ID`/`after_seq` 续传；慢消费者被断开且不影响其他订阅者（单元测试）。
 - [ ] `uv run pytest` 与 `uv run ruff check .` 全绿。
+
+---
+
+## 执行勘误（2026-09-12）
+
+执行期间发现并修正的偏差，实际代码以此为准：
+
+1. **SSE 集成测试必须用真实 uvicorn**：httpx `ASGITransport` 会缓冲完整响应体，无法读取无限 SSE 流；`tests/integration/test_sse.py` 改为在测试内启动 uvicorn（`free_port()` 辅助），平台其余 API 测试仍用 ASGITransport。
+2. **sse-starlette 全局状态污染**：`AppStatus.should_exit` 是进程级类变量，其 watcher 通过 SIGTERM handler 反射 uvicorn Server；测试内顺序启停多个假 agent 时旧 server 退出会置位该全局，导致后续 SSE 流被提前终止。修复：`FakeAgent.stop()` 与 `tests/conftest.py` 的 autouse fixture 中重置 `AppStatus.should_exit = False`。
+3. **EventBus 实现顺序**：先写 `tests/unit/test_events.py`（红）再实现 `core/events.py`，随后 Task 7 接线。
+4. **ruff ASYNC109**：`Orchestrator.wait` 与 SSE 测试辅助函数的 `timeout` 参数更名为 `timeout_seconds`。
+5. **`read_until_completed` 闭包 bug**：`current` 字典移入内层函数，避免 UnboundLocalError。
