@@ -6,7 +6,15 @@ from typing import Any
 
 import aiosqlite
 
-from agent_hub.models.domain import Checkpoint, Intervention, Node, OrchestrationTask, Plan
+from agent_hub.models.domain import (
+    Checkpoint,
+    Conversation,
+    ConversationSummary,
+    Intervention,
+    Node,
+    OrchestrationTask,
+    Plan,
+)
 from agent_hub.models.enums import (
     TERMINAL_NODE_STATUSES,
     EventType,
@@ -22,16 +30,29 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
     event_type = event.type
 
     if event_type is EventType.TASK_CREATED:
+        conversation_id = payload.get("conversation_id")
+        if conversation_id:
+            await conn.execute(
+                "INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(id) DO NOTHING",
+                (
+                    conversation_id,
+                    payload.get("conversation_title") or payload["request"][:60],
+                    ts,
+                ),
+            )
         await conn.execute(
             "INSERT INTO orchestration_tasks"
-            " (id, status, request, policy, plan_version, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (id, status, request, policy, plan_version, conversation_id, created_at,"
+            "  updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event.task_id,
                 TaskStatus.PLANNING.value,
                 payload["request"],
                 json.dumps(payload.get("policy"), ensure_ascii=False),
                 None,
+                conversation_id,
                 ts,
                 ts,
             ),
@@ -221,7 +242,14 @@ async def rebuild(db: Any) -> None:
 
     store = EventStore(db)
     async with db.transaction() as conn:
-        for table in ("nodes", "plans", "orchestration_tasks", "interventions", "checkpoints"):
+        for table in (
+            "conversations",
+            "nodes",
+            "plans",
+            "orchestration_tasks",
+            "interventions",
+            "checkpoints",
+        ):
             await conn.execute(f"DELETE FROM {table}")
     events = await store.replay_all()
     for event in events:
@@ -240,8 +268,28 @@ def _row_to_task(row: aiosqlite.Row) -> OrchestrationTask:
         request=row["request"],
         policy=json.loads(row["policy"]) if row["policy"] else None,
         plan_version=row["plan_version"],
+        conversation_id=row["conversation_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def _row_to_conversation(row: aiosqlite.Row) -> Conversation:
+    return Conversation(
+        id=row["id"],
+        title=row["title"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_conversation_summary(row: aiosqlite.Row) -> ConversationSummary:
+    return ConversationSummary(
+        id=row["id"],
+        title=row["title"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        task_count=row["task_count"],
+        last_status=TaskStatus(row["last_status"] or TaskStatus.PENDING.value),
     )
 
 
@@ -307,6 +355,39 @@ def _row_to_intervention(row: aiosqlite.Row) -> Intervention:
         created_at=datetime.fromisoformat(row["created_at"]),
         resolved_at=_parse_dt(row["resolved_at"]),
     )
+
+
+async def fetch_conversation(db: Any, conversation_id: str) -> Conversation | None:
+    cursor = await db.conn.execute(
+        "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+    )
+    row = await cursor.fetchone()
+    return _row_to_conversation(row) if row else None
+
+
+async def fetch_conversation_summaries(db: Any) -> list[ConversationSummary]:
+    cursor = await db.conn.execute(
+        "SELECT c.id, c.title, c.created_at,"
+        "       COALESCE(MAX(t.updated_at), c.created_at) AS updated_at,"
+        "       COUNT(t.id) AS task_count,"
+        "       (SELECT status FROM orchestration_tasks"
+        "         WHERE conversation_id = c.id"
+        "         ORDER BY created_at DESC, id DESC LIMIT 1) AS last_status"
+        " FROM conversations c"
+        " LEFT JOIN orchestration_tasks t ON t.conversation_id = c.id"
+        " GROUP BY c.id, c.title, c.created_at"
+        " ORDER BY updated_at DESC, c.created_at DESC"
+    )
+    return [_row_to_conversation_summary(row) for row in await cursor.fetchall()]
+
+
+async def fetch_task_ids_for_conversation(db: Any, conversation_id: str) -> list[str]:
+    cursor = await db.conn.execute(
+        "SELECT id FROM orchestration_tasks WHERE conversation_id = ?"
+        " ORDER BY created_at, id",
+        (conversation_id,),
+    )
+    return [row["id"] for row in await cursor.fetchall()]
 
 
 async def fetch_task(db: Any, task_id: str) -> OrchestrationTask | None:

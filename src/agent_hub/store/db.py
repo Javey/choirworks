@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq);
 
+CREATE TABLE IF NOT EXISTS conversations (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS orchestration_tasks (
   id           TEXT PRIMARY KEY,
   status       TEXT NOT NULL,
@@ -128,6 +134,16 @@ class Database:
         ):
             if name not in columns:
                 await conn.execute(ddl)
+        cursor = await conn.execute("PRAGMA table_info(orchestration_tasks)")
+        task_columns = {row["name"] for row in await cursor.fetchall()}
+        if "conversation_id" not in task_columns:
+            await conn.execute(
+                "ALTER TABLE orchestration_tasks ADD COLUMN conversation_id TEXT"
+            )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_conversation"
+            " ON orchestration_tasks(conversation_id)"
+        )
         await conn.commit()
 
     async def close(self) -> None:

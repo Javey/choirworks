@@ -14,8 +14,24 @@ class OrchestrationTask(BaseModel):
     request: str
     policy: dict[str, Any] | None = None
     plan_version: int | None = None
+    conversation_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class Conversation(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    task_count: int
+    last_status: TaskStatus
 
 
 class Plan(BaseModel):
