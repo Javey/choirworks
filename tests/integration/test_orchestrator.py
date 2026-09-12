@@ -223,3 +223,33 @@ async def test_checkpoints_created_as_nodes_complete(tmp_path):
         await remote.close()
         await db.close()
         await agent.stop()
+
+
+async def test_initial_plan_receives_conversation_context(tmp_path):
+    agent = await start_fake_agent("echo")
+    db, remote, events, tasks, orchestrator, llm = await setup(
+        tmp_path,
+        [draft(n("n1", text="hi")), draft(n("n1", text="again"))],
+        {"good": agent},
+    )
+    try:
+        first = await tasks.create_pending_task("第一问")
+        orchestrator.start(first)
+        await asyncio.wait_for(orchestrator.wait(first, until_terminal=True), 10.0)
+        conversation_id = (await tasks.get_snapshot(first)).task.conversation_id
+        assert conversation_id
+
+        second = await tasks.create_pending_task("追问", conversation_id=conversation_id)
+        orchestrator.start(second)
+        await asyncio.wait_for(orchestrator.wait(second, until_terminal=True), 10.0)
+
+        first_prompt = llm.structured_calls[0]["user"]
+        second_prompt = llm.structured_calls[1]["user"]
+        assert "Completed work so far" not in first_prompt
+        assert "User: 第一问" in second_prompt
+        assert "Result: echo:hi" in second_prompt
+    finally:
+        await orchestrator.stop()
+        await remote.close()
+        await db.close()
+        await agent.stop()

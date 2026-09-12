@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from agent_hub.a2a.client import RemoteAgentClient
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.config import PolicyConfig
+from agent_hub.core.conversations import build_conversation_context
 from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
 from agent_hub.core.llm import LLMClient
 from agent_hub.core.planner import Planner
@@ -252,7 +253,12 @@ class Orchestrator:
 
     async def _initial_plan(self, task: OrchestrationTask) -> None:
         try:
-            drafted = await self._planner.plan(task.request)
+            context = None
+            if task.conversation_id:
+                context = await build_conversation_context(
+                    self._db, task.conversation_id, task.id
+                )
+            drafted = await self._planner.plan(task.request, context=context)
             await self._task_service.create_plan_from_draft(task.id, drafted, version=1)
             await self._task_service.mark_running(task.id)
         except Exception as exc:  # noqa: BLE001 - 规划失败统一标记任务失败
