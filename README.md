@@ -3,7 +3,7 @@
 A2A 多 Agent 编排平台（MVP）。平台不执行业务动作，负责理解需求、拆分任务 DAG、
 调度 A2A subagent，并支持暂停协助、断点恢复与平台侧回退。
 
-当前进度：**M1 骨架 + M2 规划调度 + M3 SSE**（HITL、断点恢复、回退见后续计划）。
+当前进度：**M1 骨架 + M2 规划调度 + M3 SSE + M4 HITL**（断点恢复、回退见后续计划）。
 
 ## 开发环境
 
@@ -47,6 +47,11 @@ curl localhost:8080/v1/tasks/<task_id>
 
 # SSE 事件流；断线重连携带 Last-Event-ID 头或 ?after_seq= 自动回放缺失事件
 curl -N localhost:8080/v1/tasks/<task_id>/events
+
+# 人工介入：subagent input-required 时按策略（auto_llm/peer_agent/human）处置
+curl "localhost:8080/v1/tasks/<task_id>/interventions?status=pending"
+curl -X POST localhost:8080/v1/tasks/<task_id>/interventions/<intervention_id> \
+  -H 'content-type: application/json' -d '{"text":"在这里回答"}'
 ```
 
 ## 设计文档与计划
@@ -54,3 +59,4 @@ curl -N localhost:8080/v1/tasks/<task_id>/events
 - 设计：`docs/superpowers/specs/2026-09-12-a2a-orchestration-platform-design.md`
 - Plan 1（M1）：`docs/superpowers/plans/2026-09-12-a2a-platform-m1-skeleton.md`
 - Plan 2（M2+M3）：`docs/superpowers/plans/2026-09-12-a2a-platform-m2-m3-planner-scheduler-sse.md`
+- Plan 3（M4）：`docs/superpowers/plans/2026-09-12-a2a-platform-m4-hitl.md`

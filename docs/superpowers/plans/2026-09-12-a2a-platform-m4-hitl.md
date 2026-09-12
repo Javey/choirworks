@@ -865,3 +865,14 @@ git commit -m "docs: M4 HITL README 更新"
 - [ ] 超时 `on_timeout=auto` 降级完成；`fail` 标记失败；`escalate` 重发提醒（auto 有集成测试）。
 - [ ] 干预全流程事件化（requested/resolved）且可查询。
 - [ ] 全量测试与 ruff 全绿。
+
+---
+
+## 执行勘误（2026-09-12）
+
+1. **escalate 语义简化**：超时 `escalate` 不重发 `intervention.requested`（避免重复插入），改为追加 `error` 审计提醒并重新计时。
+2. **Orchestrator 依赖注入**：新增 `registry/remote/llm/policy_engine` 参数；测试与 `create_app` 均显式传入。
+3. **`wait` 增加 `until_terminal` 参数**：人工答复后需等待任务离开 `awaiting_input` 并到终态。
+4. **`start()` 补启动机制**：旧 run 尚未退出时的 `start()` 会记入 `_restart_requested`，当前 run 结束后自动再启动，避免答复后调度停摆。
+5. **重试竞态修复**（dispatcher）：重试派发时节点残留的 `a2a_task_id` 曾导致 `node.dispatched` 被跳过、首包状态映射非法；现在除 `continue_node` 外总是宣告 `node.dispatched` 并覆盖远程任务标识。
+6. **规划前需求澄清**（spec 触发源 3）未实现，延后到后续计划；当前覆盖 `input-required` 与 `requires_approval` 两个触发源。
