@@ -1,0 +1,11 @@
+server:
+  host: 127.0.0.1
+  port: 8080
+
+scheduler:
+  max_parallel_nodes: 5
+  node_timeout_seconds: 600
+  max_node_attempts: 2
+
+store:
+  db_path: ./data/agent_hub.db
