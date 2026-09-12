@@ -33,12 +33,14 @@ class Node(BaseModel):
     plan_id: str
     name: str
     agent_url: str | None = None
+    agent_name: str | None = None
     skill_id: str | None = None
     deps: list[str] = Field(default_factory=list)
     input: dict[str, Any] | None = None
     status: NodeStatus = NodeStatus.PENDING
     attempt: int = 0
     requires_approval: bool = False
+    policy_override: str | None = None
     a2a_task_id: str | None = None
     a2a_context_id: str | None = None
     output: dict[str, Any] | None = None

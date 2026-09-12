@@ -85,6 +85,7 @@ def draft_to_dag(draft: PlanDraft, agent_urls: dict[str, str]) -> dict[str, Any]
                 "id": node.id,
                 "name": node.name,
                 "agent_url": agent_urls[node.agent_name],
+                "agent_name": node.agent_name,
                 "skill_id": node.skill_id,
                 "deps": node.deps,
                 "input": node.input,

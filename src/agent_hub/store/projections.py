@@ -6,10 +6,11 @@ from typing import Any
 
 import aiosqlite
 
-from agent_hub.models.domain import Node, OrchestrationTask, Plan
+from agent_hub.models.domain import Intervention, Node, OrchestrationTask, Plan
 from agent_hub.models.enums import (
     TERMINAL_NODE_STATUSES,
     EventType,
+    InterventionStatus,
     NodeStatus,
     TaskStatus,
 )
@@ -105,6 +106,37 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 event.task_id,
             ),
         )
+    elif event_type is EventType.INTERVENTION_REQUESTED:
+        await conn.execute(
+            "INSERT INTO interventions"
+            " (id, task_id, node_id, source, policy, question, responder, status,"
+            "  deadline_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                payload["intervention_id"],
+                event.task_id,
+                payload.get("node_id"),
+                payload["source"],
+                payload["policy"],
+                json.dumps(payload.get("question"), ensure_ascii=False),
+                payload.get("responder"),
+                InterventionStatus.PENDING.value,
+                payload.get("deadline_at"),
+                ts,
+            ),
+        )
+    elif event_type is EventType.INTERVENTION_RESOLVED:
+        await conn.execute(
+            "UPDATE interventions SET status = ?, answer = ?, responder = ?,"
+            " resolved_at = ? WHERE id = ?",
+            (
+                InterventionStatus.RESOLVED.value,
+                json.dumps(payload.get("answer"), ensure_ascii=False),
+                payload.get("responder"),
+                ts,
+                payload["intervention_id"],
+            ),
+        )
     elif event_type is EventType.ERROR and payload.get("node_id"):
         await conn.execute(
             "UPDATE nodes SET error = ? WHERE id = ? AND task_id = ?",
@@ -123,20 +155,22 @@ async def _materialize_nodes(
         deps = [f"{plan_id}:{dep}" for dep in node.get("deps", [])]
         await conn.execute(
             "INSERT INTO nodes"
-            " (id, task_id, plan_id, name, agent_url, skill_id, deps, input,"
-            "  status, attempt, requires_approval)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            " (id, task_id, plan_id, name, agent_url, agent_name, skill_id, deps, input,"
+            "  status, attempt, requires_approval, policy_override)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
             (
                 node_id,
                 task_id,
                 plan_id,
                 node["name"],
                 node.get("agent_url"),
+                node.get("agent_name"),
                 node.get("skill_id"),
                 json.dumps(deps),
                 json.dumps(node.get("input"), ensure_ascii=False),
                 NodeStatus.PENDING.value,
                 1 if node.get("requires_approval") else 0,
+                node.get("policy_override"),
             ),
         )
 
@@ -188,18 +222,37 @@ def _row_to_node(row: aiosqlite.Row) -> Node:
         plan_id=row["plan_id"],
         name=row["name"],
         agent_url=row["agent_url"],
+        agent_name=row["agent_name"],
         skill_id=row["skill_id"],
         deps=json.loads(row["deps"]),
         input=json.loads(row["input"]) if row["input"] else None,
         status=NodeStatus(row["status"]),
         attempt=row["attempt"],
         requires_approval=bool(row["requires_approval"]),
+        policy_override=row["policy_override"],
         a2a_task_id=row["a2a_task_id"],
         a2a_context_id=row["a2a_context_id"],
         output=json.loads(row["output"]) if row["output"] else None,
         error=row["error"],
         started_at=_parse_dt(row["started_at"]),
         ended_at=_parse_dt(row["ended_at"]),
+    )
+
+
+def _row_to_intervention(row: aiosqlite.Row) -> Intervention:
+    return Intervention(
+        id=row["id"],
+        task_id=row["task_id"],
+        node_id=row["node_id"],
+        source=row["source"],
+        policy=row["policy"],
+        question=json.loads(row["question"]),
+        answer=json.loads(row["answer"]) if row["answer"] else None,
+        responder=row["responder"],
+        status=InterventionStatus(row["status"]),
+        deadline_at=_parse_dt(row["deadline_at"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        resolved_at=_parse_dt(row["resolved_at"]),
     )
 
 
@@ -239,3 +292,36 @@ async def fetch_nodes(db: Any, task_id: str, plan_id: str | None = None) -> list
             (task_id, plan_id),
         )
     return [_row_to_node(row) for row in await cursor.fetchall()]
+
+
+async def fetch_intervention(db: Any, intervention_id: str) -> Intervention | None:
+    cursor = await db.conn.execute(
+        "SELECT * FROM interventions WHERE id = ?", (intervention_id,)
+    )
+    row = await cursor.fetchone()
+    return _row_to_intervention(row) if row else None
+
+
+async def fetch_interventions(
+    db: Any, task_id: str, status: InterventionStatus | None = None
+) -> list[Intervention]:
+    if status is None:
+        cursor = await db.conn.execute(
+            "SELECT * FROM interventions WHERE task_id = ? ORDER BY created_at, id",
+            (task_id,),
+        )
+    else:
+        cursor = await db.conn.execute(
+            "SELECT * FROM interventions WHERE task_id = ? AND status = ?"
+            " ORDER BY created_at, id",
+            (task_id, status.value),
+        )
+    return [_row_to_intervention(row) for row in await cursor.fetchall()]
+
+
+async def fetch_interventions_for_node(db: Any, node_id: str) -> list[Intervention]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM interventions WHERE node_id = ? ORDER BY created_at, id",
+        (node_id,),
+    )
+    return [_row_to_intervention(row) for row in await cursor.fetchall()]

@@ -116,7 +116,19 @@ class Database:
         if self._conn is None:
             await self.connect()
         await self.conn.executescript(SCHEMA)
+        await self._migrate(self.conn)
         await self.conn.commit()
+
+    async def _migrate(self, conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(nodes)")
+        columns = {row["name"] for row in await cursor.fetchall()}
+        for name, ddl in (
+            ("agent_name", "ALTER TABLE nodes ADD COLUMN agent_name TEXT"),
+            ("policy_override", "ALTER TABLE nodes ADD COLUMN policy_override TEXT"),
+        ):
+            if name not in columns:
+                await conn.execute(ddl)
+        await conn.commit()
 
     async def close(self) -> None:
         if self._conn is not None:
