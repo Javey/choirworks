@@ -106,3 +106,21 @@ async def test_dispatch_twice_rejected(tmp_path, echo_agent):
     finally:
         await remote.close()
         await db.close()
+
+
+async def test_continue_node_after_input_required(tmp_path):
+    agent = await start_fake_agent("ask")
+    db, remote, events, tasks, dispatcher = await setup(tmp_path, agent)
+    try:
+        created = await tasks.create_task("ask", TargetSpec(agent_name="fake"))
+        node = await dispatcher.dispatch_node(created.task_id, created.node_ids[0])
+        assert node.status is NodeStatus.INPUT_REQUIRED
+        assert node.a2a_task_id
+
+        node = await dispatcher.continue_node(created.task_id, node.id, "Bob")
+        assert node.status is NodeStatus.COMPLETED
+        assert node.output["artifacts"][0]["text"] == "answered:Bob"
+    finally:
+        await remote.close()
+        await db.close()
+        await agent.stop()
