@@ -1410,13 +1410,19 @@ async def test_fake_agent_echoes_with_official_client():
             agent=agent.card, client_config=ClientConfig(streaming=True)
         )
         request = SendMessageRequest(message=new_text_message("hi", role=Role.ROLE_USER))
-        final_task = None
+        task_id = None
+        states = []
+        artifact_texts = []
         async for chunk in client.send_message(request):
             if chunk.HasField("task"):
-                final_task = chunk.task
-        assert final_task is not None
-        assert final_task.status.state == TaskState.TASK_STATE_COMPLETED
-        assert get_artifact_text(final_task.artifacts[0]) == "echo:hi"
+                task_id = chunk.task.id
+            elif chunk.HasField("status_update"):
+                states.append(chunk.status_update.status.state)
+            elif chunk.HasField("artifact_update"):
+                artifact_texts.append(get_artifact_text(chunk.artifact_update.artifact))
+        assert task_id
+        assert TaskState.TASK_STATE_COMPLETED in states
+        assert "echo:hi" in artifact_texts
         await client.close()
     finally:
         await agent.stop()
