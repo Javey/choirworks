@@ -6,7 +6,7 @@ from typing import Any
 
 import aiosqlite
 
-from agent_hub.models.domain import Intervention, Node, OrchestrationTask, Plan
+from agent_hub.models.domain import Checkpoint, Intervention, Node, OrchestrationTask, Plan
 from agent_hub.models.enums import (
     TERMINAL_NODE_STATUSES,
     EventType,
@@ -137,6 +137,21 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 payload["intervention_id"],
             ),
         )
+    elif event_type is EventType.CHECKPOINT_CREATED:
+        await conn.execute(
+            "INSERT INTO checkpoints"
+            " (id, task_id, seq, plan_version, frontier, artifacts, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                payload["checkpoint_id"],
+                event.task_id,
+                payload["seq"],
+                payload["plan_version"],
+                json.dumps(payload["frontier"]),
+                json.dumps(payload["artifacts"], ensure_ascii=False),
+                ts,
+            ),
+        )
     elif event_type is EventType.ERROR and payload.get("node_id"):
         await conn.execute(
             "UPDATE nodes SET error = ? WHERE id = ? AND task_id = ?",
@@ -239,6 +254,18 @@ def _row_to_node(row: aiosqlite.Row) -> Node:
     )
 
 
+def _row_to_checkpoint(row: aiosqlite.Row) -> Checkpoint:
+    return Checkpoint(
+        id=row["id"],
+        task_id=row["task_id"],
+        seq=row["seq"],
+        plan_version=row["plan_version"],
+        frontier=json.loads(row["frontier"]),
+        artifacts=json.loads(row["artifacts"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
 def _row_to_intervention(row: aiosqlite.Row) -> Intervention:
     return Intervention(
         id=row["id"],
@@ -325,3 +352,18 @@ async def fetch_interventions_for_node(db: Any, node_id: str) -> list[Interventi
         (node_id,),
     )
     return [_row_to_intervention(row) for row in await cursor.fetchall()]
+
+
+async def fetch_checkpoint(db: Any, checkpoint_id: str) -> Checkpoint | None:
+    cursor = await db.conn.execute(
+        "SELECT * FROM checkpoints WHERE id = ?", (checkpoint_id,)
+    )
+    row = await cursor.fetchone()
+    return _row_to_checkpoint(row) if row else None
+
+
+async def fetch_checkpoints(db: Any, task_id: str) -> list[Checkpoint]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM checkpoints WHERE task_id = ? ORDER BY seq, id", (task_id,)
+    )
+    return [_row_to_checkpoint(row) for row in await cursor.fetchall()]

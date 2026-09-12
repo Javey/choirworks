@@ -199,3 +199,27 @@ async def test_input_required_parks_task(tmp_path):
         await remote.close()
         await db.close()
         await asker.stop()
+
+
+async def test_checkpoints_created_as_nodes_complete(tmp_path):
+    agent = await start_fake_agent("echo")
+    db, remote, events, tasks, orchestrator, _ = await setup(
+        tmp_path, [draft(n("n1", text="hi"))], {"good": agent}
+    )
+    try:
+        task_id = await tasks.create_pending_task("hi")
+        orchestrator.start(task_id)
+        await asyncio.wait_for(orchestrator.wait(task_id), 10.0)
+        from agent_hub.store import projections as proj
+
+        checkpoints = await proj.fetch_checkpoints(db, task_id)
+        assert len(checkpoints) == 1
+        assert checkpoints[0].frontier
+        assert checkpoints[0].plan_version == 1
+        types = [e.type for e in await events.replay(task_id)]
+        assert EventType.CHECKPOINT_CREATED in types
+    finally:
+        await orchestrator.stop()
+        await remote.close()
+        await db.close()
+        await agent.stop()

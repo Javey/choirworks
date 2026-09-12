@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.core.planner import PlanDraft, draft_to_dag
-from agent_hub.models.domain import Node, OrchestrationTask, Plan
+from agent_hub.models.domain import Checkpoint, Node, OrchestrationTask, Plan
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
 from agent_hub.store import projections
 from agent_hub.store.db import Database
@@ -135,6 +136,37 @@ class TaskService:
             task_id=task_id,
             plan_id=plan_id,
             node_ids=[f"{plan_id}:{node.id}" for node in draft.nodes],
+        )
+
+    async def create_checkpoint(self, task_id: str) -> Checkpoint:
+        task = await projections.fetch_task(self._db, task_id)
+        plan = await projections.fetch_current_plan(self._db, task_id)
+        if task is None or plan is None:
+            raise TaskNotFound(task_id)
+        nodes = await projections.fetch_nodes(self._db, task_id, plan.id)
+        frontier = [node.id for node in nodes if node.status is NodeStatus.COMPLETED]
+        artifacts = {node.id: node.output for node in nodes if node.output}
+        checkpoint_id = uuid4().hex
+        seq = await self._events.latest_seq(task_id)
+        await self._events.append(
+            task_id,
+            EventType.CHECKPOINT_CREATED,
+            {
+                "checkpoint_id": checkpoint_id,
+                "seq": seq,
+                "plan_version": plan.version,
+                "frontier": frontier,
+                "artifacts": artifacts,
+            },
+        )
+        return Checkpoint(
+            id=checkpoint_id,
+            task_id=task_id,
+            seq=seq,
+            plan_version=plan.version,
+            frontier=frontier,
+            artifacts=artifacts,
+            created_at=datetime.now(UTC),
         )
 
     async def mark_running(self, task_id: str) -> OrchestrationTask:

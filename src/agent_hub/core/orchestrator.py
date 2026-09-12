@@ -80,6 +80,7 @@ class Orchestrator:
         self._replan_on_failure = replan_on_failure
         self._runs: dict[str, asyncio.Task] = {}
         self._restart_requested: set[str] = set()
+        self._checkpoint_counts: dict[str, int] = {}
         self._inflight: set[asyncio.Task] = set()
         self._continuing: dict[str, asyncio.Task] = {}
         self._timeout_tasks: dict[str, asyncio.Task] = {}
@@ -155,6 +156,15 @@ class Orchestrator:
                 return
             nodes = await projections.fetch_nodes(self._db, task_id, plan.id)
             self._inflight = {item for item in self._inflight if not item.done()}
+
+            completed_count = sum(
+                1 for node in nodes if node.status is NodeStatus.COMPLETED
+            )
+            if completed_count and completed_count > self._checkpoint_counts.get(
+                task_id, 0
+            ):
+                await self._task_service.create_checkpoint(task_id)
+                self._checkpoint_counts[task_id] = completed_count
 
             failed = [node for node in nodes if node.status is NodeStatus.FAILED]
             if failed:
