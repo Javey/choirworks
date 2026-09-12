@@ -79,6 +79,7 @@ class NodeDispatcher:
                     ),
                     artifacts,
                     announce_dispatched=True,
+                    message_id=message_id,
                 )
             await self._handle_stream_end(node, current, artifacts)
         except TimeoutError:
@@ -135,11 +136,12 @@ class NodeDispatcher:
         artifacts: list[dict[str, Any]],
         *,
         announce_dispatched: bool,
+        message_id: str | None = None,
     ) -> NodeStatus:
         current = node.status
         async for chunk in chunks:
             if chunk.HasField("task"):
-                if announce_dispatched and not node.a2a_task_id:
+                if announce_dispatched:
                     await self._events.append(
                         node.task_id,
                         EventType.NODE_DISPATCHED,
@@ -147,11 +149,13 @@ class NodeDispatcher:
                             "node_id": node.id,
                             "a2a_task_id": chunk.task.id,
                             "a2a_context_id": chunk.task.context_id,
-                            "message_id": chunk.task.id,
+                            "message_id": message_id,
                         },
                     )
                     current = NodeStatus.DISPATCHED
                     node.status = NodeStatus.DISPATCHED
+                    node.a2a_task_id = chunk.task.id
+                    node.a2a_context_id = chunk.task.context_id
             elif chunk.HasField("status_update"):
                 status = chunk.status_update.status
                 mapped = _REMOTE_STATE_MAP.get(status.state)
