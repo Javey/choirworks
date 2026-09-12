@@ -24,6 +24,10 @@ class UnknownAgent(ValueError):
     pass
 
 
+class ConversationNotFound(KeyError):
+    pass
+
+
 @dataclass
 class TargetSpec:
     agent_name: str
@@ -36,6 +40,7 @@ class CreatedTask(BaseModel):
     task_id: str
     plan_id: str
     node_ids: list[str]
+    conversation_id: str | None = None
 
 
 class TaskSnapshot(BaseModel):
@@ -50,11 +55,26 @@ class TaskService:
         self._events = event_store
         self._registry = registry
 
-    async def create_task(self, request: str, target: TargetSpec) -> CreatedTask:
+    async def _resolve_conversation(
+        self, request: str, conversation_id: str | None
+    ) -> tuple[str, str | None]:
+        if conversation_id is not None:
+            conversation = await projections.fetch_conversation(self._db, conversation_id)
+            if conversation is None:
+                raise ConversationNotFound(f"conversation not found: {conversation_id}")
+            return conversation_id, None
+        return uuid4().hex, request[:60]
+
+    async def create_task(
+        self, request: str, target: TargetSpec, conversation_id: str | None = None
+    ) -> CreatedTask:
         record = await self._registry.get_by_name(target.agent_name)
         if record is None:
             raise UnknownAgent(f"agent not registered: {target.agent_name}")
         agent_url = self._registry.agent_url(record)
+        resolved_conversation_id, conversation_title = await self._resolve_conversation(
+            request, conversation_id
+        )
 
         task_id = uuid4().hex
         plan_id = uuid4().hex
@@ -77,7 +97,14 @@ class TaskService:
         }
 
         await self._events.append(
-            task_id, EventType.TASK_CREATED, {"request": request, "policy": None}
+            task_id,
+            EventType.TASK_CREATED,
+            {
+                "request": request,
+                "policy": None,
+                "conversation_id": resolved_conversation_id,
+                "conversation_title": conversation_title,
+            },
         )
         await self._events.append(
             task_id,
@@ -94,12 +121,29 @@ class TaskService:
             EventType.TASK_STATE_CHANGED,
             {"from": TaskStatus.PLANNING.value, "to": TaskStatus.RUNNING.value},
         )
-        return CreatedTask(task_id=task_id, plan_id=plan_id, node_ids=[node_id])
+        return CreatedTask(
+            task_id=task_id,
+            plan_id=plan_id,
+            node_ids=[node_id],
+            conversation_id=resolved_conversation_id,
+        )
 
-    async def create_pending_task(self, request: str) -> str:
+    async def create_pending_task(
+        self, request: str, conversation_id: str | None = None
+    ) -> str:
+        resolved_conversation_id, conversation_title = await self._resolve_conversation(
+            request, conversation_id
+        )
         task_id = uuid4().hex
         await self._events.append(
-            task_id, EventType.TASK_CREATED, {"request": request, "policy": None}
+            task_id,
+            EventType.TASK_CREATED,
+            {
+                "request": request,
+                "policy": None,
+                "conversation_id": resolved_conversation_id,
+                "conversation_title": conversation_title,
+            },
         )
         return task_id
 
