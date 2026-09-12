@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from agent_hub.a2a.client import RemoteAgentClient
+from agent_hub.a2a.reconcile import reconcile_once
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.api import agents as agents_routes
 from agent_hub.api import interventions as interventions_routes
@@ -17,9 +20,23 @@ from agent_hub.core.llm import LiteLLMClient, LLMClient
 from agent_hub.core.orchestrator import Orchestrator
 from agent_hub.core.planner import Planner
 from agent_hub.core.policy import PolicyEngine
+from agent_hub.core.recovery import RecoveryResult, recover_tasks
 from agent_hub.core.tasks import TaskService
 from agent_hub.store.db import Database
 from agent_hub.store.event_store import EventStore
+
+logger = logging.getLogger(__name__)
+
+
+async def _reconcile_loop(db, events, remote, interval: float) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await reconcile_once(db, events, remote)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 对账失败不影响主流程
+            logger.exception("reconcile failed")
 
 
 def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -> FastAPI:
@@ -76,9 +93,37 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
         app.state.dispatcher = dispatcher
         app.state.planner = planner
         app.state.orchestrator = orchestrator
+
+        recovery: RecoveryResult | None = None
+        reconcile_task: asyncio.Task | None = None
+        if resolved.recovery.replay_on_startup:
+            recovery = await recover_tasks(
+                db, event_store, remote, dispatcher, orchestrator
+            )
+            app.state.recovery = recovery
+            if recovery.background:
+                asyncio.gather(*recovery.background, return_exceptions=True)
+        reconcile_task = asyncio.create_task(
+            _reconcile_loop(
+                db,
+                event_store,
+                remote,
+                resolved.recovery.reconcile_interval_seconds,
+            )
+        )
+        app.state.reconcile_task = reconcile_task
         try:
             yield
         finally:
+            reconcile_task.cancel()
+            await asyncio.gather(reconcile_task, return_exceptions=True)
+            if recovery is not None:
+                for task in recovery.background:
+                    task.cancel()
+                if recovery.background:
+                    await asyncio.gather(
+                        *recovery.background, return_exceptions=True
+                    )
             await orchestrator.stop()
             await remote.close()
             await db.close()

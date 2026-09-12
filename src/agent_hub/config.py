@@ -45,6 +45,11 @@ class PolicyConfig(BaseModel):
     overrides: list[PolicyOverride] = Field(default_factory=list)
 
 
+class RecoveryConfig(BaseModel):
+    reconcile_interval_seconds: float = 30.0
+    replay_on_startup: bool = True
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENT_HUB_",
@@ -57,6 +62,7 @@ class Settings(BaseSettings):
     store: StoreConfig = Field(default_factory=StoreConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     policies: PolicyConfig = Field(default_factory=PolicyConfig)
+    recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
 
 
 def load_settings(yaml_path: Path | str | None = None) -> Settings:

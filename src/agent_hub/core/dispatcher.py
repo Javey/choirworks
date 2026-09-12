@@ -129,6 +129,37 @@ class NodeDispatcher:
         assert refreshed is not None
         return refreshed
 
+    async def resume_node(self, task_id: str, node_id: str) -> Node:
+        node = await projections.fetch_node(self._db, node_id)
+        if node is None or node.task_id != task_id:
+            raise InvalidNodeState(f"node not found in task {task_id}: {node_id}")
+        if node.status not in (NodeStatus.DISPATCHED, NodeStatus.WORKING):
+            return node
+        if not node.a2a_task_id:
+            raise InvalidNodeState(f"node {node_id} has no remote task id")
+
+        artifacts: list[dict[str, Any]] = []
+        current = node.status
+        try:
+            async with asyncio.timeout(self._timeout):
+                current = await self._consume(
+                    node,
+                    self._remote.subscribe_task(
+                        node.agent_url or "", node.a2a_task_id
+                    ),
+                    artifacts,
+                    announce_dispatched=False,
+                )
+            await self._handle_stream_end(node, current, artifacts)
+        except TimeoutError:
+            await self._fail(node, f"node timed out after {self._timeout}s")
+        except Exception as exc:  # noqa: BLE001 - 重挂接失败按节点失败处理
+            await self._fail(node, str(exc))
+
+        refreshed = await projections.fetch_node(self._db, node_id)
+        assert refreshed is not None
+        return refreshed
+
     async def _consume(
         self,
         node: Node,

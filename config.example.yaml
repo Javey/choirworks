@@ -26,5 +26,9 @@ policies:
     - skill_id: deploy_prod
       policy: human
 
+recovery:
+  reconcile_interval_seconds: 30
+  replay_on_startup: true
+
 store:
   db_path: ./data/agent_hub.db
