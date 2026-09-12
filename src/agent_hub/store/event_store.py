@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ class EventStore:
     async def append(
         self, task_id: str, event_type: EventType, payload: dict[str, Any] | None = None
     ) -> Event:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = payload or {}
         async with self._db.transaction() as conn:
             cursor = await conn.execute(

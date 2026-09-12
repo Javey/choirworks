@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
@@ -13,7 +13,7 @@ class TaskStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class NodeStatus(str, Enum):
+class NodeStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     DISPATCHED = "dispatched"
@@ -25,14 +25,14 @@ class NodeStatus(str, Enum):
     INVALIDATED = "invalidated"
 
 
-class InterventionStatus(str, Enum):
+class InterventionStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     EXPIRED = "expired"
     INVALIDATED = "invalidated"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     TASK_CREATED = "task.created"
     TASK_STATE_CHANGED = "task.state_changed"
     TASK_COMPLETED = "task.completed"

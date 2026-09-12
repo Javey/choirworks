@@ -129,6 +129,6 @@ async def start_fake_agent(behavior: str = "echo") -> FakeAgent:
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve())
-    while not server.started:
+    while not server.started:  # noqa: ASYNC110 - 轮询 uvicorn 启动状态，无事件可用
         await asyncio.sleep(0.02)
     return FakeAgent(url=url, card=card, server=server, task=task, handler=handler)

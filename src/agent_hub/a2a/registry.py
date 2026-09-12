@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from agent_hub.a2a.client import RemoteAgentClient
@@ -24,7 +24,7 @@ class AgentRegistry:
         if await self.get_by_name(name) is not None:
             raise DuplicateAgentName(f"agent name already registered: {name}")
         card = await self._remote.resolve_card(card_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         record = AgentRecord(
             id=uuid4().hex,
             name=name,
@@ -79,7 +79,7 @@ class AgentRegistry:
         if record is None:
             raise KeyError(f"agent not found: {agent_id}")
         card = await self._remote.resolve_card(record.card_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         updated = record.model_copy(
             update={
                 "card": self._remote.card_to_dict(card),

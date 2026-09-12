@@ -379,9 +379,9 @@ Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.store'`
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 import aiosqlite
 
@@ -617,10 +617,10 @@ Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.models'`
 ```python
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
@@ -630,7 +630,7 @@ class TaskStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class NodeStatus(str, Enum):
+class NodeStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     DISPATCHED = "dispatched"
@@ -642,14 +642,14 @@ class NodeStatus(str, Enum):
     INVALIDATED = "invalidated"
 
 
-class InterventionStatus(str, Enum):
+class InterventionStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     EXPIRED = "expired"
     INVALIDATED = "invalidated"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     TASK_CREATED = "task.created"
     TASK_STATE_CHANGED = "task.state_changed"
     TASK_COMPLETED = "task.completed"
@@ -1288,7 +1288,7 @@ async def fetch_nodes(db: Any, task_id: str, plan_id: str | None = None) -> list
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -1313,7 +1313,7 @@ class EventStore:
     async def append(
         self, task_id: str, event_type: EventType, payload: dict[str, Any] | None = None
     ) -> Event:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = payload or {}
         async with self._db.transaction() as conn:
             cursor = await conn.execute(
@@ -1571,7 +1571,7 @@ async def start_fake_agent(behavior: str = "echo") -> FakeAgent:
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve())
-    while not server.started:
+    while not server.started:  # noqa: ASYNC110 - 轮询 uvicorn 启动状态，无事件可用
         await asyncio.sleep(0.02)
     return FakeAgent(url=url, card=card, server=server, task=task, handler=handler)
 ```
@@ -1819,7 +1819,7 @@ Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.a2a.registry'`
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from agent_hub.a2a.client import RemoteAgentClient
@@ -1842,7 +1842,7 @@ class AgentRegistry:
         if await self.get_by_name(name) is not None:
             raise DuplicateAgentName(f"agent name already registered: {name}")
         card = await self._remote.resolve_card(card_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         record = AgentRecord(
             id=uuid4().hex,
             name=name,
@@ -1899,7 +1899,7 @@ class AgentRegistry:
         if record is None:
             raise KeyError(f"agent not found: {agent_id}")
         card = await self._remote.resolve_card(record.card_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         updated = record.model_copy(
             update={
                 "card": self._remote.card_to_dict(card),
