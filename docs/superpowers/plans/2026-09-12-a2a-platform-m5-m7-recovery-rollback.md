@@ -730,3 +730,14 @@ git commit -am "feat: 回退/单节点 retry/任务 cancel（平台侧 + 取消�
 - [ ] `reconcile_once` 用 GetTask 校正漂移（测试）。
 - [ ] `rollback` 支持 `dry_run` 与 `restart`（取消信号 + 重置 + 重跑）；单节点 retry；任务 cancel。
 - [ ] 全量测试与 ruff 全绿；README 与勘误更新。
+
+---
+
+## 执行勘误（2026-09-12）
+
+1. **回退 restart 语义落地**：不做「先 invalidated 再续跑」，而是直接把 checkpoint 之后（不在 frontier）的节点重置为 `pending`（清空 attempt/output/error/远程 task id），未决干预置 `invalidated`，任务回到 `running` 再调度——避免下游依赖死锁，也符合「重跑」目标。`dry_run` 仍只读。
+2. **手动 retry 需要任务复位**：任务失败后处于终态，`TaskService.retry_node` 会同时把任务从 `failed` 置回 `running`（状态机新增 failed→running），否则调度器直接返回。
+3. **cancel 语义**：API 先对在途节点发 `CancelTask` 信号并写 `node.cancel.sent`，再置任务 `canceled`，最后 `Orchestrator.stop_task` 取消该任务的 run/续跑/超时任务。
+4. **reconcile 额外处理**：远程 `canceled` 映射为节点 `canceled`；测试直接构造「本地 dispatched、远端已完成」漂移场景验证。
+5. **恢复结果可管理**：`recover_tasks` 返回 `RecoveryResult(recovered_task_ids, background)`，应用在 shutdown 时取消 background 任务。
+6. **规划前需求澄清**仍为未实现项（Plan 3 已注明）。
