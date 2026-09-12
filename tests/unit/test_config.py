@@ -28,3 +28,12 @@ def test_yaml_load(tmp_path):
     settings = load_settings(config_file)
     assert settings.server.port == 7777
     assert settings.scheduler.max_parallel_nodes == 3
+
+
+def test_llm_and_scheduler_defaults():
+    settings = Settings()
+    assert settings.llm.planner_model
+    assert settings.llm.max_plan_retries == 2
+    assert settings.scheduler.max_plan_nodes == 20
+    assert settings.scheduler.retry_backoff_seconds == 1.0
+    assert settings.scheduler.replan_on_failure is True

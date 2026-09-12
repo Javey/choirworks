@@ -2,10 +2,19 @@ server:
   host: 127.0.0.1
   port: 8080
 
+llm:
+  planner_model: openai/gpt-4.1
+  assist_model: openai/gpt-4.1-mini
+  timeout_seconds: 60
+  max_plan_retries: 2
+
 scheduler:
   max_parallel_nodes: 5
   node_timeout_seconds: 600
   max_node_attempts: 2
+  retry_backoff_seconds: 1.0
+  replan_on_failure: true
+  max_plan_nodes: 20
 
 store:
   db_path: ./data/agent_hub.db
