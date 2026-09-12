@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent_hub.a2a.registry import AgentRegistry
+from agent_hub.core.llm import LLMClient
 from agent_hub.models.domain import AgentRecord
 
 
@@ -91,3 +94,76 @@ def draft_to_dag(draft: PlanDraft, agent_urls: dict[str, str]) -> dict[str, Any]
             for node in draft.nodes
         ]
     }
+
+
+class PlanningFailed(RuntimeError):
+    pass
+
+
+SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
+Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
+Return only JSON matching the required schema. Rules:
+- Every node must reference an existing agent_name and, when provided, an existing skill_id.
+- Use deps to express ordering; independent nodes run in parallel.
+- Keep the plan minimal: only nodes required to fulfill the request.
+- Put the exact instruction for the agent in each node's input.text."""
+
+
+class Planner:
+    def __init__(
+        self,
+        llm: LLMClient,
+        registry: AgentRegistry,
+        *,
+        max_nodes: int = 20,
+        max_retries: int = 2,
+    ):
+        self._llm = llm
+        self._registry = registry
+        self._max_nodes = max_nodes
+        self._max_retries = max_retries
+
+    async def plan(
+        self,
+        request: str,
+        *,
+        reason: str | None = None,
+        context: str | None = None,
+    ) -> PlanDraft:
+        agents = await self._registry.list()
+        if not agents:
+            raise PlanningFailed("no agents registered; register at least one A2A agent first")
+        capabilities = self._capabilities_text(agents)
+        user = f"User request:\n{request}\n\nAvailable agents:\n{capabilities}"
+        if reason:
+            user += f"\n\nReason for replanning:\n{reason}"
+        if context:
+            user += f"\n\nCompleted work so far:\n{context}"
+
+        last_error: Exception | None = None
+        for _ in range(self._max_retries + 1):
+            draft = await self._llm.structured(
+                system=SYSTEM_PROMPT, user=user, schema=PlanDraft
+            )
+            try:
+                validate_plan(draft, agents, self._max_nodes)
+                return draft
+            except PlanValidationError as exc:
+                last_error = exc
+                user += f"\n\nPrevious plan was invalid: {exc}. Return a corrected plan."
+        raise PlanningFailed(
+            f"planner failed after {self._max_retries + 1} attempts: {last_error}"
+        )
+
+    @staticmethod
+    def _capabilities_text(agents: Sequence[AgentRecord]) -> str:
+        lines = []
+        for agent in agents:
+            skills = agent.card.get("skills", [])
+            skill_text = "; ".join(
+                f"{skill.get('id')} ({skill.get('description', '')})" for skill in skills
+            )
+            lines.append(
+                f"- {agent.name}: {agent.card.get('description', '')} skills=[{skill_text}]"
+            )
+        return "\n".join(lines)

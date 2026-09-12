@@ -1,12 +1,21 @@
+import json
+from datetime import UTC, datetime
+
 import pytest
 
+from agent_hub.a2a.client import RemoteAgentClient
+from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.core.planner import (
     PlanDraft,
+    Planner,
+    PlanningFailed,
     PlanNodeDraft,
     PlanValidationError,
     validate_plan,
 )
 from agent_hub.models.domain import AgentRecord
+from agent_hub.store.db import Database
+from tests.support.fakes import FakeLLM
 
 
 def make_agent(name: str, skills: list[str]) -> AgentRecord:
@@ -88,3 +97,77 @@ def test_empty_plan_rejected():
     draft = PlanDraft(rationale="x", nodes=[])
     with pytest.raises(PlanValidationError, match="no nodes"):
         validate_plan(draft, AGENTS, max_nodes=10)
+
+
+async def make_registry(tmp_path, agents):
+    db = Database(tmp_path / "hub.db")
+    await db.initialize()
+    remote = RemoteAgentClient()
+    registry = AgentRegistry(db, remote)
+    now = datetime.now(UTC).isoformat()
+    async with db.transaction() as conn:
+        for agent in agents:
+            await conn.execute(
+                "INSERT INTO agent_registry"
+                " (id, name, card_url, card, health, last_seen, created_at)"
+                " VALUES (?, ?, ?, ?, 'ok', ?, ?)",
+                (agent.id, agent.name, agent.card_url, json.dumps(agent.card), now, now),
+            )
+    return db, remote, registry
+
+
+async def test_planner_returns_valid_draft(tmp_path):
+    llm = FakeLLM(
+        structured_results=[
+            PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
+        ]
+    )
+    db, remote, registry = await make_registry(tmp_path, AGENTS)
+    try:
+        planner = Planner(llm, registry, max_nodes=10, max_retries=2)
+        draft = await planner.plan("研究并写一份报告")
+        assert draft.nodes[0].agent_name == "research"
+        assert "Available agents" in llm.structured_calls[0]["user"]
+    finally:
+        await remote.close()
+        await db.close()
+
+
+async def test_planner_retries_with_feedback(tmp_path):
+    bad = PlanDraft(rationale="bad", nodes=[node("n1", "ghost")])
+    good = PlanDraft(rationale="good", nodes=[node("n1", "research", skill="search")])
+    llm = FakeLLM(structured_results=[bad, good])
+    db, remote, registry = await make_registry(tmp_path, AGENTS)
+    try:
+        planner = Planner(llm, registry, max_nodes=10, max_retries=2)
+        draft = await planner.plan("x")
+        assert draft.rationale == "good"
+        assert "unknown agent" in llm.structured_calls[1]["user"]
+    finally:
+        await remote.close()
+        await db.close()
+
+
+async def test_planner_fails_after_retries(tmp_path):
+    bad = PlanDraft(rationale="bad", nodes=[node("n1", "ghost")])
+    llm = FakeLLM(structured_results=[bad, bad, bad])
+    db, remote, registry = await make_registry(tmp_path, AGENTS)
+    try:
+        planner = Planner(llm, registry, max_nodes=10, max_retries=2)
+        with pytest.raises(PlanningFailed):
+            await planner.plan("x")
+        assert len(llm.structured_calls) == 3
+    finally:
+        await remote.close()
+        await db.close()
+
+
+async def test_planner_rejects_when_no_agents(tmp_path):
+    db, remote, registry = await make_registry(tmp_path, [])
+    try:
+        planner = Planner(FakeLLM(), registry)
+        with pytest.raises(PlanningFailed, match="no agents"):
+            await planner.plan("x")
+    finally:
+        await remote.close()
+        await db.close()
