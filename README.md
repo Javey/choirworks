@@ -3,17 +3,36 @@
 A2A 多 Agent 编排平台（MVP）。平台不执行业务动作，负责理解需求、拆分任务 DAG、
 调度 A2A subagent，并支持暂停协助、断点恢复与平台侧回退。
 
-当前进度：**M1–M7 全部完成**（骨架、LLM 规划与 DAG 调度、SSE、HITL、断点恢复与对账、回退/retry/cancel）。
+当前进度：**M1–M7 全部完成**（骨架、LLM 规划与 DAG 调度、SSE、HITL、断点恢复与对账、回退/retry/cancel），并附带**对话式前端**（React SPA）。
 
 ## 开发环境
 
 - Python 3.12（由 uv 管理）
 - [uv](https://docs.astral.sh/uv/)
+- Node.js 20+（仅前端）
 
 ```bash
 uv sync
 uv run pytest
 ```
+
+## 前端对话界面
+
+功能：同一会话内多轮追问（自动携带历史上下文）、实时事件流（规划/节点/输出/重试）、
+内联回答人工干预、取消/失败节点重试/checkpoint 回退，断线自动重连与回放。
+
+```bash
+# 开发（Vite :5173，/v1 代理到 :8080）
+cd frontend && npm install
+npm run dev
+
+# 生产构建（FastAPI 自动托管 frontend/dist，访问 http://127.0.0.1:8080）
+npm run build
+
+# 前端测试
+npm test
+```
+
 
 ## 运行
 
@@ -77,3 +96,4 @@ curl -X POST localhost:8080/v1/tasks/<task_id>/cancel
 - Plan 2（M2+M3）：`docs/superpowers/plans/2026-09-12-a2a-platform-m2-m3-planner-scheduler-sse.md`
 - Plan 3（M4）：`docs/superpowers/plans/2026-09-12-a2a-platform-m4-hitl.md`
 - Plan 4（M5–M7）：`docs/superpowers/plans/2026-09-12-a2a-platform-m5-m7-recovery-rollback.md`
+- 前端设计：`docs/superpowers/specs/2026-09-13-frontend-chat-design.md`
