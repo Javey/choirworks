@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from agent_hub.a2a.client import RemoteAgentClient
 from agent_hub.a2a.registry import AgentRegistry
 from agent_hub.api import agents as agents_routes
+from agent_hub.api import sse as sse_routes
 from agent_hub.api import tasks as tasks_routes
 from agent_hub.config import Settings
 from agent_hub.core.dispatcher import NodeDispatcher
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     app = FastAPI(title="Agent Hub", version="0.1.0", lifespan=lifespan)
     app.include_router(tasks_routes.router, prefix="/v1")
     app.include_router(agents_routes.router, prefix="/v1")
+    app.include_router(sse_routes.router, prefix="/v1")
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

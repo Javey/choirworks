@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import socket
 from dataclasses import dataclass
 
 import uvicorn
@@ -20,6 +19,8 @@ from a2a.types import (
     Part,
 )
 from starlette.applications import Starlette
+
+from tests.support.ports import free_port
 
 
 class ScriptedExecutor(AgentExecutor):
@@ -97,12 +98,6 @@ class FakeAgent:
         AppStatus.should_exit = False
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def _make_card(behavior: str, url: str) -> AgentCard:
     return AgentCard(
         name=f"fake-{behavior}",
@@ -126,7 +121,7 @@ def _make_card(behavior: str, url: str) -> AgentCard:
 
 
 async def start_fake_agent(behavior: str = "echo") -> FakeAgent:
-    port = _free_port()
+    port = free_port()
     url = f"http://127.0.0.1:{port}"
     card = _make_card(behavior, url)
     handler = DefaultRequestHandler(
