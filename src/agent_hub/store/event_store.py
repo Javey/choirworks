@@ -20,8 +20,9 @@ class Event(BaseModel):
 
 
 class EventStore:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, bus: Any | None = None):
         self._db = db
+        self._bus = bus
 
     async def append(
         self, task_id: str, event_type: EventType, payload: dict[str, Any] | None = None
@@ -46,6 +47,8 @@ class EventStore:
                 created_at=now,
             )
             await apply_event(conn, event)
+            if self._bus is not None:
+                self._bus.publish(event)
         return event
 
     async def replay(self, task_id: str, after_seq: int = 0) -> list[Event]:

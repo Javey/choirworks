@@ -14,7 +14,13 @@ class TargetIn(BaseModel):
 
 class CreateTaskIn(BaseModel):
     request: str
-    target: TargetIn
+    target: TargetIn | None = None
+
+
+class CreateTaskOut(BaseModel):
+    task_id: str
+    plan_id: str | None = None
+    node_ids: list[str] = Field(default_factory=list)
 
 
 class RegisterAgentIn(BaseModel):

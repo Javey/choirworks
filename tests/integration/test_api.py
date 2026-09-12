@@ -1,8 +1,12 @@
+import asyncio
+
 import httpx
 import pytest
 
 from agent_hub.api.app import create_app
 from agent_hub.config import Settings
+from agent_hub.core.planner import PlanDraft, PlanNodeDraft
+from tests.support.fakes import FakeLLM
 
 
 @pytest.fixture
@@ -65,3 +69,43 @@ async def test_missing_task_returns_404(api):
     client, _, _ = api
     resp = await client.get("/v1/tasks/nope")
     assert resp.status_code == 404
+
+
+@pytest.fixture
+async def api_auto(tmp_path, echo_agent):
+    plan = PlanDraft(
+        rationale="auto",
+        nodes=[
+            PlanNodeDraft(id="n1", name="echo", agent_name="echo", input={"text": "hi"})
+        ],
+    )
+    llm = FakeLLM(structured_results=[plan])
+    settings = Settings(
+        store={"db_path": tmp_path / "auto.db"},
+        scheduler={"retry_backoff_seconds": 0.0},
+    )
+    app = create_app(settings, llm=llm)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            yield client, app, echo_agent.url
+
+
+async def test_planner_path_runs_to_completion(api_auto):
+    client, _, agent_url = api_auto
+    await client.post("/v1/agents", json={"name": "echo", "card_url": agent_url})
+    resp = await client.post("/v1/tasks", json={"request": "hi"})
+    assert resp.status_code == 201
+    task_id = resp.json()["task_id"]
+
+    snapshot = None
+    for _ in range(200):
+        snapshot = (await client.get(f"/v1/tasks/{task_id}")).json()
+        if snapshot["task"]["status"] == "completed":
+            break
+        await asyncio.sleep(0.05)
+    assert snapshot is not None
+    assert snapshot["task"]["status"] == "completed"
+    assert snapshot["nodes"][0]["output"]["artifacts"][0]["text"] == "echo:hi"
