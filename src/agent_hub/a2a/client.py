@@ -6,7 +6,17 @@ from typing import Any
 import httpx
 from a2a.client import A2ACardResolver, Client, ClientConfig, create_client
 from a2a.helpers import new_text_message
-from a2a.types import AgentCard, Message, Role, SendMessageRequest, StreamResponse
+from a2a.types import (
+    AgentCard,
+    CancelTaskRequest,
+    GetTaskRequest,
+    Message,
+    Role,
+    SendMessageRequest,
+    StreamResponse,
+    SubscribeToTaskRequest,
+    Task,
+)
 from google.protobuf.json_format import MessageToDict, ParseDict
 
 
@@ -58,6 +68,27 @@ class RemoteAgentClient:
             message.message_id = message_id
         request = SendMessageRequest(message=message)
         async for chunk in client.send_message(request):
+            yield chunk
+
+    async def get_task(self, agent_url: str, remote_task_id: str) -> Task | None:
+        client = await self._client_for(agent_url)
+        try:
+            return await client.get_task(GetTaskRequest(id=remote_task_id))
+        except Exception:  # noqa: BLE001 - 远程任务可能已过期/不存在
+            return None
+
+    async def cancel_task(self, agent_url: str, remote_task_id: str) -> None:
+        client = await self._client_for(agent_url)
+        try:
+            await client.cancel_task(CancelTaskRequest(id=remote_task_id))
+        except Exception:  # noqa: BLE001 - 取消仅为信号，失败不阻塞
+            return
+
+    async def subscribe_task(
+        self, agent_url: str, remote_task_id: str
+    ) -> AsyncIterator[StreamResponse]:
+        client = await self._client_for(agent_url)
+        async for chunk in client.subscribe(SubscribeToTaskRequest(id=remote_task_id)):
             yield chunk
 
     async def close(self) -> None:
