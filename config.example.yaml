@@ -16,5 +16,15 @@ scheduler:
   replan_on_failure: true
   max_plan_nodes: 20
 
+policies:
+  default: auto_llm
+  on_timeout: escalate
+  timeout_seconds: 900
+  overrides:
+    - agent_name: payment-agent
+      policy: human
+    - skill_id: deploy_prod
+      policy: human
+
 store:
   db_path: ./data/agent_hub.db

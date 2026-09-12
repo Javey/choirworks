@@ -32,6 +32,19 @@ class StoreConfig(BaseModel):
     db_path: Path = Path("./data/agent_hub.db")
 
 
+class PolicyOverride(BaseModel):
+    agent_name: str | None = None
+    skill_id: str | None = None
+    policy: str
+
+
+class PolicyConfig(BaseModel):
+    default: str = "auto_llm"
+    on_timeout: str = "escalate"
+    timeout_seconds: float = 900.0
+    overrides: list[PolicyOverride] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENT_HUB_",
@@ -43,6 +56,7 @@ class Settings(BaseSettings):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    policies: PolicyConfig = Field(default_factory=PolicyConfig)
 
 
 def load_settings(yaml_path: Path | str | None = None) -> Settings:
