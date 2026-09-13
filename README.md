@@ -145,3 +145,7 @@ curl -X POST localhost:8080/v1/tasks/<task_id>/cancel
 - Plan 3（M4）：`docs/superpowers/plans/2026-09-12-a2a-platform-m4-hitl.md`
 - Plan 4（M5–M7）：`docs/superpowers/plans/2026-09-12-a2a-platform-m5-m7-recovery-rollback.md`
 - 前端设计：`docs/superpowers/specs/2026-09-13-frontend-chat-design.md`
+
+## License
+
+[MIT](LICENSE)
