@@ -53,6 +53,30 @@ uv run agent-hub-sim --port 8080 --fresh
 
 `--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。模拟 Agent 的产出默认按 **打字机效果** 分块流式返回（`--chunk-size` 每块字符数，默认 2；`--chunk-delay` 块间隔秒数，默认 0.04，设为 0 可关闭延迟）。规划逻辑为确定性规则（`src/agent_hub/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/agent_hub/sim/fake_agent.py`。
 
+## 工作群（群聊协作）
+
+群聊是编排前门：所有消息经 Hub 记录（事件溯源），Agent 产出自动成为群消息，assistant 负责拆解/派发/入群/完成播报。核心接口：
+
+```bash
+# 人类消息（quote_id 可引用任意消息；interrupt 需同时给 quote_id）
+curl -X POST localhost:8080/v1/conversations/<conversation_id>/messages \
+  -H 'content-type: application/json' \
+  -d '{"text":"请协调多个子代理协作完成这项分析","mentions":["researcher"]}'
+
+# 房间时间线（seq 游标增量拉取，含成员与摘要）
+curl 'localhost:8080/v1/conversations/<conversation_id>/messages?since_seq=0'
+
+# 房间事件流（message/room/plan/node/intervention 事件，SSE）
+curl -N 'localhost:8080/v1/conversations/<conversation_id>/stream?since_seq=0'
+```
+
+行为约定：
+
+- `@单人` 直接建单节点任务给该 Agent；`@多人` 自动入群并交由 Planner 拆解；Agent 消息里的 `@` 由协调者仲裁（复用/扩展/并入，防循环）。
+- `quote_id` 引用：干预消息 → 直接作答；在途节点 → 排队补投（`continue` 时合并）；终态消息 → follow-up 新任务；`interrupt=true` → 取消当前任务并转交新任务。
+- assistant 播报：拆解、派发、入群、协助、排队、完成总结，均可作为普通消息被引用。
+- 上下文按「房间头 + 摘要 + 与我相关 + 最近窗口」分级投喂给每次被唤醒的 Agent。
+
 
 ## 运行
 
