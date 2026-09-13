@@ -16,6 +16,7 @@ from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
 from agent_hub.core.llm import LLMClient
 from agent_hub.core.planner import Planner, PlanNodeDraft
 from agent_hub.core.policy import PolicyEngine
+from agent_hub.core.room import post_agent_messages
 from agent_hub.core.tasks import TaskService
 from agent_hub.models.domain import Node, OrchestrationTask
 from agent_hub.models.enums import (
@@ -174,6 +175,7 @@ class Orchestrator:
                 return
             nodes = await projections.fetch_nodes(self._db, task_id, plan.id)
             self._inflight = {item for item in self._inflight if not item.done()}
+            await post_agent_messages(self._db, self._events, task, nodes)
 
             completed_count = sum(
                 1 for node in nodes if node.status is NodeStatus.COMPLETED

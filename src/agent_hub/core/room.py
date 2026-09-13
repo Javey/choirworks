@@ -59,3 +59,37 @@ async def post_message(
         message = await projections.fetch_message(db, message_id)
         assert message is not None
         return message
+
+
+def artifact_text(output: dict[str, Any] | None) -> str:
+    if not output:
+        return ""
+    parts = [
+        artifact.get("text", "")
+        for artifact in output.get("artifacts", [])
+        if isinstance(artifact, dict)
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
+async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any]) -> None:
+    from agent_hub.models.enums import NodeStatus
+
+    if task.conversation_id is None:
+        return
+    for node in nodes:
+        if node.status is not NodeStatus.COMPLETED or not node.agent_name:
+            continue
+        existing = await projections.fetch_messages_for_node(db, node.id)
+        if any(message.role == "agent" for message in existing):
+            continue
+        await post_message(
+            db,
+            events,
+            conversation_id=task.conversation_id,
+            role="agent",
+            sender=node.agent_name,
+            text=artifact_text(node.output) or "已完成",
+            node_id=node.id,
+            task_id=task.id,
+        )
