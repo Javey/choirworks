@@ -14,7 +14,7 @@ from agent_hub.config import PolicyConfig
 from agent_hub.core.conversations import build_conversation_context
 from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
 from agent_hub.core.llm import LLMClient
-from agent_hub.core.planner import Planner
+from agent_hub.core.planner import Planner, PlanNodeDraft
 from agent_hub.core.policy import PolicyEngine
 from agent_hub.core.tasks import TaskService
 from agent_hub.models.domain import Node, OrchestrationTask
@@ -194,16 +194,18 @@ class Orchestrator:
                 progressed = await self._process_interventions(task, parked)
                 if progressed:
                     continue
-                if task.status is not TaskStatus.AWAITING_INPUT:
-                    await self._events.append(
-                        task_id,
-                        EventType.TASK_STATE_CHANGED,
-                        {
-                            "from": TaskStatus.RUNNING.value,
-                            "to": TaskStatus.AWAITING_INPUT.value,
-                        },
-                    )
-                return
+                if not await self._has_pending_assist(parked):
+                    if task.status is not TaskStatus.AWAITING_INPUT:
+                        await self._events.append(
+                            task_id,
+                            EventType.TASK_STATE_CHANGED,
+                            {
+                                "from": TaskStatus.RUNNING.value,
+                                "to": TaskStatus.AWAITING_INPUT.value,
+                            },
+                        )
+                    return
+                # 协助节点在途：继续走 ready/inflight 的派发与等待逻辑
             if task.status is TaskStatus.AWAITING_INPUT:
                 await self._events.append(
                     task_id,
@@ -239,10 +241,14 @@ class Orchestrator:
                 await asyncio.wait(self._inflight, return_when=asyncio.FIRST_COMPLETED)
                 continue
 
-            if nodes and all(node.status is NodeStatus.COMPLETED for node in nodes):
+            active_nodes = [
+                node for node in nodes if node.status is not NodeStatus.INVALIDATED
+            ]
+            if active_nodes and all(
+                node.status is NodeStatus.COMPLETED for node in active_nodes
+            ):
                 await self._task_service.finalize_if_complete(task_id)
                 return
-
             await self._events.append(
                 task_id,
                 EventType.ERROR,
@@ -290,9 +296,22 @@ class Orchestrator:
             )
             return
         if self._replan_on_failure:
+            await self._fail_assigned_interventions(node)
             await self._replan(task, node)
             return
+        await self._fail_assigned_interventions(node)
         await self._events.append(task.id, EventType.TASK_FAILED, {})
+
+    async def _fail_assigned_interventions(self, node: Node) -> None:
+        for intervention in await projections.fetch_interventions_by_assigned_node(
+            self._db, node.id
+        ):
+            if intervention.status is InterventionStatus.PENDING:
+                await self._events.append(
+                    node.task_id,
+                    EventType.INTERVENTION_FAILED,
+                    {"intervention_id": intervention.id},
+                )
 
     async def _replan(self, task: OrchestrationTask, failed_node: Node) -> None:
         plan = await projections.fetch_current_plan(self._db, task.id)
@@ -377,6 +396,28 @@ class Orchestrator:
                 None,
             )
             if open_pending is not None:
+                if open_pending.assigned_node_id:
+                    helper = await projections.fetch_node(
+                        self._db, open_pending.assigned_node_id
+                    )
+                    if helper is None or helper.status is NodeStatus.INVALIDATED:
+                        await self._events.append(
+                            task.id,
+                            EventType.INTERVENTION_FAILED,
+                            {"intervention_id": open_pending.id},
+                        )
+                        progressed = True
+                    elif helper.status is NodeStatus.COMPLETED:
+                        await self._events.append(
+                            task.id,
+                            EventType.INTERVENTION_RESOLVED,
+                            {
+                                "intervention_id": open_pending.id,
+                                "answer": {"text": self._artifact_text(helper.output)},
+                                "responder": helper.agent_name or "peer_agent",
+                            },
+                        )
+                        progressed = True
                 continue
 
             await self._create_intervention(task, node)
@@ -407,6 +448,106 @@ class Orchestrator:
             )
             deadline_at = deadline.isoformat()
 
+        assigned_node_id: str | None = None
+        assigned_to: str | None = None
+        if policy == "peer_agent":
+            plan = await projections.fetch_current_plan(self._db, task.id)
+            if plan is None:
+                return
+            try:
+                choice = await self._peer_choice(task, node, question)
+                reusable = await self._reusable_helper(plan, node, choice.agent_name)
+            except Exception as exc:  # noqa: BLE001 - 协助决策失败按节点失败处理
+                await self._fail_intervention(task, node, intervention_id, exc)
+                return
+            if reusable is not None and reusable.status is NodeStatus.COMPLETED:
+                await self._append_intervention_requested(
+                    task,
+                    node,
+                    intervention_id,
+                    policy,
+                    question,
+                    deadline_at,
+                    reusable.id,
+                    choice.agent_name,
+                )
+                await self._events.append(
+                    task.id,
+                    EventType.INTERVENTION_RESOLVED,
+                    {
+                        "intervention_id": intervention_id,
+                        "answer": {"text": self._artifact_text(reusable.output)},
+                        "responder": choice.agent_name,
+                    },
+                )
+                return
+            if reusable is not None:
+                assigned_node_id = reusable.id
+            else:
+                helper_key = f"a{uuid4().hex[:8]}"
+                assigned_node_id = f"{plan.id}:{helper_key}"
+                await self._task_service.extend_plan(
+                    task.id,
+                    added_nodes=[
+                        PlanNodeDraft(
+                            id=helper_key,
+                            name=f"协助 · {choice.agent_name}",
+                            agent_name=choice.agent_name,
+                            input={"text": choice.instruction},
+                        )
+                    ],
+                    edges=[(helper_key, self._dag_id(plan.id, node.id))],
+                    rationale=f"peer assistance for node {node.name}",
+                )
+            assigned_to = choice.agent_name
+
+        await self._append_intervention_requested(
+            task,
+            node,
+            intervention_id,
+            policy,
+            question,
+            deadline_at,
+            assigned_node_id,
+            assigned_to,
+        )
+
+        if policy == "human":
+            self._timeout_tasks[intervention_id] = asyncio.create_task(
+                self._timeout_watcher(
+                    task.id, intervention_id, self._policy.config.timeout_seconds
+                )
+            )
+            return
+
+        if policy == "auto_llm":
+            try:
+                answer = await self._assist_text(task, node, question)
+            except Exception as exc:  # noqa: BLE001 - 协助失败按节点失败处理
+                await self._fail_intervention(task, node, intervention_id, exc)
+                return
+            await self._events.append(
+                task.id,
+                EventType.INTERVENTION_RESOLVED,
+                {
+                    "intervention_id": intervention_id,
+                    "answer": {"text": answer},
+                    "responder": "auto_llm",
+                },
+            )
+        # peer_agent：扩展已写入，协助节点由调度器正常派发
+
+    async def _append_intervention_requested(
+        self,
+        task: OrchestrationTask,
+        node: Node,
+        intervention_id: str,
+        policy: str,
+        question: str,
+        deadline_at: str | None,
+        assigned_node_id: str | None,
+        assigned_to: str | None,
+    ) -> None:
         await self._events.append(
             task.id,
             EventType.INTERVENTION_REQUESTED,
@@ -418,49 +559,90 @@ class Orchestrator:
                 "question": {"text": question},
                 "responder": None,
                 "deadline_at": deadline_at,
+                "assigned_node_id": assigned_node_id,
+                "assigned_to": assigned_to,
             },
         )
 
-        if policy == "human":
-            self._timeout_tasks[intervention_id] = asyncio.create_task(
-                self._timeout_watcher(
-                    task.id, intervention_id, self._policy.config.timeout_seconds
-                )
-            )
-            return
-
-        try:
-            if policy == "auto_llm":
-                answer = await self._assist_text(task, node, question)
-                responder = "auto_llm"
-            else:
-                answer, responder = await self._peer_answer(task, node)
-        except Exception as exc:  # noqa: BLE001 - 协助失败按节点失败处理
-            await self._events.append(
-                task.id,
-                EventType.ERROR,
-                {"message": f"assist failed: {exc}", "node_id": node.id},
-            )
-            await self._events.append(
-                task.id,
-                EventType.NODE_STATE_CHANGED,
-                {
-                    "node_id": node.id,
-                    "from": node.status.value,
-                    "to": NodeStatus.FAILED.value,
-                },
-            )
-            return
-
+    async def _fail_intervention(
+        self,
+        task: OrchestrationTask,
+        node: Node,
+        intervention_id: str,
+        exc: Exception,
+    ) -> None:
         await self._events.append(
             task.id,
-            EventType.INTERVENTION_RESOLVED,
+            EventType.ERROR,
+            {"message": f"assist failed: {exc}", "node_id": node.id},
+        )
+        await self._events.append(
+            task.id,
+            EventType.INTERVENTION_FAILED,
+            {"intervention_id": intervention_id},
+        )
+        await self._events.append(
+            task.id,
+            EventType.NODE_STATE_CHANGED,
             {
-                "intervention_id": intervention_id,
-                "answer": {"text": answer},
-                "responder": responder,
+                "node_id": node.id,
+                "from": node.status.value,
+                "to": NodeStatus.FAILED.value,
             },
         )
+
+    @staticmethod
+    def _dag_id(plan_id: str, node_id: str) -> str:
+        return node_id[len(plan_id) + 1 :]
+
+    @staticmethod
+    def _artifact_text(output: dict[str, Any] | None) -> str:
+        artifacts = (output or {}).get("artifacts", [])
+        return "\n".join(
+            artifact.get("text", "")
+            for artifact in artifacts
+            if isinstance(artifact, dict) and artifact.get("text")
+        )
+
+    async def _reusable_helper(
+        self, plan: Any, parent: Node, agent_name: str
+    ) -> Node | None:
+        derived = {
+            f"{plan.id}:{node['id']}"
+            for node in plan.dag.get("nodes", [])
+            if node.get("derived")
+        }
+        if not derived:
+            return None
+        for candidate in await projections.fetch_nodes(
+            self._db, parent.task_id, plan.id
+        ):
+            if candidate.id not in derived:
+                continue
+            if candidate.agent_name != agent_name:
+                continue
+            if candidate.status is NodeStatus.INVALIDATED:
+                continue
+            if candidate.id in parent.deps:
+                return candidate
+        return None
+
+    async def _has_pending_assist(self, parked: list[Node]) -> bool:
+        for node in parked:
+            for intervention in await projections.fetch_interventions_for_node(
+                self._db, node.id
+            ):
+                if (
+                    intervention.status is not InterventionStatus.PENDING
+                    or not intervention.assigned_node_id
+                ):
+                    continue
+                helper = await projections.fetch_node(
+                    self._db, intervention.assigned_node_id
+                )
+                if helper is not None and helper.status is not NodeStatus.INVALIDATED:
+                    return True
+        return False
 
     async def _timeout_watcher(
         self, task_id: str, intervention_id: str, delay: float
@@ -580,11 +762,11 @@ class Orchestrator:
         )
         return await self._llm.text(system=ASSIST_SYSTEM, user=user)
 
-    async def _peer_answer(
-        self, task: OrchestrationTask, node: Node
-    ) -> tuple[str, str]:
-        if self._llm is None or self._registry is None or self._remote is None:
-            raise RuntimeError("peer_agent policy requires llm/registry/remote")
+    async def _peer_choice(
+        self, task: OrchestrationTask, node: Node, question: str
+    ) -> PeerChoice:
+        if self._llm is None or self._registry is None:
+            raise RuntimeError("peer_agent policy requires llm/registry")
         agents = await self._registry.list()
         options = "\n".join(
             f"- {record.name}: {record.card.get('description', '')}" for record in agents
@@ -593,7 +775,7 @@ class Orchestrator:
             system=PEER_SYSTEM,
             user=(
                 f"Original request:\n{task.request}\n\n"
-                f"Worker node '{node.name}' needs help.\n"
+                f"Worker node '{node.name}' asks:\n{question}\n\n"
                 f"Registered agents:\n{options}"
             ),
             schema=PeerChoice,
@@ -601,26 +783,7 @@ class Orchestrator:
         record = await self._registry.get_by_name(choice.agent_name)
         if record is None:
             raise ValueError(f"peer agent not registered: {choice.agent_name}")
-        agent_url = self._registry.agent_url(record)
-        answer = await self._send_once(
-            agent_url, choice.instruction, context_id=f"{task.id}:peer"
-        )
-        return answer, agent_url
-
-    async def _send_once(
-        self, agent_url: str, text: str, *, context_id: str | None = None
-    ) -> str:
-        assert self._remote is not None
-        collected: list[str] = []
-        async with asyncio.timeout(120.0):
-            async for chunk in self._remote.send_text(
-                agent_url, text, context_id=context_id
-            ):
-                if chunk.HasField("artifact_update"):
-                    collected.append(_join_text(chunk.artifact_update.artifact.parts))
-                elif chunk.HasField("message"):
-                    collected.append(_join_text(chunk.message.parts))
-        return "\n".join(part for part in collected if part)
+        return choice
 
     @staticmethod
     def _deps_completed(node: Node, nodes: list[Node]) -> bool:

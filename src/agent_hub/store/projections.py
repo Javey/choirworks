@@ -512,6 +512,16 @@ async def fetch_interventions_for_node(db: Any, node_id: str) -> list[Interventi
     return [_row_to_intervention(row) for row in await cursor.fetchall()]
 
 
+async def fetch_interventions_by_assigned_node(
+    db: Any, node_id: str
+) -> list[Intervention]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM interventions WHERE assigned_node_id = ? ORDER BY created_at, id",
+        (node_id,),
+    )
+    return [_row_to_intervention(row) for row in await cursor.fetchall()]
+
+
 async def fetch_checkpoint(db: Any, checkpoint_id: str) -> Checkpoint | None:
     cursor = await db.conn.execute(
         "SELECT * FROM checkpoints WHERE id = ?", (checkpoint_id,)

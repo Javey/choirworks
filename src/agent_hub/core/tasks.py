@@ -8,7 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.planner import PlanDraft, draft_to_dag
+from agent_hub.core.planner import PlanDraft, PlanNodeDraft, draft_to_dag
 from agent_hub.models.domain import Checkpoint, Node, OrchestrationTask, Plan
 from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
 from agent_hub.store import projections
@@ -183,6 +183,45 @@ class TaskService:
             node_ids=[f"{plan_id}:{node.id}" for node in draft.nodes],
         )
 
+    async def extend_plan(
+        self,
+        task_id: str,
+        *,
+        added_nodes: list[PlanNodeDraft],
+        edges: list[tuple[str, str]],
+        rationale: str,
+    ) -> Plan:
+        plan = await projections.fetch_current_plan(self._db, task_id)
+        if plan is None:
+            raise TaskNotFound(task_id)
+        records = await self._registry.list()
+        agent_urls = {
+            record.name: self._registry.agent_url(record) for record in records
+        }
+        dag_nodes = []
+        for node in added_nodes:
+            materialized = draft_to_dag(
+                PlanDraft(rationale=rationale, nodes=[node]), agent_urls
+            )["nodes"][0]
+            materialized["derived"] = True
+            dag_nodes.append(materialized)
+        await self._events.append(
+            task_id,
+            EventType.PLAN_EXTENDED,
+            {
+                "plan_id": plan.id,
+                "version": plan.version,
+                "rationale": rationale,
+                "added_nodes": dag_nodes,
+                "added_edges": [
+                    {"from": source, "to": target} for source, target in edges
+                ],
+            },
+        )
+        refreshed = await projections.fetch_current_plan(self._db, task_id)
+        assert refreshed is not None
+        return refreshed
+
     async def create_checkpoint(self, task_id: str) -> Checkpoint:
         task = await projections.fetch_task(self._db, task_id)
         plan = await projections.fetch_current_plan(self._db, task_id)
@@ -282,6 +321,7 @@ class TaskService:
         if task.status is not TaskStatus.RUNNING or plan is None:
             return task
         nodes = await projections.fetch_nodes(self._db, task_id, plan.id)
+        nodes = [node for node in nodes if node.status is not NodeStatus.INVALIDATED]
         if not nodes:
             return task
         statuses = {node.status for node in nodes}

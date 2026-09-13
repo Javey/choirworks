@@ -139,11 +139,12 @@ async def test_peer_agent_answers(tmp_path):
         await asyncio.wait_for(orchestrator.wait(task_id), 10.0)
         snapshot = await tasks.get_snapshot(task_id)
         assert snapshot.task.status is TaskStatus.COMPLETED
-        text = snapshot.nodes[0].output["artifacts"][0]["text"]
+        parent = next(node for node in snapshot.nodes if node.agent_name == "asker")
+        text = parent.output["artifacts"][0]["text"]
         assert text.startswith("answered:")
         assert "echo:lookup name" in text
         interventions = await projections.fetch_interventions(db, task_id)
-        assert interventions[0].responder == helper.url
+        assert interventions[0].responder == "helper"
     finally:
         await orchestrator.stop()
         await remote.close()
