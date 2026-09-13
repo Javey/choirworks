@@ -14,6 +14,7 @@ from a2a.types import (
     ListTasksResponse,
     Message,
     SendMessageRequest,
+    StreamResponse,
     SubscribeToTaskRequest,
     Task,
     TaskArtifactUpdateEvent,
@@ -28,14 +29,32 @@ from a2a.utils.errors import (
 )
 from fastapi import FastAPI
 
-from choirworks.a2a.mapping import room_message_to_a2a, snapshot_to_task
+from choirworks.a2a.mapping import (
+    TaskStreamMapper,
+    room_message_to_a2a,
+    snapshot_to_task,
+)
 from choirworks.core.cancel import TaskNotCancelable, cancel_task
+from choirworks.core.events import SubscriptionClosed
 from choirworks.core.room import post_message
 from choirworks.core.tasks import TaskNotFound, TaskSnapshot
-from choirworks.models.enums import InterventionStatus, NodeStatus, TaskStatus
+from choirworks.models.enums import (
+    EventType,
+    InterventionStatus,
+    NodeStatus,
+    TaskStatus,
+)
 from choirworks.store import projections
+from choirworks.store.event_store import Event
 
 logger = logging.getLogger(__name__)
+
+
+def _unwrap_stream_response(response: StreamResponse) -> Any:
+    field = response.WhichOneof("payload")
+    if field is None:
+        raise InternalError("stream response has no payload")
+    return getattr(response, field)
 
 
 class HubA2AHandler(RequestHandler):
@@ -181,6 +200,68 @@ class HubA2AHandler(RequestHandler):
     ) -> Task | Message:
         return await self._submit(params)
 
+    async def _enrich(self, event: Event) -> Event:
+        payload = dict(event.payload)
+        if event.type in (
+            EventType.PLAN_EXTENDED,
+            EventType.PLAN_SUPERSEDED,
+        ):
+            plan = await projections.fetch_current_plan(
+                self._app.state.db, event.task_id
+            )
+            if plan is not None:
+                payload["dag"] = plan.dag
+                payload["version"] = plan.version
+                payload["rationale"] = plan.rationale
+        elif event.type is EventType.NODE_STATE_CHANGED:
+            node = await projections.fetch_node(
+                self._app.state.db, payload.get("node_id", "")
+            )
+            if node is not None:
+                payload.setdefault("node_name", node.name)
+                payload.setdefault("agent_name", node.agent_name)
+                payload.setdefault("attempt", node.attempt)
+        if payload == event.payload:
+            return event
+        return event.model_copy(update={"payload": payload})
+
+    async def _stream_task(self, task_id: str):
+        bus = self._app.state.event_bus
+        snapshot = await self._snapshot(task_id)
+        question = await self._pending_question(snapshot)
+        mapper = TaskStreamMapper(snapshot)
+        seen = snapshot.last_seq
+        subscription = bus.subscribe(task_id)
+        try:
+            yield snapshot_to_task(snapshot, question=question)
+            if snapshot.task.status in (
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELED,
+            ):
+                return
+            for event in await self._app.state.event_store.replay(task_id, seen):
+                seen = event.seq
+                for response in mapper.map_event(await self._enrich(event)):
+                    yield _unwrap_stream_response(response)
+                if mapper.terminal:
+                    return
+            while True:
+                try:
+                    event = await subscription.get()
+                except SubscriptionClosed:
+                    break
+                if event.seq <= seen:
+                    continue
+                seen = event.seq
+                for response in mapper.map_event(await self._enrich(event)):
+                    yield _unwrap_stream_response(response)
+                if mapper.terminal:
+                    return
+        finally:
+            subscription.close()
+            bus.unsubscribe(subscription)
+
     async def on_message_send_stream(
         self,
         params: SendMessageRequest,
@@ -188,8 +269,12 @@ class HubA2AHandler(RequestHandler):
     ) -> AsyncGenerator[
         Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
-        raise UnsupportedOperationError("SendStreamingMessage not implemented yet")
-        yield
+        result = await self._submit(params)
+        if isinstance(result, Message):
+            yield result
+            return
+        async for response in self._stream_task(result.id):
+            yield response
 
     async def on_subscribe_to_task(
         self,
@@ -198,8 +283,12 @@ class HubA2AHandler(RequestHandler):
     ) -> AsyncGenerator[
         Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
-        raise UnsupportedOperationError("SubscribeToTask not implemented yet")
-        yield
+        try:
+            await self._snapshot(params.id)
+        except TaskNotFound as exc:
+            raise TaskNotFoundError(f"task not found: {params.id}") from exc
+        async for response in self._stream_task(params.id):
+            yield response
 
     async def on_get_extended_agent_card(
         self, params: Any, context: ServerCallContext
