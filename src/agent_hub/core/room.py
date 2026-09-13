@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 from uuid import uuid4
 
 from agent_hub.models.domain import RoomMessage
 from agent_hub.models.enums import EventType
 from agent_hub.store import projections
+
+_MENTION_RE = re.compile(r"@([A-Za-z0-9_\-]+)")
 
 _seq_locks: dict[str, asyncio.Lock] = {}
 
@@ -93,3 +96,34 @@ async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any])
             node_id=node.id,
             task_id=task.id,
         )
+
+
+def extract_mentions(text: str, known_names: set[str]) -> list[str]:
+    found: list[str] = []
+    for name in _MENTION_RE.findall(text):
+        if name in known_names and name not in found:
+            found.append(name)
+    return found
+
+
+async def post_assistant_message(
+    db: Any,
+    events: Any,
+    *,
+    conversation_id: str,
+    text: str,
+    task_id: str | None = None,
+    node_id: str | None = None,
+    intervention_id: str | None = None,
+) -> RoomMessage:
+    return await post_message(
+        db,
+        events,
+        conversation_id=conversation_id,
+        role="assistant",
+        sender="assistant",
+        text=text,
+        task_id=task_id,
+        node_id=node_id,
+        intervention_id=intervention_id,
+    )

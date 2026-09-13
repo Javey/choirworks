@@ -18,6 +18,7 @@ from agent_hub.api import rollback as rollback_routes
 from agent_hub.api import sse as sse_routes
 from agent_hub.api import tasks as tasks_routes
 from agent_hub.config import Settings
+from agent_hub.core.coordinator import RoomCoordinator
 from agent_hub.core.dispatcher import NodeDispatcher
 from agent_hub.core.events import EventBus
 from agent_hub.core.llm import LiteLLMClient, LLMClient
@@ -86,6 +87,10 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
             retry_backoff_seconds=resolved.scheduler.retry_backoff_seconds,
             replan_on_failure=resolved.scheduler.replan_on_failure,
         )
+        coordinator = RoomCoordinator(
+            db, event_store, task_service, orchestrator, registry, llm=llm_client
+        )
+        orchestrator.set_coordinator(coordinator)
 
         app.state.settings = resolved
         app.state.db = db
@@ -97,6 +102,7 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
         app.state.dispatcher = dispatcher
         app.state.planner = planner
         app.state.orchestrator = orchestrator
+        app.state.coordinator = coordinator
 
         recovery: RecoveryResult | None = None
         reconcile_task: asyncio.Task | None = None

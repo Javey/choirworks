@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from agent_hub.api.schemas import PostMessageIn, PostMessageOut, RoomMessagesOut
-from agent_hub.core import room
 from agent_hub.store import projections
 
 router = APIRouter(tags=["messages"])
@@ -45,8 +44,6 @@ async def create_message(
     conversation_id: str, body: PostMessageIn, request: Request
 ) -> PostMessageOut:
     db = request.app.state.db
-    events = request.app.state.event_store
-    service = request.app.state.task_service
     registry = request.app.state.registry
     if await projections.fetch_conversation(db, conversation_id) is None:
         raise HTTPException(
@@ -55,25 +52,20 @@ async def create_message(
     if body.quote_id is not None or body.interrupt:
         raise HTTPException(
             status_code=400,
-            detail="引用与打断路由将在 M9 提供，当前请直接发送新消息",
+            detail="引用与打断路由将在 M9 后续任务提供，当前请直接发送新消息",
         )
     for agent_name in body.mentions:
         if await registry.get_by_name(agent_name) is None:
             raise HTTPException(
                 status_code=400, detail=f"agent not registered: {agent_name}"
             )
-    task_id = await service.create_pending_task(
-        body.text, conversation_id=conversation_id
-    )
-    message = await room.post_message(
-        db,
-        events,
-        conversation_id=conversation_id,
-        role="user",
-        sender="CEO",
+    result = await request.app.state.coordinator.handle_human_message(
+        conversation_id,
         text=body.text,
         mentions=body.mentions,
-        task_id=task_id,
+        quote_id=body.quote_id,
+        interrupt=body.interrupt,
     )
-    request.app.state.orchestrator.start(task_id)
-    return PostMessageOut(message_id=message.id, seq=message.seq, task_id=task_id)
+    return PostMessageOut(
+        message_id=result.message.id, seq=result.message.seq, task_id=result.task_id
+    )

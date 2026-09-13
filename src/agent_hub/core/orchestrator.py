@@ -62,11 +62,12 @@ class Orchestrator:
         remote: RemoteAgentClient | None = None,
         llm: LLMClient | None = None,
         policy_engine: PolicyEngine | None = None,
-        max_parallel: int = 5,
+        max_parallel: int = 4,
         max_node_attempts: int = 2,
         retry_backoff_seconds: float = 1.0,
         replan_on_failure: bool = True,
     ):
+        self._coordinator: Any | None = None
         self._db = db
         self._events = events
         self._planner = planner
@@ -86,6 +87,9 @@ class Orchestrator:
         self._inflight: set[asyncio.Task] = set()
         self._continuing: dict[str, asyncio.Task] = {}
         self._timeout_tasks: dict[str, asyncio.Task] = {}
+
+    def set_coordinator(self, coordinator: Any) -> None:
+        self._coordinator = coordinator
 
     def start(self, task_id: str) -> None:
         existing = self._runs.get(task_id)
