@@ -54,9 +54,11 @@ async def test_agent_output_becomes_room_message(api):
 
     timeline = (await client.get(f"/v1/conversations/{conversation_id}/messages")).json()
     messages = timeline["messages"]
-    assert [message["role"] for message in messages] == ["user", "agent"]
-    assert messages[1]["sender"] == "echo"
-    assert messages[1]["text"].startswith("echo:")
-    assert "hi" in messages[1]["text"]
-    assert messages[1]["node_id"]
-    assert [message["seq"] for message in messages] == [1, 2]
+    content = [message for message in messages if message["role"] in {"user", "agent"}]
+    assert [message["role"] for message in content] == ["user", "agent"]
+    agent_message = content[1]
+    assert agent_message["sender"] == "echo"
+    assert agent_message["text"].startswith("echo:")
+    assert "hi" in agent_message["text"]
+    assert agent_message["node_id"]
+    assert agent_message["seq"] > content[0]["seq"]

@@ -116,8 +116,6 @@ class NodeDispatcher:
             raise InvalidNodeState(f"node {node_id} has no remote task id")
 
         await self._transition(node, NodeStatus.WORKING)
-        package = await self._context_for(node)
-        continue_text = package.text if package is not None else text
         artifacts: list[dict[str, Any]] = []
         current = NodeStatus.WORKING
         try:
@@ -126,7 +124,7 @@ class NodeDispatcher:
                     node,
                     self._remote.send_text(
                         node.agent_url or "",
-                        continue_text,
+                        text,
                         task_id=node.a2a_task_id,
                         context_id=node.a2a_context_id,
                         message_id=f"{task_id}:{node_id}:continue:{node.attempt}",
@@ -179,10 +177,9 @@ class NodeDispatcher:
         task = await projections.fetch_task(self._db, node.task_id)
         if task is None or task.conversation_id is None or not node.agent_name:
             return None
-        messages = await projections.fetch_messages(
-            self._db, task.conversation_id, limit=1
-        )
-        if not messages:
+        if not await projections.has_content_messages(
+            self._db, task.conversation_id
+        ):
             return None
         instruction = str((node.input or {}).get("text", ""))
         return await build_agent_context(

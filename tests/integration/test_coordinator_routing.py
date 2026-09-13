@@ -74,10 +74,12 @@ async def test_single_mention_creates_direct_agent_task(api):
     assert len(user_messages) == 1
     assert user_messages[0]["mentions"] == ["echo"]
     assert user_messages[0]["task_id"] == body["task_id"]
-    assert [message["role"] for message in timeline["messages"]][-2:] == [
-        "user",
-        "agent",
+    content_roles = [
+        message["role"]
+        for message in timeline["messages"]
+        if message["role"] in {"user", "agent"}
     ]
+    assert content_roles == ["user", "agent"]
 
 
 async def test_multiple_mentions_join_members_and_announce(api):

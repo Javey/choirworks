@@ -739,3 +739,12 @@ async def fetch_undelivered_queued_messages(db: Any) -> list[RoomMessage]:
         " AND delivered_at IS NULL ORDER BY seq"
     )
     return [_row_to_room_message(row) for row in await cursor.fetchall()]
+
+
+async def has_content_messages(db: Any, conversation_id: str) -> bool:
+    cursor = await db.conn.execute(
+        "SELECT 1 FROM messages WHERE conversation_id = ? AND role IN ('user', 'agent')"
+        " LIMIT 1",
+        (conversation_id,),
+    )
+    return await cursor.fetchone() is not None

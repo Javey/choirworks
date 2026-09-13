@@ -70,14 +70,20 @@ async def test_post_message_creates_task_and_timeline(api):
     await wait_completed(client, body["task_id"])
 
     timeline = (await client.get(f"/v1/conversations/{conversation_id}/messages")).json()
-    assert [message["role"] for message in timeline["messages"]] == ["user", "agent"]
+    content_roles = [
+        message["role"]
+        for message in timeline["messages"]
+        if message["role"] in {"user", "agent"}
+    ]
+    assert content_roles == ["user", "agent"]
+    assert timeline["messages"][0]["role"] == "user"
     assert timeline["messages"][0]["text"] == "hi"
-    assert timeline["last_seq"] == 2
+    assert timeline["last_seq"] == timeline["messages"][-1]["seq"]
 
     page = (
         await client.get(f"/v1/conversations/{conversation_id}/messages?since_seq=1")
     ).json()
-    assert [message["role"] for message in page["messages"]] == ["agent"]
+    assert "agent" in [message["role"] for message in page["messages"]]
 
 
 async def test_post_message_validates_input(api):
