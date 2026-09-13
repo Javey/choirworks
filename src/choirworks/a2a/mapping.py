@@ -150,7 +150,6 @@ _TERMINAL_NODE_VALUES = {
 _PLAN_EVENTS = {
     EventType.PLAN_CREATED,
     EventType.PLAN_EXTENDED,
-    EventType.PLAN_SUPERSEDED,
 }
 
 _NOTIFICATION_STATES = {
@@ -160,7 +159,6 @@ _NOTIFICATION_STATES = {
     EventType.NODE_RETRY_SCHEDULED,
     EventType.NODE_INVALIDATED,
     EventType.NODE_CANCEL_SENT,
-    EventType.INTERVENTION_RESOLVED,
     EventType.INTERVENTION_FAILED,
     EventType.CHECKPOINT_CREATED,
     EventType.ROLLBACK_PERFORMED,
@@ -174,6 +172,8 @@ class TaskStreamMapper:
         self._task_id = snapshot.task.id
         self._context_id = snapshot.task.conversation_id or ""
         self._state = TASK_STATE_MAP[snapshot.task.status]
+        self._last_error: str | None = None
+        self._finalized: set[str] = set()
         self._node_artifacts: dict[str, set[str]] = defaultdict(set)
         for node in snapshot.nodes:
             for item in (node.output or {}).get("artifacts", []):
@@ -200,7 +200,7 @@ class TaskStreamMapper:
         )
 
     def _apply_state(self, state: TaskState) -> list[StreamResponse]:
-        if state is self._state:
+        if state == self._state:
             return []
         self._state = state
         if state in TERMINAL_A2A_STATES:
@@ -210,12 +210,16 @@ class TaskStreamMapper:
     def _last_chunks(self, node_id: str) -> list[StreamResponse]:
         responses: list[StreamResponse] = []
         for inner_id in sorted(self._node_artifacts.get(node_id, set())):
+            key = artifact_id(node_id, inner_id)
+            if key in self._finalized:
+                continue
+            self._finalized.add(key)
             responses.append(
                 StreamResponse(
                     artifact_update=TaskArtifactUpdateEvent(
                         task_id=self._task_id,
                         context_id=self._context_id,
-                        artifact=Artifact(artifact_id=artifact_id(node_id, inner_id)),
+                        artifact=Artifact(artifact_id=key),
                         append=True,
                         last_chunk=True,
                     )
@@ -238,7 +242,12 @@ class TaskStreamMapper:
         if event_type is EventType.TASK_COMPLETED:
             return self._apply_state(TaskState.TASK_STATE_COMPLETED)
         if event_type is EventType.TASK_FAILED:
-            return self._apply_state(TaskState.TASK_STATE_FAILED)
+            responses = self._apply_state(TaskState.TASK_STATE_FAILED)
+            if responses and self._last_error:
+                responses[0].status_update.status.message.CopyFrom(
+                    agent_message(self._last_error, message_id=f"{self._task_id}:error")
+                )
+            return responses
         if event_type is EventType.NODE_ARTIFACT:
             node_id = payload["node_id"]
             self._node_artifacts[node_id].add(payload["artifact_id"])
@@ -258,9 +267,26 @@ class TaskStreamMapper:
                     )
                 )
             ]
+        if event_type is EventType.PLAN_SUPERSEDED:
+            return [
+                self._status_update(
+                    metadata={
+                        "kind": event_type.value,
+                        "plan_id": payload.get("plan_id"),
+                        "superseded_by_version": payload.get("superseded_by_version"),
+                    }
+                )
+            ]
         if event_type in _PLAN_EVENTS:
+            metadata = {
+                "kind": event_type.value,
+                "plan_id": payload.get("plan_id"),
+                "version": payload.get("version"),
+                "rationale": payload.get("rationale"),
+            }
             dag = payload.get("dag")
-            parts = [data_part(dag)] if dag is not None else []
+            if dag is None:
+                return [self._status_update(metadata=metadata)]
             return [
                 StreamResponse(
                     artifact_update=TaskArtifactUpdateEvent(
@@ -269,16 +295,11 @@ class TaskStreamMapper:
                         artifact=Artifact(
                             artifact_id=f"plan:{payload.get('plan_id')}",
                             name="plan",
-                            parts=parts,
+                            parts=[data_part(dag)],
                         ),
                         append=False,
                         last_chunk=True,
-                        metadata=struct_value(
-                            {
-                                "version": payload.get("version"),
-                                "rationale": payload.get("rationale"),
-                            }
-                        ),
+                        metadata=struct_value(metadata),
                     )
                 )
             ]
@@ -298,8 +319,42 @@ class TaskStreamMapper:
                     message_id=payload.get("intervention_id") or "intervention",
                 )
             ]
+        if event_type is EventType.INTERVENTION_RESOLVED:
+            answer = (payload.get("answer") or {}).get("text", "")
+            metadata = {
+                "kind": event_type.value,
+                "intervention_id": payload.get("intervention_id"),
+                "answer": answer,
+            }
+            if self._state == TaskState.TASK_STATE_INPUT_REQUIRED:
+                self._state = TaskState.TASK_STATE_WORKING
+                return [
+                    self._status_update(
+                        TaskState.TASK_STATE_WORKING,
+                        metadata=metadata,
+                        message_text=answer or None,
+                        message_id=payload.get("intervention_id") or "intervention",
+                    )
+                ]
+            return [self._status_update(metadata=metadata)]
         if event_type in _NOTIFICATION_STATES:
-            metadata = {"kind": event_type.value, **payload}
+            if event_type is EventType.ERROR:
+                self._last_error = payload.get("message")
+            if event_type is EventType.CHECKPOINT_CREATED:
+                metadata = {
+                    "kind": event_type.value,
+                    "checkpoint_id": payload.get("checkpoint_id"),
+                    "seq": payload.get("seq"),
+                    "plan_version": payload.get("plan_version"),
+                }
+            elif event_type is EventType.ROLLBACK_PERFORMED:
+                metadata = {"kind": event_type.value}
+                if "reset_node_ids" in payload:
+                    metadata["reset_node_ids"] = payload["reset_node_ids"]
+                if "invalidated_node_ids" in payload:
+                    metadata["invalidated_node_ids"] = payload["invalidated_node_ids"]
+            else:
+                metadata = {**payload, "kind": event_type.value}
             responses = [self._status_update(metadata=metadata)]
             if (
                 event_type is EventType.NODE_STATE_CHANGED
