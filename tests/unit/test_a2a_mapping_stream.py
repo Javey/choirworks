@@ -9,10 +9,10 @@ from choirworks.models.enums import EventType, NodeStatus, TaskStatus
 from choirworks.store.event_store import Event
 
 
-def _snapshot() -> TaskSnapshot:
+def _snapshot(status: TaskStatus = TaskStatus.RUNNING) -> TaskSnapshot:
     task = OrchestrationTask(
         id="task-1",
-        status=TaskStatus.RUNNING,
+        status=status,
         request="分析 X",
         conversation_id="conv-1",
         created_at=datetime.now(UTC),
@@ -408,8 +408,8 @@ def test_checkpoint_notification_metadata_is_whitelisted():
     assert meta.fields["checkpoint_id"].string_value == "ck1"
     assert meta.fields["seq"].number_value == 4
     assert meta.fields["plan_version"].number_value == 1
+    assert meta.fields["frontier"].list_value.values[0].string_value == "plan1:n1"
     assert "artifacts" not in meta.fields
-    assert "frontier" not in meta.fields
 
 
 def test_rollback_notification_metadata_is_whitelisted():
@@ -418,18 +418,27 @@ def test_rollback_notification_metadata_is_whitelisted():
         _event(
             EventType.ROLLBACK_PERFORMED,
             {
+                "checkpoint_id": "ck1",
+                "plan_id": "plan1",
+                "plan_version": 1,
+                "dag": {"nodes": [{"id": "n1"}]},
+                "deps_restore": {},
                 "reset_node_ids": ["plan1:n1"],
-                "invalidated_node_ids": ["plan1:n2"],
-                "artifacts": {"big": "payload"},
+                "invalidate_node_ids": ["plan1:n2"],
+                "cancelled_remote_task_ids": ["remote-1"],
             },
         )
     )
     meta = responses[0].status_update.metadata
     assert meta.fields["kind"].string_value == "rollback.performed"
     assert meta.fields["reset_node_ids"].list_value.values[0].string_value == "plan1:n1"
-    assert meta.fields["invalidated_node_ids"].list_value.values[0].string_value == (
+    assert meta.fields["invalidate_node_ids"].list_value.values[0].string_value == (
         "plan1:n2"
     )
+    assert meta.fields["cancelled_remote_task_ids"].list_value.values[0].string_value == (
+        "remote-1"
+    )
+    assert "dag" not in meta.fields
     assert "artifacts" not in meta.fields
 
 
@@ -463,3 +472,60 @@ def test_last_chunk_not_repeated_for_same_artifact():
     )
     assert len(responses) == 1
     assert not responses[0].HasField("artifact_update")
+
+
+def test_last_chunk_reemitted_after_reappend():
+    mapper = TaskStreamMapper(_snapshot())
+    artifact = {
+        "node_id": "plan1:n1",
+        "artifact_id": "a1",
+        "name": "output",
+        "text": "v1",
+        "append": False,
+    }
+    terminal = {"node_id": "plan1:n1", "from": "working", "to": "completed"}
+    mapper.map_event(_event(EventType.NODE_ARTIFACT, artifact))
+    first = mapper.map_event(_event(EventType.NODE_STATE_CHANGED, terminal, seq=2))
+    assert len(first) == 2
+    assert first[1].artifact_update.last_chunk is True
+    mapper.map_event(_event(EventType.NODE_ARTIFACT, {**artifact, "text": "v2"}, seq=3))
+    second = mapper.map_event(_event(EventType.NODE_STATE_CHANGED, terminal, seq=4))
+    assert len(second) == 2
+    assert second[1].artifact_update.last_chunk is True
+
+
+def test_task_failed_after_state_advance_has_no_stale_error():
+    mapper = TaskStreamMapper(_snapshot(TaskStatus.AWAITING_INPUT))
+    mapper.map_event(_event(EventType.ERROR, {"message": "boom"}, seq=2))
+    mapper.map_event(
+        _event(
+            EventType.TASK_STATE_CHANGED,
+            {"from": "awaiting_input", "to": "running"},
+            seq=3,
+        )
+    )
+    responses = mapper.map_event(_event(EventType.TASK_FAILED, {}, seq=4))
+    assert responses[0].status_update.status.state is TaskState.TASK_STATE_FAILED
+    assert not responses[0].status_update.status.HasField("message")
+
+
+def test_task_failed_after_intervention_recovery_has_no_stale_error():
+    mapper = TaskStreamMapper(_snapshot())
+    mapper.map_event(_event(EventType.ERROR, {"message": "boom"}, seq=2))
+    mapper.map_event(
+        _event(
+            EventType.INTERVENTION_REQUESTED,
+            {"intervention_id": "iv1", "node_id": "plan1:n1", "policy": "auto_llm"},
+            seq=3,
+        )
+    )
+    mapper.map_event(
+        _event(
+            EventType.INTERVENTION_RESOLVED,
+            {"intervention_id": "iv1", "answer": {"text": "ok"}},
+            seq=4,
+        )
+    )
+    responses = mapper.map_event(_event(EventType.TASK_FAILED, {}, seq=5))
+    assert responses[0].status_update.status.state is TaskState.TASK_STATE_FAILED
+    assert not responses[0].status_update.status.HasField("message")

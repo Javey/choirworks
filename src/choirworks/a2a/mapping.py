@@ -203,6 +203,7 @@ class TaskStreamMapper:
         if state == self._state:
             return []
         self._state = state
+        self._last_error = None
         if state in TERMINAL_A2A_STATES:
             self.terminal = True
         return [self._status_update(state)]
@@ -242,15 +243,18 @@ class TaskStreamMapper:
         if event_type is EventType.TASK_COMPLETED:
             return self._apply_state(TaskState.TASK_STATE_COMPLETED)
         if event_type is EventType.TASK_FAILED:
+            error = self._last_error
+            self._last_error = None
             responses = self._apply_state(TaskState.TASK_STATE_FAILED)
-            if responses and self._last_error:
+            if responses and error:
                 responses[0].status_update.status.message.CopyFrom(
-                    agent_message(self._last_error, message_id=f"{self._task_id}:error")
+                    agent_message(error, message_id=f"{self._task_id}:error")
                 )
             return responses
         if event_type is EventType.NODE_ARTIFACT:
             node_id = payload["node_id"]
             self._node_artifacts[node_id].add(payload["artifact_id"])
+            self._finalized.discard(artifact_id(node_id, payload["artifact_id"]))
             return [
                 StreamResponse(
                     artifact_update=TaskArtifactUpdateEvent(
@@ -328,6 +332,7 @@ class TaskStreamMapper:
             }
             if self._state == TaskState.TASK_STATE_INPUT_REQUIRED:
                 self._state = TaskState.TASK_STATE_WORKING
+                self._last_error = None
                 return [
                     self._status_update(
                         TaskState.TASK_STATE_WORKING,
@@ -346,13 +351,19 @@ class TaskStreamMapper:
                     "checkpoint_id": payload.get("checkpoint_id"),
                     "seq": payload.get("seq"),
                     "plan_version": payload.get("plan_version"),
+                    "frontier": payload.get("frontier"),
                 }
             elif event_type is EventType.ROLLBACK_PERFORMED:
-                metadata = {"kind": event_type.value}
-                if "reset_node_ids" in payload:
-                    metadata["reset_node_ids"] = payload["reset_node_ids"]
-                if "invalidated_node_ids" in payload:
-                    metadata["invalidated_node_ids"] = payload["invalidated_node_ids"]
+                metadata = {
+                    "kind": event_type.value,
+                    "reset_node_ids": payload.get("reset_node_ids"),
+                }
+                if "invalidate_node_ids" in payload:
+                    metadata["invalidate_node_ids"] = payload["invalidate_node_ids"]
+                if "cancelled_remote_task_ids" in payload:
+                    metadata["cancelled_remote_task_ids"] = payload[
+                        "cancelled_remote_task_ids"
+                    ]
             else:
                 metadata = {**payload, "kind": event_type.value}
             responses = [self._status_update(metadata=metadata)]
