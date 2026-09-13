@@ -10,7 +10,8 @@ import aiosqlite
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id    TEXT NOT NULL,
+  task_id    TEXT,
+  conversation_id TEXT,
   type       TEXT NOT NULL,
   payload    TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -103,6 +104,42 @@ CREATE TABLE IF NOT EXISTS agent_registry (
   last_seen  TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS messages (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  seq             INTEGER NOT NULL,
+  role            TEXT NOT NULL,
+  sender          TEXT,
+  text            TEXT NOT NULL,
+  mentions        TEXT NOT NULL DEFAULT '[]',
+  quote_id        TEXT,
+  task_id         TEXT,
+  node_id         TEXT,
+  intervention_id TEXT,
+  queued_for_node_id TEXT,
+  delivered_at    TEXT,
+  created_at      TEXT NOT NULL,
+  UNIQUE(conversation_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_messages_room_seq ON messages(conversation_id, seq);
+CREATE INDEX IF NOT EXISTS idx_messages_node ON messages(node_id);
+
+CREATE TABLE IF NOT EXISTS room_members (
+  conversation_id TEXT NOT NULL,
+  agent_name      TEXT NOT NULL,
+  agent_url       TEXT NOT NULL,
+  reason          TEXT,
+  joined_at       TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, agent_name)
+);
+
+CREATE TABLE IF NOT EXISTS room_summaries (
+  conversation_id TEXT PRIMARY KEY,
+  covers_seq      INTEGER NOT NULL,
+  summary         TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
 """
 
 
@@ -128,6 +165,33 @@ class Database:
         await self.conn.commit()
 
     async def _migrate(self, conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(events)")
+        event_columns = {row["name"] for row in await cursor.fetchall()}
+        if "conversation_id" not in event_columns:
+            await conn.execute("ALTER TABLE events RENAME TO events_legacy")
+            await conn.execute(
+                "CREATE TABLE events ("
+                "  seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  task_id TEXT,"
+                "  conversation_id TEXT,"
+                "  type TEXT NOT NULL,"
+                "  payload TEXT NOT NULL,"
+                "  created_at TEXT NOT NULL"
+                ")"
+            )
+            await conn.execute(
+                "INSERT INTO events (seq, task_id, conversation_id, type, payload,"
+                " created_at)"
+                " SELECT seq, task_id, NULL, type, payload, created_at FROM events_legacy"
+            )
+            await conn.execute("DROP TABLE events_legacy")
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_conversation_seq"
+            " ON events(conversation_id, seq)"
+        )
         cursor = await conn.execute("PRAGMA table_info(nodes)")
         columns = {row["name"] for row in await cursor.fetchall()}
         for name, ddl in (

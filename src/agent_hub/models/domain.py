@@ -100,3 +100,35 @@ class AgentRecord(BaseModel):
     health: str = "unknown"
     last_seen: datetime | None = None
     created_at: datetime
+
+
+class RoomMessage(BaseModel):
+    id: str
+    conversation_id: str
+    seq: int
+    role: str
+    sender: str | None = None
+    text: str
+    mentions: list[str] = Field(default_factory=list)
+    quote_id: str | None = None
+    task_id: str | None = None
+    node_id: str | None = None
+    intervention_id: str | None = None
+    queued_for_node_id: str | None = None
+    delivered_at: datetime | None = None
+    created_at: datetime
+
+
+class RoomMember(BaseModel):
+    conversation_id: str
+    agent_name: str
+    agent_url: str
+    reason: str | None = None
+    joined_at: datetime
+
+
+class RoomSummary(BaseModel):
+    conversation_id: str
+    covers_seq: int
+    summary: dict[str, Any]
+    updated_at: datetime

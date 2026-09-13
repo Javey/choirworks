@@ -14,6 +14,9 @@ from agent_hub.models.domain import (
     Node,
     OrchestrationTask,
     Plan,
+    RoomMember,
+    RoomMessage,
+    RoomSummary,
 )
 from agent_hub.models.enums import (
     TERMINAL_NODE_STATUSES,
@@ -278,6 +281,60 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 InterventionStatus.PENDING.value,
             ),
         )
+    elif event_type is EventType.MESSAGE_POSTED:
+        await conn.execute(
+            "INSERT INTO messages"
+            " (id, conversation_id, seq, role, sender, text, mentions, quote_id, task_id,"
+            "  node_id, intervention_id, queued_for_node_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                payload["message_id"],
+                payload.get("conversation_id") or event.conversation_id,
+                payload["seq"],
+                payload["role"],
+                payload.get("sender"),
+                payload["text"],
+                json.dumps(payload.get("mentions") or [], ensure_ascii=False),
+                payload.get("quote_id"),
+                payload.get("task_id") or event.task_id,
+                payload.get("node_id"),
+                payload.get("intervention_id"),
+                payload.get("queued_for_node_id"),
+                ts,
+            ),
+        )
+    elif event_type is EventType.MESSAGE_DELIVERED:
+        await conn.execute(
+            "UPDATE messages SET delivered_at = ? WHERE id = ?",
+            (ts, payload["message_id"]),
+        )
+    elif event_type is EventType.ROOM_PARTICIPANT_JOINED:
+        await conn.execute(
+            "INSERT INTO room_members (conversation_id, agent_name, agent_url, reason,"
+            " joined_at) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(conversation_id, agent_name) DO UPDATE SET"
+            " agent_url = excluded.agent_url, reason = excluded.reason",
+            (
+                payload.get("conversation_id") or event.conversation_id,
+                payload["agent_name"],
+                payload["agent_url"],
+                payload.get("reason"),
+                ts,
+            ),
+        )
+    elif event_type is EventType.ROOM_SUMMARY_UPDATED:
+        await conn.execute(
+            "INSERT INTO room_summaries (conversation_id, covers_seq, summary, updated_at)"
+            " VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET"
+            " covers_seq = excluded.covers_seq, summary = excluded.summary,"
+            " updated_at = excluded.updated_at",
+            (
+                payload.get("conversation_id") or event.conversation_id,
+                payload["covers_seq"],
+                json.dumps(payload["summary"], ensure_ascii=False),
+                ts,
+            ),
+        )
     elif event_type is EventType.ERROR and payload.get("node_id"):
         await conn.execute(
             "UPDATE nodes SET error = ? WHERE id = ? AND task_id = ?",
@@ -328,6 +385,9 @@ async def rebuild(db: Any) -> None:
             "orchestration_tasks",
             "interventions",
             "checkpoints",
+            "messages",
+            "room_members",
+            "room_summaries",
         ):
             await conn.execute(f"DELETE FROM {table}")
     events = await store.replay_all()
@@ -565,3 +625,90 @@ async def fetch_checkpoints(db: Any, task_id: str) -> list[Checkpoint]:
         "SELECT * FROM checkpoints WHERE task_id = ? ORDER BY seq, id", (task_id,)
     )
     return [_row_to_checkpoint(row) for row in await cursor.fetchall()]
+
+
+def _row_to_room_message(row: aiosqlite.Row) -> RoomMessage:
+    return RoomMessage(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        seq=row["seq"],
+        role=row["role"],
+        sender=row["sender"],
+        text=row["text"],
+        mentions=json.loads(row["mentions"]),
+        quote_id=row["quote_id"],
+        task_id=row["task_id"],
+        node_id=row["node_id"],
+        intervention_id=row["intervention_id"],
+        queued_for_node_id=row["queued_for_node_id"],
+        delivered_at=_parse_dt(row["delivered_at"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_room_member(row: aiosqlite.Row) -> RoomMember:
+    return RoomMember(
+        conversation_id=row["conversation_id"],
+        agent_name=row["agent_name"],
+        agent_url=row["agent_url"],
+        reason=row["reason"],
+        joined_at=datetime.fromisoformat(row["joined_at"]),
+    )
+
+
+def _row_to_room_summary(row: aiosqlite.Row) -> RoomSummary:
+    return RoomSummary(
+        conversation_id=row["conversation_id"],
+        covers_seq=row["covers_seq"],
+        summary=json.loads(row["summary"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+async def next_message_seq(db: Any, conversation_id: str) -> int:
+    cursor = await db.conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE conversation_id = ?",
+        (conversation_id,),
+    )
+    return int((await cursor.fetchone())["seq"])
+
+
+async def fetch_messages(
+    db: Any, conversation_id: str, after_seq: int = 0, limit: int = 200
+) -> list[RoomMessage]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM messages WHERE conversation_id = ? AND seq > ?"
+        " ORDER BY seq LIMIT ?",
+        (conversation_id, after_seq, limit),
+    )
+    return [_row_to_room_message(row) for row in await cursor.fetchall()]
+
+
+async def fetch_message(db: Any, message_id: str) -> RoomMessage | None:
+    cursor = await db.conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,))
+    row = await cursor.fetchone()
+    return _row_to_room_message(row) if row else None
+
+
+async def fetch_messages_for_node(db: Any, node_id: str) -> list[RoomMessage]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM messages WHERE node_id = ? ORDER BY seq", (node_id,)
+    )
+    return [_row_to_room_message(row) for row in await cursor.fetchall()]
+
+
+async def fetch_room_members(db: Any, conversation_id: str) -> list[RoomMember]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM room_members WHERE conversation_id = ?"
+        " ORDER BY joined_at, agent_name",
+        (conversation_id,),
+    )
+    return [_row_to_room_member(row) for row in await cursor.fetchall()]
+
+
+async def fetch_room_summary(db: Any, conversation_id: str) -> RoomSummary | None:
+    cursor = await db.conn.execute(
+        "SELECT * FROM room_summaries WHERE conversation_id = ?", (conversation_id,)
+    )
+    row = await cursor.fetchone()
+    return _row_to_room_summary(row) if row else None

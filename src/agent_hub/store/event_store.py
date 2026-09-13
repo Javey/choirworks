@@ -13,7 +13,8 @@ from agent_hub.store.projections import apply_event
 
 class Event(BaseModel):
     seq: int = 0
-    task_id: str
+    task_id: str | None = None
+    conversation_id: str | None = None
     type: EventType
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
@@ -25,15 +26,31 @@ class EventStore:
         self._bus = bus
 
     async def append(
-        self, task_id: str, event_type: EventType, payload: dict[str, Any] | None = None
+        self,
+        task_id: str | None,
+        event_type: EventType,
+        payload: dict[str, Any] | None = None,
+        *,
+        conversation_id: str | None = None,
     ) -> Event:
         now = datetime.now(UTC)
         data = payload or {}
         async with self._db.transaction() as conn:
+            resolved_conversation_id = conversation_id or data.get("conversation_id")
+            if resolved_conversation_id is None and task_id is not None:
+                cursor = await conn.execute(
+                    "SELECT conversation_id FROM orchestration_tasks WHERE id = ?",
+                    (task_id,),
+                )
+                row = await cursor.fetchone()
+                if row is not None:
+                    resolved_conversation_id = row["conversation_id"]
             cursor = await conn.execute(
-                "INSERT INTO events (task_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO events (task_id, conversation_id, type, payload, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
                 (
                     task_id,
+                    resolved_conversation_id,
                     event_type.value,
                     json.dumps(data, ensure_ascii=False, default=str),
                     now.isoformat(),
@@ -42,6 +59,7 @@ class EventStore:
             event = Event(
                 seq=int(cursor.lastrowid),
                 task_id=task_id,
+                conversation_id=resolved_conversation_id,
                 type=event_type,
                 payload=data,
                 created_at=now,
@@ -53,15 +71,26 @@ class EventStore:
 
     async def replay(self, task_id: str, after_seq: int = 0) -> list[Event]:
         cursor = await self._db.conn.execute(
-            "SELECT seq, task_id, type, payload, created_at FROM events"
+            "SELECT seq, task_id, conversation_id, type, payload, created_at FROM events"
             " WHERE task_id = ? AND seq > ? ORDER BY seq",
             (task_id, after_seq),
         )
         return [self._row_to_event(row) for row in await cursor.fetchall()]
 
+    async def replay_conversation(
+        self, conversation_id: str, after_seq: int = 0
+    ) -> list[Event]:
+        cursor = await self._db.conn.execute(
+            "SELECT seq, task_id, conversation_id, type, payload, created_at FROM events"
+            " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
+            (conversation_id, after_seq),
+        )
+        return [self._row_to_event(row) for row in await cursor.fetchall()]
+
     async def replay_all(self) -> list[Event]:
         cursor = await self._db.conn.execute(
-            "SELECT seq, task_id, type, payload, created_at FROM events ORDER BY seq"
+            "SELECT seq, task_id, conversation_id, type, payload, created_at"
+            " FROM events ORDER BY seq"
         )
         return [self._row_to_event(row) for row in await cursor.fetchall()]
 
@@ -77,6 +106,7 @@ class EventStore:
         return Event(
             seq=row["seq"],
             task_id=row["task_id"],
+            conversation_id=row["conversation_id"],
             type=EventType(row["type"]),
             payload=json.loads(row["payload"]),
             created_at=datetime.fromisoformat(row["created_at"]),

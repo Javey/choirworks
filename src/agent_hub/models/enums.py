@@ -59,6 +59,11 @@ class EventType(StrEnum):
     CHECKPOINT_CREATED = "checkpoint.created"
     ROLLBACK_PERFORMED = "rollback.performed"
 
+    MESSAGE_POSTED = "message.posted"
+    MESSAGE_DELIVERED = "message.delivered"
+    ROOM_PARTICIPANT_JOINED = "room.participant_joined"
+    ROOM_SUMMARY_UPDATED = "room.summary_updated"
+
     ERROR = "error"
 
 

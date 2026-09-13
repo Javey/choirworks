@@ -12,8 +12,8 @@ class SubscriptionClosed(RuntimeError):
 
 
 class EventSubscription:
-    def __init__(self, task_id: str, maxsize: int):
-        self.task_id = task_id
+    def __init__(self, key: str, maxsize: int):
+        self.key = key
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._closed = False
 
@@ -58,21 +58,27 @@ class EventBus:
         self._max_queue_size = max_queue_size
         self._subscriptions: dict[str, set[EventSubscription]] = {}
 
-    def subscribe(self, task_id: str) -> EventSubscription:
-        subscription = EventSubscription(task_id, self._max_queue_size)
-        self._subscriptions.setdefault(task_id, set()).add(subscription)
+    def subscribe(self, key: str) -> EventSubscription:
+        subscription = EventSubscription(key, self._max_queue_size)
+        self._subscriptions.setdefault(key, set()).add(subscription)
         return subscription
 
     def unsubscribe(self, subscription: EventSubscription) -> None:
-        subs = self._subscriptions.get(subscription.task_id)
+        subs = self._subscriptions.get(subscription.key)
         if subs is not None:
             subs.discard(subscription)
             if not subs:
-                self._subscriptions.pop(subscription.task_id, None)
+                self._subscriptions.pop(subscription.key, None)
 
     def publish(self, event: Event) -> None:
-        for subscription in list(self._subscriptions.get(event.task_id, ())):
-            subscription.offer(event)
+        keys: list[str] = []
+        if event.task_id:
+            keys.append(event.task_id)
+        if event.conversation_id:
+            keys.append(f"room:{event.conversation_id}")
+        for key in keys:
+            for subscription in list(self._subscriptions.get(key, ())):
+                subscription.offer(event)
 
     def close_all(self) -> None:
         for subs in list(self._subscriptions.values()):
