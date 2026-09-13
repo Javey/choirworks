@@ -4,9 +4,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+from a2a.server.routes import create_agent_card_routes
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
+from choirworks.a2a.card import build_agent_card
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.reconcile import reconcile_once
 from choirworks.a2a.registry import AgentRegistry
@@ -156,6 +158,9 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     app.include_router(sse_routes.router, prefix="/v1")
     app.include_router(interventions_routes.router, prefix="/v1")
     app.include_router(rollback_routes.router, prefix="/v1")
+
+    card = build_agent_card(resolved.a2a.public_url)
+    app.router.routes.extend(create_agent_card_routes(agent_card=card))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

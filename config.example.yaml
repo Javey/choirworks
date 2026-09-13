@@ -32,3 +32,6 @@ recovery:
 
 store:
   db_path: ./data/choirworks.db
+
+a2a:
+  public_url: http://127.0.0.1:8080

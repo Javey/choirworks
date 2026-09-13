@@ -51,6 +51,10 @@ class RecoveryConfig(BaseModel):
     replay_on_startup: bool = True
 
 
+class A2AConfig(BaseModel):
+    public_url: str = "http://127.0.0.1:8080"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CHOIRWORKS_",
@@ -64,6 +68,7 @@ class Settings(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     policies: PolicyConfig = Field(default_factory=PolicyConfig)
     recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
+    a2a: A2AConfig = Field(default_factory=A2AConfig)
 
 
 def load_settings(yaml_path: Path | str | None = None) -> Settings:
