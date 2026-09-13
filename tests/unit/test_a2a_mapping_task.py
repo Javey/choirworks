@@ -3,9 +3,14 @@ from datetime import UTC, datetime
 import pytest
 from a2a.types import Role, TaskState
 
-from choirworks.a2a.mapping import TASK_STATE_MAP, snapshot_to_task
+from choirworks.a2a.mapping import (
+    A2A_ROOM_URI,
+    TASK_STATE_MAP,
+    room_message_to_a2a,
+    snapshot_to_task,
+)
 from choirworks.core.tasks import TaskSnapshot
-from choirworks.models.domain import Node, OrchestrationTask
+from choirworks.models.domain import Node, OrchestrationTask, RoomMessage
 from choirworks.models.enums import NodeStatus, TaskStatus
 
 
@@ -145,3 +150,62 @@ def test_input_required_without_question_has_no_message():
     snapshot = _snapshot(TaskStatus.AWAITING_INPUT, node_status=NodeStatus.INPUT_REQUIRED)
     mapped = snapshot_to_task(snapshot)
     assert not mapped.status.HasField("message")
+
+
+def _room_message(**overrides) -> RoomMessage:
+    values = {
+        "id": "msg-1",
+        "conversation_id": "conv-1",
+        "seq": 3,
+        "role": "user",
+        "sender": "CEO",
+        "text": "请评估",
+        "mentions": ["ask"],
+        "quote_id": "msg-0",
+        "node_id": "plan1:n1",
+        "intervention_id": "int-1",
+        "created_at": datetime.now(UTC),
+    }
+    values.update(overrides)
+    return RoomMessage(**values)
+
+
+def test_room_message_maps_identity_role_and_parts():
+    mapped = room_message_to_a2a(_room_message())
+    assert mapped.message_id == "msg-1"
+    assert mapped.context_id == "conv-1"
+    assert mapped.task_id == "conv-1"
+    assert mapped.role is Role.ROLE_USER
+    assert mapped.parts[0].text == "请评估"
+    assert A2A_ROOM_URI in mapped.extensions
+
+
+def test_room_message_task_id_overrides_context_fallback():
+    mapped = room_message_to_a2a(_room_message(task_id="task-9"))
+    assert mapped.task_id == "task-9"
+
+
+def test_room_message_assistant_maps_to_agent_role():
+    mapped = room_message_to_a2a(_room_message(role="assistant"))
+    assert mapped.role is Role.ROLE_AGENT
+
+
+def test_room_message_metadata_carries_room_fields():
+    mapped = room_message_to_a2a(_room_message())
+    fields = mapped.metadata.fields[A2A_ROOM_URI].struct_value.fields
+    assert fields["kind"].string_value == "message"
+    assert fields["sender"].string_value == "CEO"
+    assert fields["seq"].number_value == 3
+    assert [item.string_value for item in fields["mentions"].list_value.values] == [
+        "ask"
+    ]
+    assert fields["quote_id"].string_value == "msg-0"
+    assert fields["node_id"].string_value == "plan1:n1"
+    assert fields["intervention_id"].string_value == "int-1"
+    assert fields["queued_for_node_id"].WhichOneof("kind") == "null_value"
+
+
+def test_room_message_metadata_carries_queued_node():
+    mapped = room_message_to_a2a(_room_message(queued_for_node_id="plan1:n2"))
+    fields = mapped.metadata.fields[A2A_ROOM_URI].struct_value.fields
+    assert fields["queued_for_node_id"].string_value == "plan1:n2"

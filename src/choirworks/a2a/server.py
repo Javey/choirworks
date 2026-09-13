@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -30,8 +32,10 @@ from choirworks.a2a.mapping import room_message_to_a2a, snapshot_to_task
 from choirworks.core.cancel import TaskNotCancelable, cancel_task
 from choirworks.core.room import post_message
 from choirworks.core.tasks import TaskNotFound, TaskSnapshot
-from choirworks.models.enums import InterventionStatus, TaskStatus
+from choirworks.models.enums import InterventionStatus, NodeStatus, TaskStatus
 from choirworks.store import projections
+
+logger = logging.getLogger(__name__)
 
 
 class HubA2AHandler(RequestHandler):
@@ -111,9 +115,18 @@ class HubA2AHandler(RequestHandler):
                         "task is awaiting input but has no pending intervention"
                     )
                 await self._app.state.orchestrator.answer_intervention(
-                    interventions[-1].id, text, responder="user"
+                    interventions[-1].id, text, responder="CEO"
                 )
-                return await self._a2a_task(task_id)
+                refreshed = await self._snapshot(task_id)
+                for _ in range(40):
+                    if refreshed.task.status is not TaskStatus.AWAITING_INPUT:
+                        break
+                    await asyncio.sleep(0.05)
+                    refreshed = await self._snapshot(task_id)
+                return snapshot_to_task(
+                    refreshed,
+                    question=await self._pending_question(refreshed),
+                )
             if status in (
                 TaskStatus.PENDING,
                 TaskStatus.PLANNING,
@@ -124,14 +137,23 @@ class HubA2AHandler(RequestHandler):
                     conversation_id = await self._app.state.coordinator.create_conversation(
                         title=text[:30]
                     )
+                active = next(
+                    (
+                        node
+                        for node in snapshot.nodes
+                        if node.status in (NodeStatus.DISPATCHED, NodeStatus.WORKING)
+                    ),
+                    None,
+                )
                 row = await post_message(
                     self._app.state.db,
                     self._app.state.event_store,
                     conversation_id=conversation_id,
                     role="user",
-                    sender="user",
+                    sender="CEO",
                     text=text,
                     task_id=task_id,
+                    queued_for_node_id=active.id if active is not None else None,
                 )
                 await self._app.state.coordinator.arbitrate_message(
                     snapshot.task, row
@@ -148,6 +170,7 @@ class HubA2AHandler(RequestHandler):
                 context_id, text=text, mentions=[]
             )
         except Exception as exc:  # noqa: BLE001 - 统一映射为 A2A 内部错误
+            logger.exception("handle_human_message failed")
             raise InternalError(str(exc)) from exc
         if result.task_id is None:
             return room_message_to_a2a(result.message)

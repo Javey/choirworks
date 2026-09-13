@@ -12,7 +12,7 @@ from a2a.types import (
     SendMessageRequest,
     TaskState,
 )
-from a2a.utils.errors import TaskNotFoundError
+from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
 
 from choirworks.api.app import create_app
 from choirworks.config import Settings
@@ -148,6 +148,14 @@ async def test_send_answers_pending_intervention(hub_ask):
         raise AssertionError("task never reached input-required")
     resumed = await _send(client, _message("这是答复", task_id=first.id))
     assert resumed.id == first.id
+    assert resumed.status.state != TaskState.TASK_STATE_INPUT_REQUIRED
+    timeline = (
+        await http.get(f"/v1/conversations/{first.context_id}/messages")
+    ).json()
+    assert any(
+        message["text"] == "这是答复" and message["role"] == "user"
+        for message in timeline["messages"]
+    )
 
 
 async def test_send_running_task_stays_same(tmp_path):
@@ -155,14 +163,44 @@ async def test_send_running_task_stays_same(tmp_path):
     try:
         async with _hub(tmp_path, "slow.db", "slow", slow.url, []) as (
             _app,
-            _http,
+            http,
             client,
         ):
             first = await _send(client, _message("@slow 开始"))
+            for _ in range(200):
+                nodes = (await http.get(f"/v1/tasks/{first.id}")).json()["nodes"]
+                if any(
+                    node["status"] in {"dispatched", "working"} for node in nodes
+                ):
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                raise AssertionError("no active node appeared")
             second = await _send(client, _message("补充说明", task_id=first.id))
             assert second.id == first.id
+            timeline = (
+                await http.get(f"/v1/conversations/{first.context_id}/messages")
+            ).json()
+            queued = [
+                message
+                for message in timeline["messages"]
+                if message["text"] == "补充说明"
+            ]
+            assert queued
+            assert queued[0]["queued_for_node_id"]
     finally:
         await slow.stop()
+
+
+async def test_send_empty_text_raises(hub_echo):
+    _, _, client = hub_echo
+    with pytest.raises(InvalidParamsError):
+        await _send(
+            client,
+            SendMessageRequest(
+                message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[])
+            ),
+        )
 
 
 async def test_send_unknown_task_raises(hub_echo):
