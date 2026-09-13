@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 agent-hub = "agent_hub.main:main"
+agent-hub-sim = "agent_hub.sim.runner:main"
 
 [dependency-groups]
 dev = [

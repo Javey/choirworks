@@ -33,6 +33,25 @@ npm run build
 npm test
 ```
 
+## 模拟运行（离线演示）
+
+无需 API Key、无需真实 Agent，一条命令拉起「假 Agent + 确定性规划器 + Hub + 前端」：
+
+```bash
+uv run agent-hub-sim --port 8080 --fresh
+```
+
+启动后自动注册 5 个脚本化 Agent（researcher / writer / critic / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8080` 直接对话：
+
+| 请求示例 | 演示场景 |
+|---|---|
+| 帮我调研 A2A 协议并写一份摘要 | 调研 → 写作依赖链 |
+| 帮我评审这段文案 | critic 提问 → 人工介入 → 定稿 |
+| 这个任务可能会偶发失败，请自动重试 | 节点自动重试（第 2 次成功） |
+| 模拟失败并降级替换 | 两次失败 → 重规划为 plan v2 |
+
+`--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。规划逻辑为确定性规则（`src/agent_hub/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/agent_hub/sim/fake_agent.py`。
+
 
 ## 运行
 
