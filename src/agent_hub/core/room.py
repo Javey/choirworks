@@ -75,18 +75,21 @@ def artifact_text(output: dict[str, Any] | None) -> str:
     return " ".join(part for part in parts if part).strip()
 
 
-async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any]) -> None:
+async def post_agent_messages(
+    db: Any, events: Any, task: Any, nodes: list[Any]
+) -> list[RoomMessage]:
     from agent_hub.models.enums import NodeStatus
 
+    created: list[RoomMessage] = []
     if task.conversation_id is None:
-        return
+        return created
     for node in nodes:
         if node.status is not NodeStatus.COMPLETED or not node.agent_name:
             continue
         existing = await projections.fetch_messages_for_node(db, node.id)
         if any(message.role == "agent" for message in existing):
             continue
-        await post_message(
+        message = await post_message(
             db,
             events,
             conversation_id=task.conversation_id,
@@ -96,6 +99,8 @@ async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any])
             node_id=node.id,
             task_id=task.id,
         )
+        created.append(message)
+    return created
 
 
 def extract_mentions(text: str, known_names: set[str]) -> list[str]:

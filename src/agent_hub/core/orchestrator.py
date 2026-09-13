@@ -179,7 +179,17 @@ class Orchestrator:
                 return
             nodes = await projections.fetch_nodes(self._db, task_id, plan.id)
             self._inflight = {item for item in self._inflight if not item.done()}
-            await post_agent_messages(self._db, self._events, task, nodes)
+            new_messages = await post_agent_messages(
+                self._db, self._events, task, nodes
+            )
+            arbitrated = 0
+            if self._coordinator is not None:
+                for message in new_messages:
+                    arbitrated += await self._coordinator.arbitrate_message(
+                        task, message
+                    )
+            if arbitrated:
+                continue
 
             completed_count = sum(
                 1 for node in nodes if node.status is NodeStatus.COMPLETED

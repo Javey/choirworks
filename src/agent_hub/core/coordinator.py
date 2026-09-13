@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agent_hub.core.room import artifact_text, post_assistant_message, post_message
+from agent_hub.core.planner import PlanNodeDraft
+from agent_hub.core.room import (
+    artifact_text,
+    extract_mentions,
+    post_assistant_message,
+    post_message,
+)
 from agent_hub.core.summary import maybe_update_summary
 from agent_hub.core.tasks import TargetSpec
 from agent_hub.models.domain import RoomMessage
-from agent_hub.models.enums import EventType
+from agent_hub.models.enums import TERMINAL_NODE_STATUSES, EventType
 from agent_hub.store import projections
+
+MAX_MENTIONS_PER_MESSAGE = 3
+MAX_DERIVED_NODES = 5
 
 
 class HumanMessageResult(BaseModel):
@@ -35,7 +45,9 @@ class RoomCoordinator:
         self._registry = registry
         self._llm = llm
 
-    async def join_new_members(self, conversation_id: str, names: list[str]) -> None:
+    async def join_new_members(
+        self, conversation_id: str, names: list[str], *, reason: str = "human_mention"
+    ) -> None:
         members = {
             member.agent_name
             for member in await projections.fetch_room_members(
@@ -55,7 +67,7 @@ class RoomCoordinator:
                 {
                     "agent_name": name,
                     "agent_url": agent_url,
-                    "reason": "human_mention",
+                    "reason": reason,
                 },
                 conversation_id=conversation_id,
             )
@@ -194,6 +206,129 @@ class RoomCoordinator:
             task_id=task.id,
             node_id=node.id,
             intervention_id=intervention_id,
+        )
+
+    async def arbitrate_message(self, task: Any, message: RoomMessage) -> int:
+        if (
+            task.conversation_id is None
+            or message.role != "agent"
+            or not message.sender
+        ):
+            return 0
+        records = await self._registry.list()
+        known = {record.name for record in records}
+        mentions = extract_mentions(message.text, known)
+        if not mentions:
+            return 0
+        if len(mentions) > MAX_MENTIONS_PER_MESSAGE:
+            await post_assistant_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                text=f"单条消息 @ 数量超限，仅处理前 {MAX_MENTIONS_PER_MESSAGE} 个",
+                task_id=task.id,
+            )
+            mentions = mentions[:MAX_MENTIONS_PER_MESSAGE]
+
+        plan = await projections.fetch_current_plan(self._db, task.id)
+        if plan is None:
+            return 0
+        derived = [
+            node for node in plan.dag.get("nodes", []) if node.get("derived")
+        ]
+        created = 0
+        for name in mentions:
+            if name == message.sender:
+                continue
+            await self.join_new_members(
+                task.conversation_id, [name], reason="agent_mention"
+            )
+            existing = next(
+                (
+                    node
+                    for node in derived
+                    if node.get("agent_name") == name
+                    and (node.get("input") or {}).get("assist_requested_by")
+                    == message.sender
+                ),
+                None,
+            )
+            if existing is not None:
+                await self._merge_into_existing(
+                    task, plan.id, existing, message
+                )
+                continue
+            if len(derived) >= MAX_DERIVED_NODES:
+                await post_assistant_message(
+                    self._db,
+                    self._events,
+                    conversation_id=task.conversation_id,
+                    text=f"协作深度已达上限，忽略 @{name}",
+                    task_id=task.id,
+                )
+                continue
+            helper_key = f"a{uuid4().hex[:8]}"
+            await self._task_service.extend_plan(
+                task.id,
+                added_nodes=[
+                    PlanNodeDraft(
+                        id=helper_key,
+                        name=f"协助 · {name}",
+                        agent_name=name,
+                        input={
+                            "text": f"来自 @{message.sender} 的请求：{message.text}",
+                            "assist_requested_by": message.sender,
+                            "source_message_id": message.id,
+                        },
+                    )
+                ],
+                edges=[],
+                rationale=f"mention arbitration from {message.sender}",
+            )
+            await post_assistant_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                text=f"@{message.sender} 请求 @{name} 协助，已加入工作",
+                task_id=task.id,
+                node_id=f"{plan.id}:{helper_key}",
+            )
+            derived.append({"id": helper_key, "agent_name": name})
+            created += 1
+        return created
+
+    async def _merge_into_existing(
+        self, task: Any, plan_id: str, dag_node: dict[str, Any], message: RoomMessage
+    ) -> None:
+        node_id = f"{plan_id}:{dag_node['id']}"
+        node = await projections.fetch_node(self._db, node_id)
+        target = dag_node.get("agent_name") or dag_node["id"]
+        if node is not None and node.status not in TERMINAL_NODE_STATUSES:
+            await post_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                role="agent",
+                sender=message.sender,
+                text=message.text,
+                queued_for_node_id=node_id,
+                task_id=task.id,
+                node_id=message.node_id,
+            )
+            await post_assistant_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                text=f"已并入 @{target} 的现有工作",
+                task_id=task.id,
+            )
+            return
+        await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text=f"@{target} 已有完成的工作可复用，未重复创建节点",
+            task_id=task.id,
         )
 
     async def _maybe_summarize(self, conversation_id: str) -> None:
