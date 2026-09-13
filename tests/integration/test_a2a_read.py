@@ -54,6 +54,12 @@ async def test_get_task_unknown_raises(hub):
         await client.get_task(GetTaskRequest(id="missing"))
 
 
+async def test_cancel_unknown_task_raises(hub):
+    _, _, client, _ = hub
+    with pytest.raises(TaskNotFoundError):
+        await client.cancel_task(CancelTaskRequest(id="missing"))
+
+
 async def test_cancel_task_marks_canceled(hub):
     app, http, client, agent_url = hub
     await http.post("/v1/agents", json={"name": "ask", "card_url": agent_url})

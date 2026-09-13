@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
@@ -93,7 +94,7 @@ class HubA2AHandler(RequestHandler):
         Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
         raise UnsupportedOperationError("SendStreamingMessage not implemented yet")
-        yield  # pragma: no cover
+        yield
 
     async def on_subscribe_to_task(
         self,
@@ -103,19 +104,29 @@ class HubA2AHandler(RequestHandler):
         Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
         raise UnsupportedOperationError("SubscribeToTask not implemented yet")
-        yield  # pragma: no cover
+        yield
 
-    async def on_get_extended_agent_card(self, params, context):
+    async def on_get_extended_agent_card(
+        self, params: Any, context: ServerCallContext
+    ):
         raise UnsupportedOperationError("extended agent card is not supported")
 
-    async def on_create_task_push_notification_config(self, params, context):
+    async def on_create_task_push_notification_config(
+        self, params: Any, context: ServerCallContext
+    ):
         raise UnsupportedOperationError("push notifications are not supported")
 
-    async def on_get_task_push_notification_config(self, params, context):
+    async def on_get_task_push_notification_config(
+        self, params: Any, context: ServerCallContext
+    ):
         raise UnsupportedOperationError("push notifications are not supported")
 
-    async def on_list_task_push_notification_configs(self, params, context):
+    async def on_list_task_push_notification_configs(
+        self, params: Any, context: ServerCallContext
+    ):
         raise UnsupportedOperationError("push notifications are not supported")
 
-    async def on_delete_task_push_notification_config(self, params, context):
+    async def on_delete_task_push_notification_config(
+        self, params: Any, context: ServerCallContext
+    ):
         raise UnsupportedOperationError("push notifications are not supported")
