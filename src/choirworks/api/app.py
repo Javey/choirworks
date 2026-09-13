@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from a2a.server.routes import create_agent_card_routes
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
@@ -12,6 +12,7 @@ from choirworks.a2a.card import build_agent_card
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.reconcile import reconcile_once
 from choirworks.a2a.registry import AgentRegistry
+from choirworks.a2a.server import HubA2AHandler
 from choirworks.api import agents as agents_routes
 from choirworks.api import conversations as conversations_routes
 from choirworks.api import interventions as interventions_routes
@@ -160,7 +161,11 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     app.include_router(rollback_routes.router, prefix="/v1")
 
     card = build_agent_card(resolved.a2a.public_url)
-    app.router.routes.extend(create_agent_card_routes(agent_card=card))
+    a2a_handler = HubA2AHandler(app)
+    app.router.routes.extend(
+        create_agent_card_routes(agent_card=card)
+        + create_jsonrpc_routes(request_handler=a2a_handler, rpc_url="/v1/a2a")
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
