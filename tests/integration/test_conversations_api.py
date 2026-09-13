@@ -1,14 +1,14 @@
 import httpx
 import pytest
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.core.tasks import ConversationNotFound, TargetSpec, TaskService
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.core.tasks import ConversationNotFound, TargetSpec, TaskService
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_service(tmp_path, echo_agent) -> tuple[Database, TaskService]:

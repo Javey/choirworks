@@ -1,6 +1,6 @@
 import pytest
 
-from agent_hub.store.db import Database
+from choirworks.store.db import Database
 
 
 async def test_initialize_creates_tables_and_wal(tmp_path):

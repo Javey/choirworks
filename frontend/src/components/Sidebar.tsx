@@ -38,7 +38,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
-        <span className="brand">Agent Hub</span>
+        <span className="brand">ChoirWorks</span>
         <button type="button" className="button primary small" onClick={onNew}>
           ＋ 新对话
         </button>

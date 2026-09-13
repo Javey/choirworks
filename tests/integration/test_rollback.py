@@ -1,17 +1,17 @@
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import PlanDraft, Planner, PlanNodeDraft
-from agent_hub.core.rollback import perform_rollback, plan_rollback
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.sim.fake_agent import start_fake_agent
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import PlanDraft, Planner, PlanNodeDraft
+from choirworks.core.rollback import perform_rollback, plan_rollback
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 
@@ -100,7 +100,7 @@ async def test_rollback_dry_run_and_restart(tmp_path):
 
 
 async def test_retry_failed_node_then_success(tmp_path):
-    from agent_hub.sim.fake_agent import start_fake_agent as start
+    from choirworks.sim.fake_agent import start_fake_agent as start
 
     flaky = await start("fail_once")
     db, remote, events, tasks, dispatcher, orchestrator = await setup_env(

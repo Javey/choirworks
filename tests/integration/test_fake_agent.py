@@ -3,7 +3,7 @@ from a2a.client import A2ACardResolver, ClientConfig, create_client
 from a2a.helpers import get_artifact_text, new_text_message
 from a2a.types import Role, SendMessageRequest, TaskState
 
-from agent_hub.sim.fake_agent import start_fake_agent
+from choirworks.sim.fake_agent import start_fake_agent
 
 
 async def test_fake_agent_echoes_with_official_client():

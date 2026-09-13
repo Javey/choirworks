@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 搭建 Agent Hub 的可运行骨架：配置、SQLite 事件存储与投影、A2A 客户端封装、Agent 注册表、假 A2A 测试 agent，以及「提交任务 → 手动派发单节点 → 远程完成 → 事件落库」的端到端链路。
+**Goal:** 搭建 ChoirWorks 的可运行骨架：配置、SQLite 事件存储与投影、A2A 客户端封装、Agent 注册表、假 A2A 测试 agent，以及「提交任务 → 手动派发单节点 → 远程完成 → 事件落库」的端到端链路。
 
 **Architecture:** 事件日志（SQLite）为唯一事实源，所有状态变化先 `append` 事件、在同一事务内更新投影表；A2A 交互封装在 `RemoteAgentClient` 单点；本计划不包含 LLM 规划器与自动调度（Plan 2）、SSE 与 HITL（Plan 3/4）、恢复与回退（Plan 4）。任务由 `target` 参数直接指定 agent，产出一个单节点计划。
 
@@ -37,7 +37,7 @@ pyproject.toml                  # uv 项目定义、pytest/ruff 配置
 .gitignore
 config.example.yaml
 README.md
-src/agent_hub/
+src/choirworks/
   __init__.py                   # __version__
   config.py                     # Settings、load_settings
   main.py                       # uvicorn 入口
@@ -74,7 +74,7 @@ tests/
 **Files:**
 - Create: `pyproject.toml`
 - Create: `.gitignore`
-- Create: `src/agent_hub/__init__.py`
+- Create: `src/choirworks/__init__.py`
 - Create: `tests/__init__.py`
 - Test: `tests/test_smoke.py`
 
@@ -82,7 +82,7 @@ tests/
 
 ```toml
 [project]
-name = "agent-hub"
+name = "choirworks"
 version = "0.1.0"
 description = "A2A multi-agent orchestration platform (MVP)"
 requires-python = ">=3.12"
@@ -99,7 +99,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-hub = "agent_hub.main:main"
+choirworks = "choirworks.main:main"
 
 [dependency-groups]
 dev = [
@@ -113,7 +113,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_hub"]
+packages = ["src/choirworks"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -130,10 +130,10 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 - [ ] **Step 2: 创建包占位文件**
 
-`src/agent_hub/__init__.py`：
+`src/choirworks/__init__.py`：
 
 ```python
-"""Agent Hub：A2A 多 Agent 编排平台。"""
+"""ChoirWorks：A2A 多 Agent 编排平台。"""
 ```
 
 `tests/__init__.py`（空文件），`tests/unit/__init__.py`（空文件），`tests/integration/__init__.py`（空文件），`tests/fake_agents/__init__.py`（空文件）。
@@ -141,11 +141,11 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 - [ ] **Step 3: 写失败冒烟测试 `tests/test_smoke.py`**
 
 ```python
-import agent_hub
+import choirworks
 
 
 def test_package_importable():
-    assert agent_hub.__version__ == "0.1.0"
+    assert choirworks.__version__ == "0.1.0"
 ```
 
 - [ ] **Step 4: 初始化环境并确认测试失败**
@@ -154,14 +154,14 @@ Run:
 ```bash
 uv python pin 3.12 && uv sync && uv run pytest tests/test_smoke.py -v
 ```
-Expected: 安装成功；测试 FAIL，报 `AttributeError: module 'agent_hub' has no attribute '__version__'`。
+Expected: 安装成功；测试 FAIL，报 `AttributeError: module 'choirworks' has no attribute '__version__'`。
 
 - [ ] **Step 5: 补上版本号使测试通过**
 
-`src/agent_hub/__init__.py`：
+`src/choirworks/__init__.py`：
 
 ```python
-"""Agent Hub：A2A 多 Agent 编排平台。"""
+"""ChoirWorks：A2A 多 Agent 编排平台。"""
 
 __version__ = "0.1.0"
 ```
@@ -185,7 +185,7 @@ Expected: `1 passed`
 - [ ] **Step 8: Commit**
 
 ```bash
-git add pyproject.toml .python-version .gitignore src/agent_hub/__init__.py tests/
+git add pyproject.toml .python-version .gitignore src/choirworks/__init__.py tests/
 git commit -m "chore: 初始化 uv 项目骨架与冒烟测试"
 ```
 
@@ -194,7 +194,7 @@ git commit -m "chore: 初始化 uv 项目骨架与冒烟测试"
 ### Task 2: 配置系统
 
 **Files:**
-- Create: `src/agent_hub/config.py`
+- Create: `src/choirworks/config.py`
 - Test: `tests/unit/test_config.py`
 - Create: `config.example.yaml`
 
@@ -203,7 +203,7 @@ git commit -m "chore: 初始化 uv 项目骨架与冒烟测试"
 ```python
 from pathlib import Path
 
-from agent_hub.config import Settings, load_settings
+from choirworks.config import Settings, load_settings
 
 
 def test_defaults():
@@ -211,15 +211,15 @@ def test_defaults():
     assert settings.server.host == "127.0.0.1"
     assert settings.server.port == 8080
     assert settings.scheduler.node_timeout_seconds == 600.0
-    assert settings.store.db_path == Path("./data/agent_hub.db")
+    assert settings.store.db_path == Path("./data/choirworks.db")
 
 
 def test_env_override(monkeypatch):
-    monkeypatch.setenv("AGENT_HUB_SERVER__PORT", "9999")
-    monkeypatch.setenv("AGENT_HUB_STORE__DB_PATH", "/tmp/agent_hub_test.db")
+    monkeypatch.setenv("CHOIRWORKS_SERVER__PORT", "9999")
+    monkeypatch.setenv("CHOIRWORKS_STORE__DB_PATH", "/tmp/choirworks_test.db")
     settings = Settings()
     assert settings.server.port == 9999
-    assert str(settings.store.db_path) == "/tmp/agent_hub_test.db"
+    assert str(settings.store.db_path) == "/tmp/choirworks_test.db"
 
 
 def test_yaml_load(tmp_path):
@@ -236,9 +236,9 @@ def test_yaml_load(tmp_path):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_config.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.config'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.config'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/config.py`**
+- [ ] **Step 3: 实现 `src/choirworks/config.py`**
 
 ```python
 from __future__ import annotations
@@ -262,12 +262,12 @@ class SchedulerConfig(BaseModel):
 
 
 class StoreConfig(BaseModel):
-    db_path: Path = Path("./data/agent_hub.db")
+    db_path: Path = Path("./data/choirworks.db")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="AGENT_HUB_",
+        env_prefix="CHOIRWORKS_",
         env_nested_delimiter="__",
         extra="ignore",
     )
@@ -302,13 +302,13 @@ scheduler:
   max_node_attempts: 2
 
 store:
-  db_path: ./data/agent_hub.db
+  db_path: ./data/choirworks.db
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/agent_hub/config.py tests/unit/test_config.py config.example.yaml
+git add src/choirworks/config.py tests/unit/test_config.py config.example.yaml
 git commit -m "feat: 配置系统（环境变量 + YAML）"
 ```
 
@@ -317,8 +317,8 @@ git commit -m "feat: 配置系统（环境变量 + YAML）"
 ### Task 3: 数据库与 schema
 
 **Files:**
-- Create: `src/agent_hub/store/__init__.py`（空）
-- Create: `src/agent_hub/store/db.py`
+- Create: `src/choirworks/store/__init__.py`（空）
+- Create: `src/choirworks/store/db.py`
 - Test: `tests/unit/test_db.py`
 
 - [ ] **Step 1: 写失败测试 `tests/unit/test_db.py`**
@@ -326,7 +326,7 @@ git commit -m "feat: 配置系统（环境变量 + YAML）"
 ```python
 import pytest
 
-from agent_hub.store.db import Database
+from choirworks.store.db import Database
 
 
 async def test_initialize_creates_tables_and_wal(tmp_path):
@@ -371,9 +371,9 @@ async def test_transaction_rolls_back_on_error(tmp_path):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_db.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.store'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.store'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/store/db.py`**
+- [ ] **Step 3: 实现 `src/choirworks/store/db.py`**
 
 ```python
 from __future__ import annotations
@@ -529,7 +529,7 @@ Expected: `2 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/store/__init__.py src/agent_hub/store/db.py tests/unit/test_db.py
+git add src/choirworks/store/__init__.py src/choirworks/store/db.py tests/unit/test_db.py
 git commit -m "feat: SQLite schema 与事务化 Database"
 ```
 
@@ -538,11 +538,11 @@ git commit -m "feat: SQLite schema 与事务化 Database"
 ### Task 4: 领域枚举、投影模型与状态机
 
 **Files:**
-- Create: `src/agent_hub/models/__init__.py`（空）
-- Create: `src/agent_hub/models/enums.py`
-- Create: `src/agent_hub/models/domain.py`
-- Create: `src/agent_hub/core/__init__.py`（空）
-- Create: `src/agent_hub/core/state.py`
+- Create: `src/choirworks/models/__init__.py`（空）
+- Create: `src/choirworks/models/enums.py`
+- Create: `src/choirworks/models/domain.py`
+- Create: `src/choirworks/core/__init__.py`（空）
+- Create: `src/choirworks/core/state.py`
 - Test: `tests/unit/test_state.py`
 
 - [ ] **Step 1: 写失败测试 `tests/unit/test_state.py`**
@@ -550,14 +550,14 @@ git commit -m "feat: SQLite schema 与事务化 Database"
 ```python
 import pytest
 
-from agent_hub.core.state import (
+from choirworks.core.state import (
     InvalidTransition,
     assert_node_transition,
     assert_task_transition,
     can_node_transition,
     can_task_transition,
 )
-from agent_hub.models.enums import NodeStatus, TaskStatus
+from choirworks.models.enums import NodeStatus, TaskStatus
 
 
 def test_task_legal_transitions():
@@ -610,9 +610,9 @@ def test_node_cannot_leave_invalidated():
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_state.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.models'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.models'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/models/enums.py`**
+- [ ] **Step 3: 实现 `src/choirworks/models/enums.py`**
 
 ```python
 from __future__ import annotations
@@ -690,7 +690,7 @@ TERMINAL_NODE_STATUSES = {
 }
 ```
 
-- [ ] **Step 4: 实现 `src/agent_hub/models/domain.py`**
+- [ ] **Step 4: 实现 `src/choirworks/models/domain.py`**
 
 ```python
 from __future__ import annotations
@@ -700,7 +700,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.enums import InterventionStatus, NodeStatus, TaskStatus
+from choirworks.models.enums import InterventionStatus, NodeStatus, TaskStatus
 
 
 class OrchestrationTask(BaseModel):
@@ -777,12 +777,12 @@ class AgentRecord(BaseModel):
     created_at: datetime
 ```
 
-- [ ] **Step 5: 实现 `src/agent_hub/core/state.py`**
+- [ ] **Step 5: 实现 `src/choirworks/core/state.py`**
 
 ```python
 from __future__ import annotations
 
-from agent_hub.models.enums import NodeStatus, TaskStatus
+from choirworks.models.enums import NodeStatus, TaskStatus
 
 
 class InvalidTransition(RuntimeError):
@@ -872,7 +872,7 @@ Expected: `5 passed`
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/agent_hub/models/ src/agent_hub/core/__init__.py src/agent_hub/core/state.py tests/unit/test_state.py
+git add src/choirworks/models/ src/choirworks/core/__init__.py src/choirworks/core/state.py tests/unit/test_state.py
 git commit -m "feat: 领域模型、枚举与状态机"
 ```
 
@@ -881,8 +881,8 @@ git commit -m "feat: 领域模型、枚举与状态机"
 ### Task 5: 事件存储与投影
 
 **Files:**
-- Create: `src/agent_hub/store/projections.py`
-- Create: `src/agent_hub/store/event_store.py`
+- Create: `src/choirworks/store/projections.py`
+- Create: `src/choirworks/store/event_store.py`
 - Test: `tests/unit/test_event_store.py`
 
 - [ ] **Step 1: 写失败测试 `tests/unit/test_event_store.py`**
@@ -890,10 +890,10 @@ git commit -m "feat: 领域模型、枚举与状态机"
 ```python
 from typing import Any
 
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_store(tmp_path) -> tuple[Database, EventStore]:
@@ -1034,9 +1034,9 @@ async def snapshot(db: Database) -> dict[str, list[dict[str, Any]]]:
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_event_store.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.store.projections'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.store.projections'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/store/projections.py`**
+- [ ] **Step 3: 实现 `src/choirworks/store/projections.py`**
 
 ```python
 from __future__ import annotations
@@ -1047,8 +1047,8 @@ from typing import Any
 
 import aiosqlite
 
-from agent_hub.models.domain import Node, OrchestrationTask, Plan
-from agent_hub.models.enums import (
+from choirworks.models.domain import Node, OrchestrationTask, Plan
+from choirworks.models.enums import (
     TERMINAL_NODE_STATUSES,
     EventType,
     NodeStatus,
@@ -1183,7 +1183,7 @@ async def _materialize_nodes(
 
 
 async def rebuild(db: Any) -> None:
-    from agent_hub.store.event_store import EventStore
+    from choirworks.store.event_store import EventStore
 
     store = EventStore(db)
     async with db.transaction() as conn:
@@ -1282,7 +1282,7 @@ async def fetch_nodes(db: Any, task_id: str, plan_id: str | None = None) -> list
     return [_row_to_node(row) for row in await cursor.fetchall()]
 ```
 
-- [ ] **Step 4: 实现 `src/agent_hub/store/event_store.py`**
+- [ ] **Step 4: 实现 `src/choirworks/store/event_store.py`**
 
 ```python
 from __future__ import annotations
@@ -1293,9 +1293,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.enums import EventType
-from agent_hub.store.db import Database
-from agent_hub.store.projections import apply_event
+from choirworks.models.enums import EventType
+from choirworks.store.db import Database
+from choirworks.store.projections import apply_event
 
 
 class Event(BaseModel):
@@ -1375,7 +1375,7 @@ Expected: `3 passed`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/agent_hub/store/projections.py src/agent_hub/store/event_store.py tests/unit/test_event_store.py
+git add src/choirworks/store/projections.py src/choirworks/store/event_store.py tests/unit/test_event_store.py
 git commit -m "feat: 事件存储、投影与重建"
 ```
 
@@ -1608,8 +1608,8 @@ git commit -m "test: 基于 a2a-sdk 的可控假 agent 测试设施"
 ### Task 7: A2A 客户端封装
 
 **Files:**
-- Create: `src/agent_hub/a2a/__init__.py`（空）
-- Create: `src/agent_hub/a2a/client.py`
+- Create: `src/choirworks/a2a/__init__.py`（空）
+- Create: `src/choirworks/a2a/client.py`
 - Test: `tests/integration/test_a2a_client.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_a2a_client.py`**
@@ -1617,7 +1617,7 @@ git commit -m "test: 基于 a2a-sdk 的可控假 agent 测试设施"
 ```python
 from a2a.types import TaskState
 
-from agent_hub.a2a.client import RemoteAgentClient
+from choirworks.a2a.client import RemoteAgentClient
 
 
 async def test_resolve_card_and_send_text(echo_agent):
@@ -1663,9 +1663,9 @@ async def test_send_text_sets_deterministic_message_id(echo_agent):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_a2a_client.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.a2a'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.a2a'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/a2a/client.py`**
+- [ ] **Step 3: 实现 `src/choirworks/a2a/client.py`**
 
 ```python
 from __future__ import annotations
@@ -1746,7 +1746,7 @@ Expected: `2 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/a2a/__init__.py src/agent_hub/a2a/client.py tests/integration/test_a2a_client.py
+git add src/choirworks/a2a/__init__.py src/choirworks/a2a/client.py tests/integration/test_a2a_client.py
 git commit -m "feat: A2A 客户端封装（card 解析、客户端缓存、流式发送）"
 ```
 
@@ -1755,7 +1755,7 @@ git commit -m "feat: A2A 客户端封装（card 解析、客户端缓存、流�
 ### Task 8: Agent 注册表
 
 **Files:**
-- Create: `src/agent_hub/a2a/registry.py`
+- Create: `src/choirworks/a2a/registry.py`
 - Test: `tests/integration/test_registry.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_registry.py`**
@@ -1763,9 +1763,9 @@ git commit -m "feat: A2A 客户端封装（card 解析、客户端缓存、流�
 ```python
 import pytest
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry, DuplicateAgentName
-from agent_hub.store.db import Database
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry, DuplicateAgentName
+from choirworks.store.db import Database
 
 
 async def test_register_list_refresh_delete(tmp_path, echo_agent):
@@ -1811,9 +1811,9 @@ async def test_duplicate_name_rejected(tmp_path, echo_agent):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_registry.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.a2a.registry'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.a2a.registry'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/a2a/registry.py`**
+- [ ] **Step 3: 实现 `src/choirworks/a2a/registry.py`**
 
 ```python
 from __future__ import annotations
@@ -1822,9 +1822,9 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.models.domain import AgentRecord
-from agent_hub.store.db import Database
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.models.domain import AgentRecord
+from choirworks.store.db import Database
 
 _UPSERT_COLUMNS = "id, name, card_url, card, health, last_seen, created_at"
 
@@ -1949,7 +1949,7 @@ Expected: `2 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/a2a/registry.py tests/integration/test_registry.py
+git add src/choirworks/a2a/registry.py tests/integration/test_registry.py
 git commit -m "feat: Agent 注册表（注册/查询/刷新/删除）"
 ```
 
@@ -1958,7 +1958,7 @@ git commit -m "feat: Agent 注册表（注册/查询/刷新/删除）"
 ### Task 9: 任务服务（单节点计划）
 
 **Files:**
-- Create: `src/agent_hub/core/tasks.py`
+- Create: `src/choirworks/core/tasks.py`
 - Test: `tests/integration/test_task_service.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_task_service.py`**
@@ -1967,18 +1967,18 @@ git commit -m "feat: Agent 注册表（注册/查询/刷新/删除）"
 import pytest
 from pydantic import BaseModel
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.tasks import (
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.tasks import (
     CreatedTask,
     TargetSpec,
     TaskNotFound,
     TaskService,
     UnknownAgent,
 )
-from agent_hub.models.enums import NodeStatus, TaskStatus
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.models.enums import NodeStatus, TaskStatus
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_service(tmp_path, echo_agent) -> tuple[Database, TaskService]:
@@ -2022,9 +2022,9 @@ async def test_unknown_agent_rejected(tmp_path, echo_agent):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_task_service.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.core.tasks'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.core.tasks'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/core/tasks.py`**
+- [ ] **Step 3: 实现 `src/choirworks/core/tasks.py`**
 
 ```python
 from __future__ import annotations
@@ -2035,12 +2035,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.models.domain import Node, OrchestrationTask, Plan
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.models.domain import Node, OrchestrationTask, Plan
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 class TaskNotFound(KeyError):
@@ -2168,7 +2168,7 @@ Expected: `2 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/core/tasks.py tests/integration/test_task_service.py
+git add src/choirworks/core/tasks.py tests/integration/test_task_service.py
 git commit -m "feat: TaskService（单节点计划、快照、终态判定）"
 ```
 
@@ -2177,7 +2177,7 @@ git commit -m "feat: TaskService（单节点计划、快照、终态判定）"
 ### Task 10: 节点派发器
 
 **Files:**
-- Create: `src/agent_hub/core/dispatcher.py`
+- Create: `src/choirworks/core/dispatcher.py`
 - Test: `tests/integration/test_dispatcher.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_dispatcher.py`**
@@ -2185,13 +2185,13 @@ git commit -m "feat: TaskService（单节点计划、快照、终态判定）"
 ```python
 import pytest
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import InvalidNodeState, NodeDispatcher
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.fake_agents.echo_agent import start_fake_agent
 
 
@@ -2296,9 +2296,9 @@ async def test_dispatch_twice_rejected(tmp_path, echo_agent):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_dispatcher.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.core.dispatcher'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.core.dispatcher'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/core/dispatcher.py`**
+- [ ] **Step 3: 实现 `src/choirworks/core/dispatcher.py`**
 
 ```python
 from __future__ import annotations
@@ -2308,13 +2308,13 @@ from typing import Any
 
 from a2a.types import TaskState
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.core.state import assert_node_transition
-from agent_hub.models.domain import Node
-from agent_hub.models.enums import EventType, NodeStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.core.state import assert_node_transition
+from choirworks.models.domain import Node
+from choirworks.models.enums import EventType, NodeStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 _REMOTE_STATE_MAP: dict[int, NodeStatus] = {
     TaskState.TASK_STATE_SUBMITTED: NodeStatus.DISPATCHED,
@@ -2474,7 +2474,7 @@ Expected: `5 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/core/dispatcher.py tests/integration/test_dispatcher.py
+git add src/choirworks/core/dispatcher.py tests/integration/test_dispatcher.py
 git commit -m "feat: 节点派发器（A2A 事件映射、产物收集、超时）"
 ```
 
@@ -2483,12 +2483,12 @@ git commit -m "feat: 节点派发器（A2A 事件映射、产物收集、超时�
 ### Task 11: API 层与主程序
 
 **Files:**
-- Create: `src/agent_hub/api/__init__.py`（空）
-- Create: `src/agent_hub/api/schemas.py`
-- Create: `src/agent_hub/api/app.py`
-- Create: `src/agent_hub/api/tasks.py`
-- Create: `src/agent_hub/api/agents.py`
-- Create: `src/agent_hub/main.py`
+- Create: `src/choirworks/api/__init__.py`（空）
+- Create: `src/choirworks/api/schemas.py`
+- Create: `src/choirworks/api/app.py`
+- Create: `src/choirworks/api/tasks.py`
+- Create: `src/choirworks/api/agents.py`
+- Create: `src/choirworks/main.py`
 - Test: `tests/integration/test_api.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_api.py`**
@@ -2497,8 +2497,8 @@ git commit -m "feat: 节点派发器（A2A 事件映射、产物收集、超时�
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
+from choirworks.api.app import create_app
+from choirworks.config import Settings
 
 
 @pytest.fixture
@@ -2566,9 +2566,9 @@ async def test_missing_task_returns_404(api):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_api.py -v`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.api'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.api'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/api/schemas.py`**
+- [ ] **Step 3: 实现 `src/choirworks/api/schemas.py`**
 
 ```python
 from __future__ import annotations
@@ -2595,7 +2595,7 @@ class RegisterAgentIn(BaseModel):
     card_url: str = Field(..., description="A2A agent base URL")
 ```
 
-- [ ] **Step 4: 实现 `src/agent_hub/api/app.py`**
+- [ ] **Step 4: 实现 `src/choirworks/api/app.py`**
 
 ```python
 from __future__ import annotations
@@ -2604,15 +2604,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.api import agents as agents_routes
-from agent_hub.api import tasks as tasks_routes
-from agent_hub.config import Settings
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.tasks import TaskService
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.api import agents as agents_routes
+from choirworks.api import tasks as tasks_routes
+from choirworks.config import Settings
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.tasks import TaskService
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -2646,7 +2646,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await remote.close()
             await db.close()
 
-    app = FastAPI(title="Agent Hub", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="ChoirWorks", version="0.1.0", lifespan=lifespan)
     app.include_router(tasks_routes.router, prefix="/v1")
     app.include_router(agents_routes.router, prefix="/v1")
 
@@ -2657,16 +2657,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 ```
 
-- [ ] **Step 5: 实现 `src/agent_hub/api/tasks.py`**
+- [ ] **Step 5: 实现 `src/choirworks/api/tasks.py`**
 
 ```python
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agent_hub.api.schemas import CreateTaskIn
-from agent_hub.core.dispatcher import InvalidNodeState
-from agent_hub.core.tasks import CreatedTask, TargetSpec, TaskNotFound, TaskSnapshot, UnknownAgent
+from choirworks.api.schemas import CreateTaskIn
+from choirworks.core.dispatcher import InvalidNodeState
+from choirworks.core.tasks import CreatedTask, TargetSpec, TaskNotFound, TaskSnapshot, UnknownAgent
 
 router = APIRouter(tags=["tasks"])
 
@@ -2706,16 +2706,16 @@ async def dispatch_node(task_id: str, node_id: str, request: Request) -> TaskSna
     return await service.get_snapshot(task_id)
 ```
 
-- [ ] **Step 6: 实现 `src/agent_hub/api/agents.py`**
+- [ ] **Step 6: 实现 `src/choirworks/api/agents.py`**
 
 ```python
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agent_hub.a2a.registry import DuplicateAgentName
-from agent_hub.api.schemas import RegisterAgentIn
-from agent_hub.models.domain import AgentRecord
+from choirworks.a2a.registry import DuplicateAgentName
+from choirworks.api.schemas import RegisterAgentIn
+from choirworks.models.domain import AgentRecord
 
 router = APIRouter(tags=["agents"])
 
@@ -2751,7 +2751,7 @@ async def refresh_agent(agent_id: str, request: Request) -> AgentRecord:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 ```
 
-- [ ] **Step 7: 实现 `src/agent_hub/main.py`**
+- [ ] **Step 7: 实现 `src/choirworks/main.py`**
 
 ```python
 from __future__ import annotations
@@ -2760,12 +2760,12 @@ import os
 
 import uvicorn
 
-from agent_hub.api.app import create_app
-from agent_hub.config import load_settings
+from choirworks.api.app import create_app
+from choirworks.config import load_settings
 
 
 def main() -> None:
-    settings = load_settings(os.environ.get("AGENT_HUB_CONFIG"))
+    settings = load_settings(os.environ.get("CHOIRWORKS_CONFIG"))
     uvicorn.run(
         create_app(settings),
         host=settings.server.host,
@@ -2785,7 +2785,7 @@ Expected: `4 passed`
 - [ ] **Step 9: 提交**
 
 ```bash
-git add src/agent_hub/api/ src/agent_hub/main.py tests/integration/test_api.py
+git add src/choirworks/api/ src/choirworks/main.py tests/integration/test_api.py
 git commit -m "feat: FastAPI 入口（任务/派发/agent 注册）"
 ```
 
@@ -2799,7 +2799,7 @@ git commit -m "feat: FastAPI 入口（任务/派发/agent 注册）"
 - [ ] **Step 1: 写 `README.md`**
 
 ````markdown
-# Agent Hub
+# ChoirWorks
 
 A2A 多 Agent 编排平台（MVP）。平台不执行业务动作，负责理解需求、拆分任务 DAG、
 调度 A2A subagent，并支持暂停协助、断点恢复与平台侧回退。
@@ -2821,7 +2821,7 @@ uv run pytest
 
 ```bash
 cp config.example.yaml config.yaml   # 可选
-uv run agent-hub                     # 默认 http://127.0.0.1:8080
+uv run choirworks                     # 默认 http://127.0.0.1:8080
 ```
 
 ## M1 接口速览

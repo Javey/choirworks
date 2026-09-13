@@ -1,9 +1,9 @@
 import aiosqlite
 
-from agent_hub.models.enums import EventType, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.models.enums import EventType, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 OLD_SCHEMA = """
 CREATE TABLE events (

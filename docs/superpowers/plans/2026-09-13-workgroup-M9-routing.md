@@ -57,10 +57,10 @@ async def create_task(..., start: bool = False)  # 保持现状，由调用方 s
 ### Task 1: coordinator 骨架 + 人类消息路由（无引用路径）+ 入群
 
 **Files:**
-- Create: `src/agent_hub/core/coordinator.py`
-- Modify: `src/agent_hub/core/room.py`（`extract_mentions`、`post_assistant_message`）
-- Modify: `src/agent_hub/core/planner.py`（`required_agents` 提示）
-- Modify: `src/agent_hub/api/messages.py`（委托 coordinator，允许 mentions）
+- Create: `src/choirworks/core/coordinator.py`
+- Modify: `src/choirworks/core/room.py`（`extract_mentions`、`post_assistant_message`）
+- Modify: `src/choirworks/core/planner.py`（`required_agents` 提示）
+- Modify: `src/choirworks/api/messages.py`（委托 coordinator，允许 mentions）
 - Test: `tests/integration/test_coordinator_routing.py`
 
 实现要点：
@@ -80,8 +80,8 @@ async def create_task(..., start: bool = False)  # 保持现状，由调用方 s
 ### Task 2: assistant 播报（拆解/派发/完成/干预提问）
 
 **Files:**
-- Modify: `src/agent_hub/core/orchestrator.py`
-- Modify: `src/agent_hub/core/coordinator.py`
+- Modify: `src/choirworks/core/orchestrator.py`
+- Modify: `src/choirworks/core/coordinator.py`
 - Test: `tests/integration/test_assistant_announcements.py`
 
 实现要点：
@@ -95,8 +95,8 @@ async def create_task(..., start: bool = False)  # 保持现状，由调用方 s
 ### Task 3: Agent mention 仲裁（复用/扩展/合并/拒绝）
 
 **Files:**
-- Modify: `src/agent_hub/core/coordinator.py`
-- Modify: `src/agent_hub/core/orchestrator.py`（run 循环：`post_agent_messages` 返回新消息 → `arbitrate_message`）
+- Modify: `src/choirworks/core/coordinator.py`
+- Modify: `src/choirworks/core/orchestrator.py`（run 循环：`post_agent_messages` 返回新消息 → `arbitrate_message`）
 - Test: `tests/integration/test_mention_arbitration.py`
 
 实现要点：
@@ -113,8 +113,8 @@ async def create_task(..., start: bool = False)  # 保持现状，由调用方 s
 ### Task 4: 引用回复路由（续接/排队/打断/干预作答）
 
 **Files:**
-- Modify: `src/agent_hub/core/coordinator.py`
-- Modify: `src/agent_hub/api/messages.py`（去除 quote/interrupt 的 400）
+- Modify: `src/choirworks/core/coordinator.py`
+- Modify: `src/choirworks/api/messages.py`（去除 quote/interrupt 的 400）
 - Test: `tests/integration/test_quote_routing.py`
 
 实现要点（`quote` 消息查 `projections.fetch_message`）：
@@ -129,10 +129,10 @@ async def create_task(..., start: bool = False)  # 保持现状，由调用方 s
 ### Task 5: 排队投递与启动对账
 
 **Files:**
-- Modify: `src/agent_hub/core/coordinator.py`
-- Modify: `src/agent_hub/core/orchestrator.py`（run 循环顶部）
-- Modify: `src/agent_hub/store/projections.py`
-- Modify: `src/agent_hub/api/app.py`（lifespan 里 `await coordinator.reconcile()`）
+- Modify: `src/choirworks/core/coordinator.py`
+- Modify: `src/choirworks/core/orchestrator.py`（run 循环顶部）
+- Modify: `src/choirworks/store/projections.py`
+- Modify: `src/choirworks/api/app.py`（lifespan 里 `await coordinator.reconcile()`）
 - Test: `tests/integration/test_queued_delivery.py`
 
 实现要点：
@@ -164,7 +164,7 @@ uv run ruff check .
 cd frontend && npm test && npm run build # 前端不改，保持 25
 ```
 
-实机：`uv run agent-hub-sim --fresh` → 浏览器/curl 走完剧本 1–5。
+实机：`uv run choirworks-sim --fresh` → 浏览器/curl 走完剧本 1–5。
 
 ## Self-Review 备忘
 

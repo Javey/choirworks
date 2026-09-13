@@ -1,7 +1,7 @@
 import pytest
 
-from agent_hub.config import PolicyConfig, PolicyOverride
-from agent_hub.core.policy import POLICY_VALUES, PolicyEngine
+from choirworks.config import PolicyConfig, PolicyOverride
+from choirworks.core.policy import POLICY_VALUES, PolicyEngine
 
 
 def engine() -> PolicyEngine:

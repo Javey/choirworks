@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.planner import (
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.planner import (
     PlanDraft,
     Planner,
     PlanningFailed,
@@ -13,8 +13,8 @@ from agent_hub.core.planner import (
     PlanValidationError,
     validate_plan,
 )
-from agent_hub.models.domain import AgentRecord
-from agent_hub.store.db import Database
+from choirworks.models.domain import AgentRecord
+from choirworks.store.db import Database
 from tests.support.fakes import FakeLLM
 
 

@@ -1,7 +1,7 @@
 from a2a.types import TaskState
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.sim.fake_agent import start_fake_agent
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.sim.fake_agent import start_fake_agent
 
 
 async def test_resolve_card_and_send_text(echo_agent):

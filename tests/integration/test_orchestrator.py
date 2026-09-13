@@ -1,15 +1,15 @@
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import PlanDraft, Planner, PlanNodeDraft
-from agent_hub.core.tasks import TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.sim.fake_agent import start_fake_agent
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import PlanDraft, Planner, PlanNodeDraft
+from choirworks.core.tasks import TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 
@@ -210,7 +210,7 @@ async def test_checkpoints_created_as_nodes_complete(tmp_path):
         task_id = await tasks.create_pending_task("hi")
         orchestrator.start(task_id)
         await asyncio.wait_for(orchestrator.wait(task_id), 10.0)
-        from agent_hub.store import projections as proj
+        from choirworks.store import projections as proj
 
         checkpoints = await proj.fetch_checkpoints(db, task_id)
         assert len(checkpoints) == 1

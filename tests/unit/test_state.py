@@ -1,13 +1,13 @@
 import pytest
 
-from agent_hub.core.state import (
+from choirworks.core.state import (
     InvalidTransition,
     assert_node_transition,
     assert_task_transition,
     can_node_transition,
     can_task_transition,
 )
-from agent_hub.models.enums import NodeStatus, TaskStatus
+from choirworks.models.enums import NodeStatus, TaskStatus
 
 
 def test_task_legal_transitions():

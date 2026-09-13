@@ -1,8 +1,8 @@
-from agent_hub.core.context import build_agent_context
-from agent_hub.core.room import post_message
-from agent_hub.models.enums import EventType
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.context import build_agent_context
+from choirworks.core.room import post_message
+from choirworks.models.enums import EventType
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_room(tmp_path):

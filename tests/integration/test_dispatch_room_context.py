@@ -1,11 +1,11 @@
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.room import post_message
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.room import post_message
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def test_dispatch_includes_room_context(tmp_path, echo_agent):

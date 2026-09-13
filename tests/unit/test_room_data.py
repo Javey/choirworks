@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import aiosqlite
 
-from agent_hub.core.events import EventBus
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.events import EventBus
+from choirworks.models.enums import EventType
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_store(tmp_path) -> tuple[Database, EventStore]:

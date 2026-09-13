@@ -1,9 +1,9 @@
-from agent_hub.core.room import post_message
-from agent_hub.core.summary import SummaryDraft, maybe_update_summary
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.room import post_message
+from choirworks.core.summary import SummaryDraft, maybe_update_summary
+from choirworks.models.enums import EventType
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 

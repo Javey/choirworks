@@ -62,7 +62,7 @@ B 完成后编排让 A 继续，A 的上下文不丢；多轮协调后任务完�
 - 干预卡：已指派 → 「已指派 {agent} 处理中…」（无输入框）；resolved 显示答复人；failed 显示协助失败。
 - 其余（流式、重试、回退对话框）复用既有机制。
 
-## 6. 模拟剧本（`agent-hub-sim`）
+## 6. 模拟剧本（`choirworks-sim`）
 
 6 个脚本化 Agent：`researcher`(collaborate)、`writer`(inquire)、`critic`(review→human)、
 `analyst`(assist)、`flaky`、`broken`；策略覆盖 `researcher/writer → peer_agent`。

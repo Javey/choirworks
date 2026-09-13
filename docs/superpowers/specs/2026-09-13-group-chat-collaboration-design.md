@@ -1,4 +1,4 @@
-# Agent Hub 工作群协作模式设计（v1）
+# ChoirWorks 工作群协作模式设计（v1）
 
 - 日期：2026-09-13
 - 状态：已评审通过（待实现）
@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS room_summaries (
 - `uv run pytest -p no:warnings -q`（含新增房间测试）
 - `uv run ruff check .`
 - `cd frontend && npm test && npm run build`
-- 实机：`uv run agent-hub-sim --fresh` 后在浏览器完成剧本 1–6。
+- 实机：`uv run choirworks-sim --fresh` 后在浏览器完成剧本 1–6。
 
 ## 12. 里程碑
 

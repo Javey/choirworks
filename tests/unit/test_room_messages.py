@@ -1,7 +1,7 @@
-from agent_hub.core.room import post_message
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.room import post_message
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_room(tmp_path):

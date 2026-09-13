@@ -1,6 +1,6 @@
 import pytest
 
-from agent_hub.sim.fake_agent import FakeAgent, start_fake_agent
+from choirworks.sim.fake_agent import FakeAgent, start_fake_agent
 
 
 @pytest.fixture(autouse=True)

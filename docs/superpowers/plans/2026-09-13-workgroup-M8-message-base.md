@@ -16,21 +16,21 @@
 
 | 文件 | 职责 | 动作 |
 |---|---|---|
-| `src/agent_hub/store/db.py` | events 会话列迁移；messages/room_members/room_summaries 建表 | 修改 |
-| `src/agent_hub/store/event_store.py` | `Event.conversation_id`、`append(..., conversation_id=)`、`replay_conversation` | 修改 |
-| `src/agent_hub/core/events.py` | EventBus 按 task/room 双键分发 | 修改 |
-| `src/agent_hub/models/enums.py` | 4 个新事件类型 | 修改 |
-| `src/agent_hub/models/domain.py` | `RoomMessage/RoomMember/RoomSummary` | 修改 |
-| `src/agent_hub/store/projections.py` | 新事件投影 + 查询 + rebuild 清单 | 修改 |
-| `src/agent_hub/core/room.py` | `post_message`（seq 锁）、`post_agent_messages`、`artifact_text` | 新建 |
-| `src/agent_hub/core/context.py` | `ContextPackage`、`build_agent_context` | 新建 |
-| `src/agent_hub/core/summary.py` | `SummaryDraft`、`maybe_update_summary` | 新建 |
-| `src/agent_hub/core/dispatcher.py` | 派发/续跑注入上下文包 + `context_included` 审计 | 修改 |
-| `src/agent_hub/api/messages.py` | `GET/POST /v1/conversations/{id}/messages` | 新建 |
-| `src/agent_hub/api/sse.py` | `GET /v1/conversations/{id}/stream` | 修改 |
-| `src/agent_hub/api/schemas.py` | 消息请求/响应模型 | 修改 |
-| `src/agent_hub/api/app.py` | 注册 messages 路由 | 修改 |
-| `src/agent_hub/core/orchestrator.py` | 节点完成后发布 Agent 消息 | 修改 |
+| `src/choirworks/store/db.py` | events 会话列迁移；messages/room_members/room_summaries 建表 | 修改 |
+| `src/choirworks/store/event_store.py` | `Event.conversation_id`、`append(..., conversation_id=)`、`replay_conversation` | 修改 |
+| `src/choirworks/core/events.py` | EventBus 按 task/room 双键分发 | 修改 |
+| `src/choirworks/models/enums.py` | 4 个新事件类型 | 修改 |
+| `src/choirworks/models/domain.py` | `RoomMessage/RoomMember/RoomSummary` | 修改 |
+| `src/choirworks/store/projections.py` | 新事件投影 + 查询 + rebuild 清单 | 修改 |
+| `src/choirworks/core/room.py` | `post_message`（seq 锁）、`post_agent_messages`、`artifact_text` | 新建 |
+| `src/choirworks/core/context.py` | `ContextPackage`、`build_agent_context` | 新建 |
+| `src/choirworks/core/summary.py` | `SummaryDraft`、`maybe_update_summary` | 新建 |
+| `src/choirworks/core/dispatcher.py` | 派发/续跑注入上下文包 + `context_included` 审计 | 修改 |
+| `src/choirworks/api/messages.py` | `GET/POST /v1/conversations/{id}/messages` | 新建 |
+| `src/choirworks/api/sse.py` | `GET /v1/conversations/{id}/stream` | 修改 |
+| `src/choirworks/api/schemas.py` | 消息请求/响应模型 | 修改 |
+| `src/choirworks/api/app.py` | 注册 messages 路由 | 修改 |
+| `src/choirworks/core/orchestrator.py` | 节点完成后发布 Agent 消息 | 修改 |
 
 测试文件：`tests/unit/test_room_data.py`、`test_room_messages.py`、`test_agent_context.py`、`test_room_summary.py`、`tests/integration/test_dispatch_room_context.py`、`test_messages_api.py`、`test_room_flow.py`。
 
@@ -39,12 +39,12 @@
 ### Task 1: 房间数据层（事件会话聚合 + 三张表 + 投影 + 查询）
 
 **Files:**
-- Modify: `src/agent_hub/models/enums.py`
-- Modify: `src/agent_hub/models/domain.py`
-- Modify: `src/agent_hub/store/db.py`
-- Modify: `src/agent_hub/store/event_store.py`
-- Modify: `src/agent_hub/core/events.py`
-- Modify: `src/agent_hub/store/projections.py`
+- Modify: `src/choirworks/models/enums.py`
+- Modify: `src/choirworks/models/domain.py`
+- Modify: `src/choirworks/store/db.py`
+- Modify: `src/choirworks/store/event_store.py`
+- Modify: `src/choirworks/core/events.py`
+- Modify: `src/choirworks/store/projections.py`
 - Test: `tests/unit/test_room_data.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -56,11 +56,11 @@ from __future__ import annotations
 
 import aiosqlite
 
-from agent_hub.core.events import EventBus
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.events import EventBus
+from choirworks.models.enums import EventType
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_store(tmp_path) -> tuple[Database, EventStore]:
@@ -269,7 +269,7 @@ uv run pytest tests/unit/test_room_data.py -p no:warnings -q
 
 - [ ] **Step 2: 新增事件类型与领域模型**
 
-`src/agent_hub/models/enums.py` 在 `EventType` 末尾（`ERROR` 之前）加入：
+`src/choirworks/models/enums.py` 在 `EventType` 末尾（`ERROR` 之前）加入：
 
 ```python
     MESSAGE_POSTED = "message.posted"
@@ -278,7 +278,7 @@ uv run pytest tests/unit/test_room_data.py -p no:warnings -q
     ROOM_SUMMARY_UPDATED = "room.summary_updated"
 ```
 
-`src/agent_hub/models/domain.py` 末尾加入：
+`src/choirworks/models/domain.py` 末尾加入：
 
 ```python
 class RoomMessage(BaseModel):
@@ -315,7 +315,7 @@ class RoomSummary(BaseModel):
 
 - [ ] **Step 3: 建表与迁移**
 
-`src/agent_hub/store/db.py`：把 `events` 表定义改为（`task_id` 可空、新增 `conversation_id`）：
+`src/choirworks/store/db.py`：把 `events` 表定义改为（`task_id` 可空、新增 `conversation_id`）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS events (
@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS room_summaries (
 
 - [ ] **Step 4: EventStore 支持会话聚合**
 
-`src/agent_hub/store/event_store.py` 全文替换为：
+`src/choirworks/store/event_store.py` 全文替换为：
 
 ```python
 from __future__ import annotations
@@ -414,9 +414,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.enums import EventType
-from agent_hub.store.db import Database
-from agent_hub.store.projections import apply_event
+from choirworks.models.enums import EventType
+from choirworks.store.db import Database
+from choirworks.store.projections import apply_event
 
 
 class Event(BaseModel):
@@ -523,7 +523,7 @@ class EventStore:
 
 - [ ] **Step 5: EventBus 双键分发**
 
-`src/agent_hub/core/events.py`：`EventSubscription.__init__` 参数 `task_id` 改名 `key`，把两处 `self.task_id` 改为 `self.key`；`EventBus.subscribe(self, key: str)`、`unsubscribe` 用 `subscription.key`；`publish` 改为：
+`src/choirworks/core/events.py`：`EventSubscription.__init__` 参数 `task_id` 改名 `key`，把两处 `self.task_id` 改为 `self.key`；`EventBus.subscribe(self, key: str)`、`unsubscribe` 用 `subscription.key`；`publish` 改为：
 
 ```python
     def publish(self, event: Event) -> None:
@@ -539,7 +539,7 @@ class EventStore:
 
 - [ ] **Step 6: 投影与查询**
 
-`src/agent_hub/store/projections.py`：
+`src/choirworks/store/projections.py`：
 
 a) imports 的 domain 中加入 `RoomMember, RoomMessage, RoomSummary`。
 
@@ -706,9 +706,9 @@ uv run ruff check .
 - [ ] **Step 8: 提交**
 
 ```bash
-git add src/agent_hub/models/enums.py src/agent_hub/models/domain.py \
-  src/agent_hub/store/db.py src/agent_hub/store/event_store.py \
-  src/agent_hub/core/events.py src/agent_hub/store/projections.py \
+git add src/choirworks/models/enums.py src/choirworks/models/domain.py \
+  src/choirworks/store/db.py src/choirworks/store/event_store.py \
+  src/choirworks/core/events.py src/choirworks/store/projections.py \
   tests/unit/test_room_data.py
 git commit -m "feat: 群消息数据层（事件会话聚合、房间表与投影）"
 ```
@@ -718,7 +718,7 @@ git commit -m "feat: 群消息数据层（事件会话聚合、房间表与投�
 ### Task 2: `core/room.py` 消息写入助手（房间 seq 串行分配）
 
 **Files:**
-- Create: `src/agent_hub/core/room.py`
+- Create: `src/choirworks/core/room.py`
 - Test: `tests/unit/test_room_messages.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -726,10 +726,10 @@ git commit -m "feat: 群消息数据层（事件会话聚合、房间表与投�
 创建 `tests/unit/test_room_messages.py`：
 
 ```python
-from agent_hub.core.room import post_message
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.room import post_message
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_room(tmp_path):
@@ -773,7 +773,7 @@ async def test_post_message_allocates_room_seq(tmp_path):
 
 - [ ] **Step 2: 实现**
 
-创建 `src/agent_hub/core/room.py`：
+创建 `src/choirworks/core/room.py`：
 
 ```python
 from __future__ import annotations
@@ -782,9 +782,9 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
-from agent_hub.models.domain import RoomMessage
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
+from choirworks.models.domain import RoomMessage
+from choirworks.models.enums import EventType
+from choirworks.store import projections
 
 _seq_locks: dict[str, asyncio.Lock] = {}
 
@@ -848,7 +848,7 @@ uv run pytest tests/unit/test_room_messages.py -p no:warnings -q && uv run ruff 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add src/agent_hub/core/room.py tests/unit/test_room_messages.py
+git add src/choirworks/core/room.py tests/unit/test_room_messages.py
 git commit -m "feat: 房间消息写入助手（seq 锁与事件发布）"
 ```
 
@@ -857,7 +857,7 @@ git commit -m "feat: 房间消息写入助手（seq 锁与事件发布）"
 ### Task 3: 上下文分级投喂 `core/context.py`
 
 **Files:**
-- Create: `src/agent_hub/core/context.py`
+- Create: `src/choirworks/core/context.py`
 - Test: `tests/unit/test_agent_context.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -865,11 +865,11 @@ git commit -m "feat: 房间消息写入助手（seq 锁与事件发布）"
 创建 `tests/unit/test_agent_context.py`：
 
 ```python
-from agent_hub.core.context import build_agent_context
-from agent_hub.core.room import post_message
-from agent_hub.models.enums import EventType
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.context import build_agent_context
+from choirworks.core.room import post_message
+from choirworks.models.enums import EventType
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def make_room(tmp_path):
@@ -978,7 +978,7 @@ async def test_budget_drops_recent_but_keeps_mention(tmp_path):
 
 - [ ] **Step 2: 实现**
 
-创建 `src/agent_hub/core/context.py`：
+创建 `src/choirworks/core/context.py`：
 
 ```python
 from __future__ import annotations
@@ -988,8 +988,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.domain import RoomMessage
-from agent_hub.store import projections
+from choirworks.models.domain import RoomMessage
+from choirworks.store import projections
 
 HEADER_RULES = "需要他人配合时 @姓名 并说明需求；完成后给出结论"
 
@@ -1101,7 +1101,7 @@ uv run pytest tests/unit/test_agent_context.py -p no:warnings -q && uv run ruff 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add src/agent_hub/core/context.py tests/unit/test_agent_context.py
+git add src/choirworks/core/context.py tests/unit/test_agent_context.py
 git commit -m "feat: Agent 上下文分级投喂（相关性 + 预算裁剪）"
 ```
 
@@ -1110,7 +1110,7 @@ git commit -m "feat: Agent 上下文分级投喂（相关性 + 预算裁剪）"
 ### Task 4: 增量摘要 `core/summary.py`
 
 **Files:**
-- Create: `src/agent_hub/core/summary.py`
+- Create: `src/choirworks/core/summary.py`
 - Test: `tests/unit/test_room_summary.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -1118,12 +1118,12 @@ git commit -m "feat: Agent 上下文分级投喂（相关性 + 预算裁剪）"
 创建 `tests/unit/test_room_summary.py`：
 
 ```python
-from agent_hub.core.room import post_message
-from agent_hub.core.summary import SummaryDraft, maybe_update_summary
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.room import post_message
+from choirworks.core.summary import SummaryDraft, maybe_update_summary
+from choirworks.models.enums import EventType
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 
@@ -1193,7 +1193,7 @@ async def test_summary_failure_keeps_previous(tmp_path):
 
 - [ ] **Step 2: 实现**
 
-创建 `src/agent_hub/core/summary.py`：
+创建 `src/choirworks/core/summary.py`：
 
 ```python
 from __future__ import annotations
@@ -1203,9 +1203,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.domain import RoomSummary
-from agent_hub.models.enums import EventType
-from agent_hub.store import projections
+from choirworks.models.domain import RoomSummary
+from choirworks.models.enums import EventType
+from choirworks.store import projections
 
 SUMMARY_TRIGGER = 12
 SUMMARY_SYSTEM = "你是多 Agent 工作群的会议纪要员，将群聊记录增量压缩为结构化摘要。"
@@ -1277,7 +1277,7 @@ uv run pytest tests/unit/test_room_summary.py -p no:warnings -q && uv run ruff c
 - [ ] **Step 4: 提交**
 
 ```bash
-git add src/agent_hub/core/summary.py tests/unit/test_room_summary.py
+git add src/choirworks/core/summary.py tests/unit/test_room_summary.py
 git commit -m "feat: 房间增量摘要（结构化、事件化、失败降级）"
 ```
 
@@ -1286,7 +1286,7 @@ git commit -m "feat: 房间增量摘要（结构化、事件化、失败降级�
 ### Task 5: 调度器注入上下文包
 
 **Files:**
-- Modify: `src/agent_hub/core/dispatcher.py`
+- Modify: `src/choirworks/core/dispatcher.py`
 - Test: `tests/integration/test_dispatch_room_context.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -1294,14 +1294,14 @@ git commit -m "feat: 房间增量摘要（结构化、事件化、失败降级�
 创建 `tests/integration/test_dispatch_room_context.py`：
 
 ```python
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.room import post_message
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.room import post_message
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def test_dispatch_includes_room_context(tmp_path, echo_agent):
@@ -1366,12 +1366,12 @@ async def test_dispatch_without_room_messages_keeps_legacy_text(tmp_path, echo_a
 
 - [ ] **Step 2: 实现**
 
-`src/agent_hub/core/dispatcher.py`：
+`src/choirworks/core/dispatcher.py`：
 
 a) imports 增加：
 
 ```python
-from agent_hub.core.context import ContextPackage, build_agent_context
+from choirworks.core.context import ContextPackage, build_agent_context
 ```
 
 b) 新增方法：
@@ -1440,7 +1440,7 @@ uv run pytest tests/integration/test_dispatch_room_context.py tests/integration/
 - [ ] **Step 4: 提交**
 
 ```bash
-git add src/agent_hub/core/dispatcher.py tests/integration/test_dispatch_room_context.py
+git add src/choirworks/core/dispatcher.py tests/integration/test_dispatch_room_context.py
 git commit -m "feat: 调度器注入房间上下文包（含 context_included 审计）"
 ```
 
@@ -1449,10 +1449,10 @@ git commit -m "feat: 调度器注入房间上下文包（含 context_included �
 ### Task 6: 消息 REST API 与房间 SSE
 
 **Files:**
-- Modify: `src/agent_hub/api/schemas.py`
-- Create: `src/agent_hub/api/messages.py`
-- Modify: `src/agent_hub/api/sse.py`
-- Modify: `src/agent_hub/api/app.py`
+- Modify: `src/choirworks/api/schemas.py`
+- Create: `src/choirworks/api/messages.py`
+- Modify: `src/choirworks/api/sse.py`
+- Modify: `src/choirworks/api/app.py`
 - Test: `tests/integration/test_messages_api.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -1468,10 +1468,10 @@ import httpx
 import pytest
 import uvicorn
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft
-from agent_hub.sim.ports import free_port
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.sim.ports import free_port
 from tests.support.fakes import FakeLLM
 
 
@@ -1630,7 +1630,7 @@ async def test_conversation_sse_replays_room_and_task_events(tmp_path, echo_agen
 
 - [ ] **Step 2: 实现 schemas**
 
-`src/agent_hub/api/schemas.py` 末尾加入：
+`src/choirworks/api/schemas.py` 末尾加入：
 
 ```python
 class PostMessageIn(BaseModel):
@@ -1657,16 +1657,16 @@ class RoomMessagesOut(BaseModel):
 
 - [ ] **Step 3: 实现路由**
 
-创建 `src/agent_hub/api/messages.py`：
+创建 `src/choirworks/api/messages.py`：
 
 ```python
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agent_hub.api.schemas import PostMessageIn, PostMessageOut, RoomMessagesOut
-from agent_hub.core import room
-from agent_hub.store import projections
+from choirworks.api.schemas import PostMessageIn, PostMessageOut, RoomMessagesOut
+from choirworks.core import room
+from choirworks.store import projections
 
 router = APIRouter(tags=["messages"])
 
@@ -1742,19 +1742,19 @@ async def create_message(
 
 - [ ] **Step 4: 注册路由与 SSE**
 
-`src/agent_hub/api/app.py`：
+`src/choirworks/api/app.py`：
 
-a) import 增加 `from agent_hub.api import messages as messages_routes`。
+a) import 增加 `from choirworks.api import messages as messages_routes`。
 b) `app.include_router(messages_routes.router, prefix="/v1")`。
 
-`src/agent_hub/api/sse.py` 追加：
+`src/choirworks/api/sse.py` 追加：
 
 ```python
 @router.get("/conversations/{conversation_id}/stream")
 async def conversation_events(
     conversation_id: str, request: Request, since_seq: int = 0
 ):
-    from agent_hub.store import projections
+    from choirworks.store import projections
 
     if await projections.fetch_conversation(request.app.state.db, conversation_id) is None:
         raise HTTPException(
@@ -1802,8 +1802,8 @@ uv run pytest tests/integration/test_messages_api.py -p no:warnings -q && uv run
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/agent_hub/api/schemas.py src/agent_hub/api/messages.py \
-  src/agent_hub/api/sse.py src/agent_hub/api/app.py \
+git add src/choirworks/api/schemas.py src/choirworks/api/messages.py \
+  src/choirworks/api/sse.py src/choirworks/api/app.py \
   tests/integration/test_messages_api.py
 git commit -m "feat: 群消息 REST 与房间 SSE"
 ```
@@ -1813,8 +1813,8 @@ git commit -m "feat: 群消息 REST 与房间 SSE"
 ### Task 7: Agent 产出自动入群时间线（端到端）
 
 **Files:**
-- Modify: `src/agent_hub/core/room.py`
-- Modify: `src/agent_hub/core/orchestrator.py`
+- Modify: `src/choirworks/core/room.py`
+- Modify: `src/choirworks/core/orchestrator.py`
 - Test: `tests/integration/test_room_flow.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -1827,9 +1827,9 @@ import asyncio
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
 
 
@@ -1889,7 +1889,7 @@ async def test_agent_output_becomes_room_message(api):
 
 - [ ] **Step 2: 实现**
 
-`src/agent_hub/core/room.py` 追加：
+`src/choirworks/core/room.py` 追加：
 
 ```python
 def artifact_text(output: dict[str, Any] | None) -> str:
@@ -1904,7 +1904,7 @@ def artifact_text(output: dict[str, Any] | None) -> str:
 
 
 async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any]) -> None:
-    from agent_hub.models.enums import NodeStatus
+    from choirworks.models.enums import NodeStatus
 
     if task.conversation_id is None:
         return
@@ -1926,9 +1926,9 @@ async def post_agent_messages(db: Any, events: Any, task: Any, nodes: list[Any])
         )
 ```
 
-`src/agent_hub/core/orchestrator.py`：
+`src/choirworks/core/orchestrator.py`：
 
-a) import 增加：`from agent_hub.core.room import post_agent_messages`
+a) import 增加：`from choirworks.core.room import post_agent_messages`
 b) `run` 循环中取得 `nodes` 后（`self._inflight = ...` 之后）加入：
 
 ```python
@@ -1950,7 +1950,7 @@ uv run ruff check .
 - [ ] **Step 4: 提交**
 
 ```bash
-git add src/agent_hub/core/room.py src/agent_hub/core/orchestrator.py \
+git add src/choirworks/core/room.py src/choirworks/core/orchestrator.py \
   tests/integration/test_room_flow.py
 git commit -m "feat: Agent 产出自动入群时间线（去重、幂等）"
 ```
@@ -1972,7 +1972,7 @@ cd frontend && npm test 2>&1 | tail -3
 - [ ] **Step 2: 实机冒烟（可选但推荐）**
 
 ```bash
-uv run agent-hub-sim --port 18081 --db /tmp/opencode/m8.db --fresh
+uv run choirworks-sim --port 18081 --db /tmp/opencode/m8.db --fresh
 ```
 
 浏览器或 curl：创建任务得到 conversation_id 后，`POST /v1/conversations/{id}/messages`，确认消息时间线包含 user/agent 消息，`GET /v1/conversations/{id}/stream` 有事件流。

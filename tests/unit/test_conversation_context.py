@@ -1,7 +1,7 @@
-from agent_hub.core.conversations import build_conversation_context
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.core.conversations import build_conversation_context
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def seed_task(

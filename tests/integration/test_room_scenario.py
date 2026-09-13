@@ -3,10 +3,10 @@ import asyncio
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.sim.fake_agent import start_fake_agent
-from agent_hub.sim.llm import SimLLM
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.sim.llm import SimLLM
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ async def test_group_scenario_survives_rebuild(scenario):
         await client.get(f"/v1/conversations/{conversation_id}/messages")
     ).json()["messages"]
 
-    from agent_hub.store import projections
+    from choirworks.store import projections
 
     await projections.rebuild(app.state.db)
     after = (

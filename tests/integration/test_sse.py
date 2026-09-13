@@ -6,9 +6,9 @@ import httpx
 import pytest
 import uvicorn
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.sim.ports import free_port
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.sim.ports import free_port
 
 
 @pytest.fixture

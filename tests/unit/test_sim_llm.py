@@ -2,11 +2,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_hub.core.orchestrator import PeerChoice
-from agent_hub.core.planner import PlanDraft, validate_plan
-from agent_hub.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
-from agent_hub.models.domain import AgentRecord
-from agent_hub.sim.llm import SimLLM
+from choirworks.core.orchestrator import PeerChoice
+from choirworks.core.planner import PlanDraft, validate_plan
+from choirworks.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
+from choirworks.models.domain import AgentRecord
+from choirworks.sim.llm import SimLLM
 
 
 def agent(name: str) -> AgentRecord:

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from agent_hub.core.llm import LiteLLMClient
+from choirworks.core.llm import LiteLLMClient
 
 
 class Answer(BaseModel):

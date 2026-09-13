@@ -3,11 +3,11 @@ import asyncio
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.core.planner import PlanDraft  # noqa: F401  (import graph sanity)
-from agent_hub.sim.llm import SimLLM
-from agent_hub.sim.runner import start_sim_agents
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.core.planner import PlanDraft  # noqa: F401  (import graph sanity)
+from choirworks.sim.llm import SimLLM
+from choirworks.sim.runner import start_sim_agents
 
 
 @pytest.fixture

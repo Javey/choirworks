@@ -24,7 +24,7 @@
 ## 文件结构（Plan 3 增量）
 
 ```
-src/agent_hub/
+src/choirworks/
   config.py                    # +PolicyConfig/policies
   core/policy.py               # PolicyEngine
   core/orchestrator.py         # +intervention 处理、continue、超时 watcher
@@ -45,8 +45,8 @@ tests/
 ### Task 1: 策略配置与引擎
 
 **Files:**
-- Modify: `src/agent_hub/config.py`、`config.example.yaml`
-- Create: `src/agent_hub/core/policy.py`
+- Modify: `src/choirworks/config.py`、`config.example.yaml`
+- Create: `src/choirworks/core/policy.py`
 - Test: `tests/unit/test_policy.py`
 
 - [ ] **Step 1: 写失败测试 `tests/unit/test_policy.py`**
@@ -54,8 +54,8 @@ tests/
 ```python
 import pytest
 
-from agent_hub.config import PolicyConfig, PolicyOverride
-from agent_hub.core.policy import POLICY_VALUES, PolicyEngine
+from choirworks.config import PolicyConfig, PolicyOverride
+from choirworks.core.policy import POLICY_VALUES, PolicyEngine
 
 
 def engine() -> PolicyEngine:
@@ -101,7 +101,7 @@ def test_policy_values_exported():
 Run: `uv run pytest tests/unit/test_policy.py -p no:warnings -q`
 Expected: FAIL，`ImportError: cannot import name 'PolicyConfig'`
 
-- [ ] **Step 3: 修改 `src/agent_hub/config.py`**
+- [ ] **Step 3: 修改 `src/choirworks/config.py`**
 
 ```python
 class PolicyOverride(BaseModel):
@@ -136,12 +136,12 @@ policies:
       policy: human
 ```
 
-- [ ] **Step 4: 实现 `src/agent_hub/core/policy.py`**
+- [ ] **Step 4: 实现 `src/choirworks/core/policy.py`**
 
 ```python
 from __future__ import annotations
 
-from agent_hub.config import PolicyConfig
+from choirworks.config import PolicyConfig
 
 POLICY_VALUES = ("auto_llm", "peer_agent", "human")
 
@@ -191,7 +191,7 @@ class PolicyEngine:
 Run: `uv run pytest tests/unit/test_policy.py -p no:warnings -q` → `8 passed`
 
 ```bash
-git add src/agent_hub/config.py config.example.yaml src/agent_hub/core/policy.py tests/unit/test_policy.py
+git add src/choirworks/config.py config.example.yaml src/choirworks/core/policy.py tests/unit/test_policy.py
 git commit -m "feat: HITL 策略配置与 PolicyEngine"
 ```
 
@@ -200,7 +200,7 @@ git commit -m "feat: HITL 策略配置与 PolicyEngine"
 ### Task 2: 干预投影与节点新列
 
 **Files:**
-- Modify: `src/agent_hub/store/db.py`（迁移 + 新列）、`src/agent_hub/store/projections.py`、`src/agent_hub/core/planner.py`（dag 带 agent_name）
+- Modify: `src/choirworks/store/db.py`（迁移 + 新列）、`src/choirworks/store/projections.py`、`src/choirworks/core/planner.py`（dag 带 agent_name）
 - Test: `tests/unit/test_interventions_projection.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -208,11 +208,11 @@ git commit -m "feat: HITL 策略配置与 PolicyEngine"
 ```python
 from datetime import UTC, datetime
 
-from agent_hub.models.domain import Intervention
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
-from agent_hub.models.enums import EventType, InterventionStatus
+from choirworks.models.domain import Intervention
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
+from choirworks.models.enums import EventType, InterventionStatus
 
 
 async def test_intervention_lifecycle_projection(tmp_path):
@@ -339,7 +339,7 @@ async def _migrate(self, conn: aiosqlite.Connection) -> None:
 Run: `uv run pytest tests/unit/test_interventions_projection.py -p no:warnings -q` → `2 passed`
 
 ```bash
-git add src/agent_hub/store/db.py src/agent_hub/store/projections.py src/agent_hub/models/domain.py src/agent_hub/core/planner.py tests/unit/test_interventions_projection.py
+git add src/choirworks/store/db.py src/choirworks/store/projections.py src/choirworks/models/domain.py src/choirworks/core/planner.py tests/unit/test_interventions_projection.py
 git commit -m "feat: 干预投影与节点 agent_name/policy_override 列"
 ```
 
@@ -348,7 +348,7 @@ git commit -m "feat: 干预投影与节点 agent_name/policy_override 列"
 ### Task 3: 派发器续跑（continue_node）
 
 **Files:**
-- Modify: `src/agent_hub/core/dispatcher.py`
+- Modify: `src/choirworks/core/dispatcher.py`
 - Test: `tests/integration/test_dispatcher.py`（追加）
 
 - [ ] **Step 1: 追加失败测试**
@@ -428,7 +428,7 @@ Expected: FAIL，`'NodeDispatcher' object has no attribute 'continue_node'`
 Run: `uv run pytest tests/integration/test_dispatcher.py -p no:warnings -q` → `6 passed`
 
 ```bash
-git add src/agent_hub/core/dispatcher.py tests/integration/test_dispatcher.py
+git add src/choirworks/core/dispatcher.py tests/integration/test_dispatcher.py
 git commit -m "feat: 派发器 continue_node（同远程任务追加消息续跑）"
 ```
 
@@ -437,7 +437,7 @@ git commit -m "feat: 派发器 continue_node（同远程任务追加消息续跑
 ### Task 4: Orchestrator 介入处理与超时
 
 **Files:**
-- Modify: `src/agent_hub/core/orchestrator.py`
+- Modify: `src/choirworks/core/orchestrator.py`
 - Test: `tests/integration/test_hitl.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_hitl.py`**
@@ -446,18 +446,18 @@ git commit -m "feat: 派发器 continue_node（同远程任务追加消息续跑
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.config import PolicyConfig, PolicyOverride
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft, Planner
-from agent_hub.core.policy import PolicyEngine
-from agent_hub.core.tasks import TaskService
-from agent_hub.models.enums import EventType, InterventionStatus, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.config import PolicyConfig, PolicyOverride
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import PlanDraft, PlanNodeDraft, Planner
+from choirworks.core.policy import PolicyEngine
+from choirworks.core.tasks import TaskService
+from choirworks.models.enums import EventType, InterventionStatus, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
@@ -546,7 +546,7 @@ async def test_human_intervention_via_api(tmp_path):
 async def test_peer_agent_answers(tmp_path):
     asker = await start_fake_agent("ask")
     helper = await start_fake_agent("echo")
-    from agent_hub.core.orchestrator import PeerChoice
+    from choirworks.core.orchestrator import PeerChoice
 
     db, remote, events, tasks, orchestrator, _ = await setup_hitl(
         tmp_path, {"asker": asker, "helper": helper},
@@ -722,7 +722,7 @@ Run: `uv run pytest tests/integration/test_hitl.py -p no:warnings -q` → `5 pas
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/core/orchestrator.py tests/integration/test_hitl.py
+git add src/choirworks/core/orchestrator.py tests/integration/test_hitl.py
 git commit -m "feat: HITL 策略处置（auto/peer/human）与超时降级"
 ```
 
@@ -731,14 +731,14 @@ git commit -m "feat: HITL 策略处置（auto/peer/human）与超时降级"
 ### Task 5: 干预 REST API 与装配
 
 **Files:**
-- Create: `src/agent_hub/api/interventions.py`
-- Modify: `src/agent_hub/api/schemas.py`、`src/agent_hub/api/app.py`
+- Create: `src/choirworks/api/interventions.py`
+- Modify: `src/choirworks/api/schemas.py`、`src/choirworks/api/app.py`
 - Test: `tests/integration/test_api.py`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
 ```python
-from agent_hub.config import PolicyConfig
+from choirworks.config import PolicyConfig
 
 
 @pytest.fixture
@@ -830,7 +830,7 @@ async def answer_intervention(task_id: str, intervention_id: str, body: AnswerIn
 Run: `uv run pytest tests/integration/test_api.py -p no:warnings -q` → `6 passed`
 
 ```bash
-git add src/agent_hub/api/ tests/integration/test_api.py
+git add src/choirworks/api/ tests/integration/test_api.py
 git commit -m "feat: 干预 REST API（列表/答复）与 PolicyEngine 装配"
 ```
 

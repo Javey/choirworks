@@ -1,19 +1,19 @@
 import asyncio
 from pathlib import Path
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.reconcile import reconcile_once
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import Planner
-from agent_hub.core.recovery import recover_tasks
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.sim.fake_agent import start_fake_agent
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.reconcile import reconcile_once
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import Planner
+from choirworks.core.recovery import recover_tasks
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 
@@ -87,7 +87,7 @@ async def test_recover_restarts_planning_task(tmp_path):
     agent = await start_fake_agent("echo")
     db_path = tmp_path / "hub.db"
     db, remote, events, tasks, dispatcher, orchestrator = await _build(db_path, agent)
-    from agent_hub.models.enums import EventType as ET
+    from choirworks.models.enums import EventType as ET
 
     task_id = await tasks.create_pending_task("x")
     await orchestrator.stop()
@@ -98,7 +98,7 @@ async def test_recover_restarts_planning_task(tmp_path):
         db_path, agent
     )
     llm2 = orchestrator2._planner._llm  # noqa: SLF001 - 测试注入计划
-    from agent_hub.core.planner import PlanDraft, PlanNodeDraft
+    from choirworks.core.planner import PlanDraft, PlanNodeDraft
 
     llm2.structured_results.append(
         PlanDraft(

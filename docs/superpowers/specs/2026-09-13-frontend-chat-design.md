@@ -1,4 +1,4 @@
-# Agent Hub 前端对话界面设计（v1）
+# ChoirWorks 前端对话界面设计（v1）
 
 - 日期：2026-09-13
 - 状态：已评审通过（待实现）
@@ -6,7 +6,7 @@
 
 ## 1. 背景与目标
 
-Agent Hub 目前只有 REST/SSE API，无可视化界面。本设计为其增加一个**对话式前端**：用户在一个聊天界面中发起任务，实时看到规划与各 Agent 的执行过程，需要时内联回答干预请求，任务结束后在同一会话中追问，并支持取消、单节点重试与 checkpoint 回退。
+ChoirWorks 目前只有 REST/SSE API，无可视化界面。本设计为其增加一个**对话式前端**：用户在一个聊天界面中发起任务，实时看到规划与各 Agent 的执行过程，需要时内联回答干预请求，任务结束后在同一会话中追问，并支持取消、单节点重试与 checkpoint 回退。
 
 目标：
 
@@ -41,7 +41,7 @@ Agent Hub 目前只有 REST/SSE API，无可视化界面。本设计为其增加
 
 ```
 ┌────────────┐  REST (fetch)   ┌──────────────────────┐
-│ 浏览器 SPA │◀───────────────▶│ FastAPI (Agent Hub)  │
+│ 浏览器 SPA │◀───────────────▶│ FastAPI (ChoirWorks)  │
 │ Vite+React │  SSE (EventSource)                    │
 └────────────┘                 │  conversations API    │
      开发: vite :5173           │  tasks / SSE / ...    │
@@ -275,12 +275,12 @@ type ChatItem =
 - 开发：
   ```
   cd frontend && npm install && npm run dev      # :5173，代理 /v1 → :8080
-  uv run agent-hub                               # 后端 :8080
+  uv run choirworks                               # 后端 :8080
   ```
 - 生产：
   ```
   cd frontend && npm run build                   # 产出 frontend/dist
-  uv run agent-hub                               # 根路径托管 dist
+  uv run choirworks                               # 根路径托管 dist
   ```
 - FastAPI 装配：`create_app` 中在 API 路由注册后，若 `frontend/dist/index.html` 存在则 `app.mount("/", StaticFiles(directory=..., html=True))`；不存在时根路径返回 JSON 提示（`{"detail": "frontend not built"}`），不影响 API。
 - README 增加「前端对话界面」章节（开发/构建/功能简介）。

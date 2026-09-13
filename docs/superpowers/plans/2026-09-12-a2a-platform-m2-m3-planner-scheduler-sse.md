@@ -23,7 +23,7 @@
 ## 文件结构（Plan 2 增量）
 
 ```
-src/agent_hub/
+src/choirworks/
   core/llm.py               # LLMClient Protocol + LiteLLMClient
   core/planner.py           # PlanDraft/validate_plan/Planner
   core/orchestrator.py      # 调度循环
@@ -46,7 +46,7 @@ tests/
 ### Task 1: 配置扩展（LLM + 调度参数）
 
 **Files:**
-- Modify: `src/agent_hub/config.py`
+- Modify: `src/choirworks/config.py`
 - Modify: `config.example.yaml`
 - Test: `tests/unit/test_config.py`（追加用例）
 
@@ -67,7 +67,7 @@ def test_llm_and_scheduler_defaults():
 Run: `uv run pytest tests/unit/test_config.py -p no:warnings -q`
 Expected: FAIL，`AttributeError: 'Settings' object has no attribute 'llm'`
 
-- [ ] **Step 3: 修改 `src/agent_hub/config.py`**
+- [ ] **Step 3: 修改 `src/choirworks/config.py`**
 
 在 `SchedulerConfig` 中追加字段，并新增 `LLMConfig` / `Settings.llm`：
 
@@ -117,7 +117,7 @@ Run: `uv run pytest tests/unit/test_config.py -p no:warnings -q`
 Expected: `4 passed`
 
 ```bash
-git add src/agent_hub/config.py config.example.yaml tests/unit/test_config.py
+git add src/choirworks/config.py config.example.yaml tests/unit/test_config.py
 git commit -m "feat: LLM 与调度配置项"
 ```
 
@@ -126,7 +126,7 @@ git commit -m "feat: LLM 与调度配置项"
 ### Task 2: LLM 客户端抽象
 
 **Files:**
-- Create: `src/agent_hub/core/llm.py`
+- Create: `src/choirworks/core/llm.py`
 - Test: `tests/unit/test_llm.py`
 
 - [ ] **Step 1: 写失败测试 `tests/unit/test_llm.py`**
@@ -136,7 +136,7 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from agent_hub.core.llm import LiteLLMClient
+from choirworks.core.llm import LiteLLMClient
 
 
 class Answer(BaseModel):
@@ -167,9 +167,9 @@ async def test_structured_passes_schema_and_model(monkeypatch):
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_llm.py -p no:warnings -q`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.core.llm'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.core.llm'`
 
-- [ ] **Step 3: 实现 `src/agent_hub/core/llm.py`**
+- [ ] **Step 3: 实现 `src/choirworks/core/llm.py`**
 
 ```python
 from __future__ import annotations
@@ -224,7 +224,7 @@ Run: `uv run pytest tests/unit/test_llm.py -p no:warnings -q`
 Expected: `1 passed`
 
 ```bash
-git add src/agent_hub/core/llm.py tests/unit/test_llm.py
+git add src/choirworks/core/llm.py tests/unit/test_llm.py
 git commit -m "feat: LLM 客户端抽象（LiteLLM + instructor）"
 ```
 
@@ -233,7 +233,7 @@ git commit -m "feat: LLM 客户端抽象（LiteLLM + instructor）"
 ### Task 3: 计划 schema 与校验
 
 **Files:**
-- Create: `src/agent_hub/core/planner.py`
+- Create: `src/choirworks/core/planner.py`
 - Create: `tests/support/__init__.py`（空）、`tests/support/fakes.py`
 - Test: `tests/unit/test_planner.py`
 
@@ -281,13 +281,13 @@ class FakeLLM:
 ```python
 import pytest
 
-from agent_hub.core.planner import (
+from choirworks.core.planner import (
     PlanDraft,
     PlanNodeDraft,
     PlanValidationError,
     validate_plan,
 )
-from agent_hub.models.domain import AgentRecord
+from choirworks.models.domain import AgentRecord
 
 
 def make_agent(name: str, skills: list[str]) -> AgentRecord:
@@ -372,9 +372,9 @@ def test_empty_plan_rejected():
 - [ ] **Step 3: 运行确认失败**
 
 Run: `uv run pytest tests/unit/test_planner.py -p no:warnings -q`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.core.planner'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.core.planner'`
 
-- [ ] **Step 4: 实现 `src/agent_hub/core/planner.py`（校验部分）**
+- [ ] **Step 4: 实现 `src/choirworks/core/planner.py`（校验部分）**
 
 ```python
 from __future__ import annotations
@@ -383,7 +383,7 @@ from typing import Any, Sequence
 
 from pydantic import BaseModel, Field
 
-from agent_hub.models.domain import AgentRecord
+from choirworks.models.domain import AgentRecord
 
 
 class PlanNodeDraft(BaseModel):
@@ -480,7 +480,7 @@ Expected: `8 passed`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/agent_hub/core/planner.py tests/support/ tests/unit/test_planner.py
+git add src/choirworks/core/planner.py tests/support/ tests/unit/test_planner.py
 git commit -m "feat: 计划 schema、校验与 DAG 转换"
 ```
 
@@ -489,13 +489,13 @@ git commit -m "feat: 计划 schema、校验与 DAG 转换"
 ### Task 4: Planner 服务（LLM 结构化输出 + 校验重试）
 
 **Files:**
-- Modify: `src/agent_hub/core/planner.py`
+- Modify: `src/choirworks/core/planner.py`
 - Modify: `tests/unit/test_planner.py`
 
 - [ ] **Step 1: 追加失败测试到 `tests/unit/test_planner.py`**
 
 ```python
-from agent_hub.core.planner import Planner, PlanningFailed
+from choirworks.core.planner import Planner, PlanningFailed
 from tests.support.fakes import FakeLLM
 
 
@@ -503,9 +503,9 @@ async def test_planner_returns_valid_draft(tmp_path):
     llm = FakeLLM(structured_results=[
         PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
     ])
-    from agent_hub.a2a.client import RemoteAgentClient
-    from agent_hub.a2a.registry import AgentRegistry
-    from agent_hub.store.db import Database
+    from choirworks.a2a.client import RemoteAgentClient
+    from choirworks.a2a.registry import AgentRegistry
+    from choirworks.store.db import Database
 
     db = Database(tmp_path / "hub.db")
     await db.initialize()
@@ -537,9 +537,9 @@ async def test_planner_returns_valid_draft(tmp_path):
 async def test_planner_retries_with_feedback(tmp_path):
     import json
     from datetime import UTC, datetime
-    from agent_hub.a2a.client import RemoteAgentClient
-    from agent_hub.a2a.registry import AgentRegistry
-    from agent_hub.store.db import Database
+    from choirworks.a2a.client import RemoteAgentClient
+    from choirworks.a2a.registry import AgentRegistry
+    from choirworks.store.db import Database
 
     db = Database(tmp_path / "hub.db")
     await db.initialize()
@@ -569,9 +569,9 @@ async def test_planner_retries_with_feedback(tmp_path):
 async def test_planner_fails_after_retries(tmp_path):
     import json
     from datetime import UTC, datetime
-    from agent_hub.a2a.client import RemoteAgentClient
-    from agent_hub.a2a.registry import AgentRegistry
-    from agent_hub.store.db import Database
+    from choirworks.a2a.client import RemoteAgentClient
+    from choirworks.a2a.registry import AgentRegistry
+    from choirworks.store.db import Database
 
     db = Database(tmp_path / "hub.db")
     await db.initialize()
@@ -598,9 +598,9 @@ async def test_planner_fails_after_retries(tmp_path):
 
 
 async def test_planner_rejects_when_no_agents(tmp_path):
-    from agent_hub.a2a.client import RemoteAgentClient
-    from agent_hub.a2a.registry import AgentRegistry
-    from agent_hub.store.db import Database
+    from choirworks.a2a.client import RemoteAgentClient
+    from choirworks.a2a.registry import AgentRegistry
+    from choirworks.store.db import Database
 
     db = Database(tmp_path / "hub.db")
     await db.initialize()
@@ -620,7 +620,7 @@ async def test_planner_rejects_when_no_agents(tmp_path):
 Run: `uv run pytest tests/unit/test_planner.py -p no:warnings -q`
 Expected: FAIL，`ImportError: cannot import name 'Planner'`
 
-- [ ] **Step 3: 追加实现到 `src/agent_hub/core/planner.py`**
+- [ ] **Step 3: 追加实现到 `src/choirworks/core/planner.py`**
 
 ```python
 class PlanningFailed(RuntimeError):
@@ -699,8 +699,8 @@ class Planner:
 同时在文件头部 import 中补上：
 
 ```python
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.llm import LLMClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.llm import LLMClient
 ```
 
 - [ ] **Step 4: 运行确认通过**
@@ -711,7 +711,7 @@ Expected: `12 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/core/planner.py tests/unit/test_planner.py
+git add src/choirworks/core/planner.py tests/unit/test_planner.py
 git commit -m "feat: Planner 服务（结构化规划、校验反馈重试）"
 ```
 
@@ -720,14 +720,14 @@ git commit -m "feat: Planner 服务（结构化规划、校验反馈重试）"
 ### Task 5: TaskService 扩展（pending 任务、按草稿建计划、标记 running）
 
 **Files:**
-- Modify: `src/agent_hub/core/tasks.py`
+- Modify: `src/choirworks/core/tasks.py`
 - Test: `tests/integration/test_task_service.py`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
 ```python
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft
-from agent_hub.models.enums import EventType
+from choirworks.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.models.enums import EventType
 
 
 async def test_create_pending_task_and_materialize_draft(tmp_path, echo_agent):
@@ -776,7 +776,7 @@ async def test_replan_emits_superseded_and_bumps_version(tmp_path, echo_agent):
         assert snapshot.plan is not None and snapshot.plan.version == 2
         assert snapshot.plan.rationale == "v2"
         assert snapshot.nodes[0].name == "b"
-        from agent_hub.store.event_store import EventStore
+        from choirworks.store.event_store import EventStore
 
         events = await EventStore(db).replay(task_id)
         assert EventType.PLAN_SUPERSEDED in [event.type for event in events]
@@ -789,12 +789,12 @@ async def test_replan_emits_superseded_and_bumps_version(tmp_path, echo_agent):
 Run: `uv run pytest tests/integration/test_task_service.py -p no:warnings -q`
 Expected: FAIL，`AttributeError: 'TaskService' object has no attribute 'create_pending_task'`
 
-- [ ] **Step 3: 修改 `src/agent_hub/core/tasks.py`**
+- [ ] **Step 3: 修改 `src/choirworks/core/tasks.py`**
 
 追加 import 与方法（`create_task` 保持不变）：
 
 ```python
-from agent_hub.core.planner import PlanDraft, draft_to_dag
+from choirworks.core.planner import PlanDraft, draft_to_dag
 ```
 
 ```python
@@ -862,7 +862,7 @@ Run: `uv run pytest tests/integration/test_task_service.py -p no:warnings -q`
 Expected: `4 passed`
 
 ```bash
-git add src/agent_hub/core/tasks.py tests/integration/test_task_service.py
+git add src/choirworks/core/tasks.py tests/integration/test_task_service.py
 git commit -m "feat: TaskService 支持 Planner 路径（pending/建计划/重规划版本）"
 ```
 
@@ -871,7 +871,7 @@ git commit -m "feat: TaskService 支持 Planner 路径（pending/建计划/重�
 ### Task 6: Orchestrator 调度循环
 
 **Files:**
-- Create: `src/agent_hub/core/orchestrator.py`
+- Create: `src/choirworks/core/orchestrator.py`
 - Modify: `tests/fake_agents/echo_agent.py`（新增 `delay`、`fail_once` 行为）
 - Test: `tests/integration/test_orchestrator.py`
 
@@ -919,16 +919,16 @@ git commit -m "feat: TaskService 支持 Planner 路径（pending/建计划/重�
 ```python
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft, Planner
-from agent_hub.core.tasks import TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import PlanDraft, PlanNodeDraft, Planner
+from choirworks.core.tasks import TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
@@ -1111,9 +1111,9 @@ async def test_input_required_parks_task(tmp_path):
 - [ ] **Step 3: 运行确认失败**
 
 Run: `uv run pytest tests/integration/test_orchestrator.py -p no:warnings -q`
-Expected: FAIL，`ModuleNotFoundError: No module named 'agent_hub.core.orchestrator'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'choirworks.core.orchestrator'`
 
-- [ ] **Step 4: 实现 `src/agent_hub/core/orchestrator.py`**
+- [ ] **Step 4: 实现 `src/choirworks/core/orchestrator.py`**
 
 ```python
 from __future__ import annotations
@@ -1121,19 +1121,19 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.planner import PlanningFailed, Planner
-from agent_hub.core.tasks import TaskService
-from agent_hub.models.domain import Node, OrchestrationTask
-from agent_hub.models.enums import (
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.planner import PlanningFailed, Planner
+from choirworks.core.tasks import TaskService
+from choirworks.models.domain import Node, OrchestrationTask
+from choirworks.models.enums import (
     TERMINAL_TASK_STATUSES,
     EventType,
     NodeStatus,
     TaskStatus,
 )
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 class Orchestrator:
@@ -1335,7 +1335,7 @@ Expected: `6 passed`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/agent_hub/core/orchestrator.py tests/fake_agents/echo_agent.py tests/integration/test_orchestrator.py
+git add src/choirworks/core/orchestrator.py tests/fake_agents/echo_agent.py tests/integration/test_orchestrator.py
 git commit -m "feat: Orchestrator 调度循环（并行、重试、重规划、停车）"
 ```
 
@@ -1344,9 +1344,9 @@ git commit -m "feat: Orchestrator 调度循环（并行、重试、重规划、�
 ### Task 7: API 接入 Planner 自动路径
 
 **Files:**
-- Modify: `src/agent_hub/api/schemas.py`
-- Modify: `src/agent_hub/api/tasks.py`
-- Modify: `src/agent_hub/api/app.py`
+- Modify: `src/choirworks/api/schemas.py`
+- Modify: `src/choirworks/api/tasks.py`
+- Modify: `src/choirworks/api/app.py`
 - Test: `tests/integration/test_api.py`（追加）
 
 - [ ] **Step 1: 追加失败测试到 `tests/integration/test_api.py`**
@@ -1354,7 +1354,7 @@ git commit -m "feat: Orchestrator 调度循环（并行、重试、重规划、�
 ```python
 import asyncio
 
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
 
 
@@ -1402,7 +1402,7 @@ async def test_planner_path_runs_to_completion(api_auto):
 Run: `uv run pytest tests/integration/test_api.py -p no:warnings -q`
 Expected: FAIL，`create_app() got an unexpected keyword argument 'llm'` 或 422（target 必填）
 
-- [ ] **Step 3: 修改 `src/agent_hub/api/schemas.py`**
+- [ ] **Step 3: 修改 `src/choirworks/api/schemas.py`**
 
 ```python
 class CreateTaskIn(BaseModel):
@@ -1416,10 +1416,10 @@ class CreateTaskOut(BaseModel):
     node_ids: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: 修改 `src/agent_hub/api/tasks.py` 的 `create_task`**
+- [ ] **Step 4: 修改 `src/choirworks/api/tasks.py` 的 `create_task`**
 
 ```python
-from agent_hub.api.schemas import CreateTaskIn, CreateTaskOut
+from choirworks.api.schemas import CreateTaskIn, CreateTaskOut
 
 
 @router.post("/tasks", status_code=201, response_model=CreateTaskOut)
@@ -1447,14 +1447,14 @@ async def create_task(body: CreateTaskIn, request: Request) -> CreateTaskOut:
     return CreateTaskOut(task_id=task_id)
 ```
 
-- [ ] **Step 5: 修改 `src/agent_hub/api/app.py`**
+- [ ] **Step 5: 修改 `src/choirworks/api/app.py`**
 
 签名改为 `create_app(settings=None, llm=None)`，装配 planner/orchestrator：
 
 ```python
-from agent_hub.core.llm import LLMClient, LiteLLMClient
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import Planner
+from choirworks.core.llm import LLMClient, LiteLLMClient
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import Planner
 
 
 def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -> FastAPI:
@@ -1508,14 +1508,14 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
     ...
 ```
 
-并在 import 中补 `from agent_hub.core.events import EventBus`。注意：`EventBus` 在 Task 8 实现，本任务先创建 `core/events.py` 的最小版本（Task 8 再补测试与完整语义）：
+并在 import 中补 `from choirworks.core.events import EventBus`。注意：`EventBus` 在 Task 8 实现，本任务先创建 `core/events.py` 的最小版本（Task 8 再补测试与完整语义）：
 
 ```python
 from __future__ import annotations
 
 import asyncio
 
-from agent_hub.store.event_store import Event
+from choirworks.store.event_store import Event
 
 _CLOSED = object()
 
@@ -1613,7 +1613,7 @@ Run: `uv run pytest tests/integration/test_api.py -p no:warnings -q`
 Expected: `5 passed`
 
 ```bash
-git add src/agent_hub/api/ src/agent_hub/core/events.py src/agent_hub/store/event_store.py tests/integration/test_api.py
+git add src/choirworks/api/ src/choirworks/core/events.py src/choirworks/store/event_store.py tests/integration/test_api.py
 git commit -m "feat: API 接入 Planner 自动路径与 EventBus"
 ```
 
@@ -1630,9 +1630,9 @@ git commit -m "feat: API 接入 Planner 自动路径与 EventBus"
 import asyncio
 from datetime import UTC, datetime
 
-from agent_hub.core.events import EventBus, SubscriptionClosed
-from agent_hub.models.enums import EventType
-from agent_hub.store.event_store import Event
+from choirworks.core.events import EventBus, SubscriptionClosed
+from choirworks.models.enums import EventType
+from choirworks.store.event_store import Event
 
 
 def make_event(seq: int, task_id: str = "t1") -> Event:
@@ -1704,8 +1704,8 @@ git commit -m "test: EventBus 发布订阅、慢消费者与关闭语义"
 ### Task 9: SSE 端点
 
 **Files:**
-- Create: `src/agent_hub/api/sse.py`
-- Modify: `src/agent_hub/api/app.py`（include router）
+- Create: `src/choirworks/api/sse.py`
+- Modify: `src/choirworks/api/app.py`（include router）
 - Test: `tests/integration/test_sse.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_sse.py`**
@@ -1718,8 +1718,8 @@ import httpx
 import pytest
 from sse_starlette.sse import EventSourceResponse  # noqa: F401  仅示意依赖存在
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
+from choirworks.api.app import create_app
+from choirworks.config import Settings
 
 
 @pytest.fixture
@@ -1837,7 +1837,7 @@ async def test_sse_resume_with_last_event_id(api):
 Run: `uv run pytest tests/integration/test_sse.py -p no:warnings -q`
 Expected: FAIL 404（路由不存在）
 
-- [ ] **Step 3: 实现 `src/agent_hub/api/sse.py`**
+- [ ] **Step 3: 实现 `src/choirworks/api/sse.py`**
 
 ```python
 from __future__ import annotations
@@ -1847,8 +1847,8 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from agent_hub.core.tasks import TaskNotFound
-from agent_hub.models.enums import EventType
+from choirworks.core.tasks import TaskNotFound
+from choirworks.models.enums import EventType
 
 router = APIRouter(tags=["events"])
 
@@ -1899,10 +1899,10 @@ async def task_events(task_id: str, request: Request, after_seq: int = 0):
     return EventSourceResponse(stream(), ping=15)
 ```
 
-需要在 `src/agent_hub/api/app.py` 中 include：
+需要在 `src/choirworks/api/app.py` 中 include：
 
 ```python
-from agent_hub.api import sse as sse_routes
+from choirworks.api import sse as sse_routes
 ...
 app.include_router(sse_routes.router, prefix="/v1")
 ```
@@ -1917,7 +1917,7 @@ Expected: `3 passed`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agent_hub/api/sse.py src/agent_hub/api/app.py tests/integration/test_sse.py
+git add src/choirworks/api/sse.py src/choirworks/api/app.py tests/integration/test_sse.py
 git commit -m "feat: SSE 事件流（回放、实时、Last-Event-ID 续传）"
 ```
 

@@ -92,7 +92,7 @@ export function applyRoomEvent(view: RoomView, event: {seq; type; payload}): Roo
 
 - 主区：`RoomThread` + `RoomComposer`；右侧：现有 `TaskView` 面板折叠（`details` 样式），从 `useConversation` 的 SSE 复用或仅快照轮询（v1 沿用现有 hook）。
 - 空会话：显示引导（输入即建群并发送第一条消息）。
-- 验收：`npm test`（25 + 新增）、`npm run build`；实机 `agent-hub-sim --fresh` 走：发「请协调多个子代理协作完成这项分析」→ 群内看到拆解/派发/协助/完成播报与两个 Agent 的流式回复；引用追问与打断可操作。
+- 验收：`npm test`（25 + 新增）、`npm run build`；实机 `choirworks-sim --fresh` 走：发「请协调多个子代理协作完成这项分析」→ 群内看到拆解/派发/协助/完成播报与两个 Agent 的流式回复；引用追问与打断可操作。
 
 ---
 

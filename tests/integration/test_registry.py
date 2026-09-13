@@ -1,8 +1,8 @@
 import pytest
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry, DuplicateAgentName
-from agent_hub.store.db import Database
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry, DuplicateAgentName
+from choirworks.store.db import Database
 
 
 async def test_register_list_refresh_delete(tmp_path, echo_agent):

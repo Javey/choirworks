@@ -1,9 +1,11 @@
-# Agent Hub
+# ChoirWorks
 
-A2A 多 Agent 编排平台（MVP）。平台不执行业务动作，负责理解需求、拆分任务 DAG、
-调度 A2A subagent，并支持暂停协助、断点恢复与平台侧回退。
+ChoirWorks —— 多 Agent 协作工作群：人类像 CEO 一样提出目标，协调者拆解任务并把 Agent 拉进群，
+成员之间可以互相 @、引用回复、中途求助；平台不执行业务动作，负责编排、调度 A2A subagent，
+并支持暂停协助、断点恢复与平台侧回退。
 
-当前进度：**M1–M7 全部完成**（骨架、LLM 规划与 DAG 调度、SSE、HITL、断点恢复与对账、回退/retry/cancel），并附带**对话式前端**（React SPA）。
+当前进度：**M1–M10 全部完成**（骨架、LLM 规划与 DAG 调度、SSE、HITL、断点恢复与对账、
+回退/retry/cancel、动态 DAG 协作、群聊协作模式），并附带**群聊式前端**（React SPA）。
 
 ## 开发环境
 
@@ -39,7 +41,7 @@ npm test
 无需 API Key、无需真实 Agent，一条命令拉起「假 Agent + 确定性规划器 + Hub + 前端」：
 
 ```bash
-uv run agent-hub-sim --port 8080 --fresh
+uv run choirworks-sim --port 8080 --fresh
 ```
 
 启动后自动注册 6 个脚本化 Agent（researcher / writer / critic / analyst / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8080` 直接对话：
@@ -52,7 +54,7 @@ uv run agent-hub-sim --port 8080 --fresh
 | 这个任务可能会偶发失败，请自动重试 | 节点自动重试（第 2 次成功） |
 | 模拟失败并降级替换 | 两次失败 → 重规划为 plan v2 |
 
-`--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。模拟 Agent 的产出默认按 **打字机效果** 分块流式返回（`--chunk-size` 每块字符数，默认 2；`--chunk-delay` 块间隔秒数，默认 0.04，设为 0 可关闭延迟）。规划逻辑为确定性规则（`src/agent_hub/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/agent_hub/sim/fake_agent.py`。
+`--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。模拟 Agent 的产出默认按 **打字机效果** 分块流式返回（`--chunk-size` 每块字符数，默认 2；`--chunk-delay` 块间隔秒数，默认 0.04，设为 0 可关闭延迟）。规划逻辑为确定性规则（`src/choirworks/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/choirworks/sim/fake_agent.py`。
 
 ## 工作群（群聊协作）
 
@@ -85,7 +87,7 @@ curl -N 'localhost:8080/v1/conversations/<conversation_id>/stream?since_seq=0'
 ```bash
 cp config.example.yaml config.yaml   # 可选
 export OPENAI_API_KEY=...            # Planner 使用的模型 Key
-uv run agent-hub                     # 默认 http://127.0.0.1:8080
+uv run choirworks                     # 默认 http://127.0.0.1:8080
 ```
 
 ## 接口速览

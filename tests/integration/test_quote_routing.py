@@ -2,8 +2,8 @@ import asyncio
 
 import httpx
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
+from choirworks.api.app import create_app
+from choirworks.config import Settings
 
 
 async def _wait_until(check, timeout_seconds: float = 10.0):
@@ -33,7 +33,7 @@ def make_app(tmp_path, name: str):
 
 
 async def test_quote_working_node_is_queued(tmp_path):
-    from agent_hub.sim.fake_agent import start_fake_agent
+    from choirworks.sim.fake_agent import start_fake_agent
 
     agent = await start_fake_agent("slow")
     app = make_app(tmp_path, "queued")
@@ -149,7 +149,7 @@ async def test_quote_completed_agent_starts_follow_up(tmp_path, echo_agent):
 
 
 async def test_quote_intervention_answers_in_room(tmp_path):
-    from agent_hub.sim.fake_agent import start_fake_agent
+    from choirworks.sim.fake_agent import start_fake_agent
 
     agent = await start_fake_agent("ask")
     app = make_app(tmp_path, "answer")
@@ -214,7 +214,7 @@ async def test_quote_intervention_answers_in_room(tmp_path):
 
 
 async def test_interrupt_cancels_task_and_starts_follow_up(tmp_path):
-    from agent_hub.sim.fake_agent import start_fake_agent
+    from choirworks.sim.fake_agent import start_fake_agent
 
     agent = await start_fake_agent("slow")
     app = make_app(tmp_path, "interrupt")

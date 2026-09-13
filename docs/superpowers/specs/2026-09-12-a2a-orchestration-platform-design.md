@@ -1,4 +1,4 @@
-# A2A 多 Agent 编排平台（Agent Hub）设计文档
+# A2A 多 Agent 编排平台（ChoirWorks）设计文档
 
 - 日期：2026-09-12
 - 状态：设计已评审通过，待写实施计划
@@ -444,7 +444,7 @@ data: {"intervention_id":"iv_9","node_id":"n3","policy":"human","question":{"par
 ## 11. 模块划分
 
 ```
-src/agent_hub/
+src/choirworks/
   main.py                 # FastAPI 应用装配、生命周期（启动恢复）
   config.py               # 配置模型（YAML + 环境变量）
   api/
@@ -512,7 +512,7 @@ recovery:
   replay_on_startup: true
 
 store:
-  db_path: "./data/agent_hub.db"
+  db_path: "./data/choirworks.db"
 ```
 
 ## 13. 错误处理

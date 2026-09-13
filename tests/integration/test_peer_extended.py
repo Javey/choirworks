@@ -1,18 +1,18 @@
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.config import PolicyConfig
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator, PeerChoice
-from agent_hub.core.planner import Planner
-from agent_hub.core.policy import PolicyEngine
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, InterventionStatus, NodeStatus, TaskStatus
-from agent_hub.sim.fake_agent import start_fake_agent
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.config import PolicyConfig
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator, PeerChoice
+from choirworks.core.planner import Planner
+from choirworks.core.policy import PolicyEngine
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, InterventionStatus, NodeStatus, TaskStatus
+from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.support.fakes import FakeLLM
 
 

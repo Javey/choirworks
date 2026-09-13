@@ -3,8 +3,8 @@ import asyncio
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
+from choirworks.api.app import create_app
+from choirworks.config import Settings
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ async def test_agent_mention_creates_helper_node_and_joins(api):
     await client.post("/v1/agents", json={"name": "analyst", "card_url": agent_url})
     conversation_id = await make_conversation(app)
 
-    from agent_hub.core.room import post_assistant_message
+    from choirworks.core.room import post_assistant_message
 
     await post_assistant_message(
         app.state.db,

@@ -3,9 +3,9 @@ import asyncio
 import httpx
 import pytest
 
-from agent_hub.api.app import create_app
-from agent_hub.config import Settings
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.api.app import create_app
+from choirworks.config import Settings
+from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
 
 

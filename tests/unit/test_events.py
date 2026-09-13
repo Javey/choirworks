@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_hub.core.events import EventBus, SubscriptionClosed
-from agent_hub.models.enums import EventType
-from agent_hub.store.event_store import Event
+from choirworks.core.events import EventBus, SubscriptionClosed
+from choirworks.models.enums import EventType
+from choirworks.store.event_store import Event
 
 
 def make_event(seq: int, task_id: str = "t1") -> Event:

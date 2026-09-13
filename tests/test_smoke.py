@@ -1,5 +1,5 @@
-import agent_hub
+import choirworks
 
 
 def test_package_importable():
-    assert agent_hub.__version__ == "0.1.0"
+    assert choirworks.__version__ == "0.1.0"

@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 
-from agent_hub.models.enums import EventType, InterventionStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.models.enums import EventType, InterventionStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 
 
 async def test_intervention_lifecycle_projection(tmp_path):

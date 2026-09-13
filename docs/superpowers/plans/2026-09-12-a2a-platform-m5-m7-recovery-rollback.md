@@ -19,7 +19,7 @@
 ### Task 1: A2A client 扩展（get/cancel/subscribe）
 
 **Files:**
-- Modify: `src/agent_hub/a2a/client.py`
+- Modify: `src/choirworks/a2a/client.py`
 - Test: `tests/integration/test_a2a_client.py`（追加）
 
 - [ ] **Step 1: 追加失败测试**
@@ -102,7 +102,7 @@ git commit -am "feat: A2A client 支持 get/cancel/subscribe"
 ### Task 2: Checkpoint 生成与投影
 
 **Files:**
-- Modify: `src/agent_hub/core/orchestrator.py`、`src/agent_hub/core/tasks.py`、`src/agent_hub/store/projections.py`
+- Modify: `src/choirworks/core/orchestrator.py`、`src/choirworks/core/tasks.py`、`src/choirworks/store/projections.py`
 - Test: `tests/integration/test_orchestrator.py`（追加）
 
 - [ ] **Step 1: 追加失败测试**
@@ -117,7 +117,7 @@ async def test_checkpoints_created_as_nodes_complete(tmp_path):
         task_id = await tasks.create_pending_task("hi")
         orchestrator.start(task_id)
         await asyncio.wait_for(orchestrator.wait(task_id), 10.0)
-        from agent_hub.store import projections as proj
+        from choirworks.store import projections as proj
 
         checkpoints = await proj.fetch_checkpoints(db, task_id)
         assert len(checkpoints) == 1
@@ -195,8 +195,8 @@ git commit -am "feat: 节点完成自动生成 checkpoint"
 ### Task 3: 启动恢复与对账
 
 **Files:**
-- Create: `src/agent_hub/core/recovery.py`、`src/agent_hub/a2a/reconcile.py`
-- Modify: `src/agent_hub/core/dispatcher.py`（`resume_node`）、`src/agent_hub/api/app.py`（启动恢复 + 周期对账）、`src/agent_hub/config.py`（recovery 配置）
+- Create: `src/choirworks/core/recovery.py`、`src/choirworks/a2a/reconcile.py`
+- Modify: `src/choirworks/core/dispatcher.py`（`resume_node`）、`src/choirworks/api/app.py`（启动恢复 + 周期对账）、`src/choirworks/config.py`（recovery 配置）
 - Test: `tests/integration/test_recovery.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_recovery.py`**
@@ -204,17 +204,17 @@ git commit -am "feat: 节点完成自动生成 checkpoint"
 ```python
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import Planner
-from agent_hub.core.recovery import recover_tasks
-from agent_hub.core.tasks import TargetSpec, TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import Planner
+from choirworks.core.recovery import recover_tasks
+from choirworks.core.tasks import TargetSpec, TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
@@ -291,7 +291,7 @@ async def test_reconcile_detects_remote_completion(tmp_path):
             await asyncio.sleep(0.01)
         await asyncio.sleep(0.6)
         await send
-        from agent_hub.a2a.reconcile import reconcile_once
+        from choirworks.a2a.reconcile import reconcile_once
 
         changed = await reconcile_once(db, events, remote)
         assert changed >= 1
@@ -342,10 +342,10 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.models.enums import TERMINAL_TASK_STATUSES, NodeStatus
-from agent_hub.store import projections
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.models.enums import TERMINAL_TASK_STATUSES, NodeStatus
+from choirworks.store import projections
 
 
 async def recover_tasks(db, events, remote, dispatcher, orchestrator) -> list[str]:
@@ -391,8 +391,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from agent_hub.models.enums import EventType, NodeStatus
-from agent_hub.store import projections
+from choirworks.models.enums import EventType, NodeStatus
+from choirworks.store import projections
 
 
 async def reconcile_once(db, events, remote) -> int:
@@ -473,8 +473,8 @@ git commit -am "feat: 启动恢复（Subscribe 重挂接）与远程对账"
 ### Task 4: 回退、retry 与任务 cancel
 
 **Files:**
-- Create: `src/agent_hub/core/rollback.py`
-- Modify: `src/agent_hub/models/enums.py`（`INTERVENTION_INVALIDATED`）、`src/agent_hub/store/projections.py`、`src/agent_hub/api/schemas.py`、`src/agent_hub/api/rollback.py`、`src/agent_hub/api/app.py`
+- Create: `src/choirworks/core/rollback.py`
+- Modify: `src/choirworks/models/enums.py`（`INTERVENTION_INVALIDATED`）、`src/choirworks/store/projections.py`、`src/choirworks/api/schemas.py`、`src/choirworks/api/rollback.py`、`src/choirworks/api/app.py`
 - Test: `tests/integration/test_rollback.py`
 
 - [ ] **Step 1: 写失败测试 `tests/integration/test_rollback.py`**
@@ -482,17 +482,17 @@ git commit -am "feat: 启动恢复（Subscribe 重挂接）与远程对账"
 ```python
 import asyncio
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.a2a.registry import AgentRegistry
-from agent_hub.core.dispatcher import NodeDispatcher
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.planner import PlanDraft, PlanNodeDraft, Planner
-from agent_hub.core.rollback import perform_rollback, plan_rollback
-from agent_hub.core.tasks import TaskService
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
-from agent_hub.store.db import Database
-from agent_hub.store.event_store import EventStore
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.dispatcher import NodeDispatcher
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.planner import PlanDraft, PlanNodeDraft, Planner
+from choirworks.core.rollback import perform_rollback, plan_rollback
+from choirworks.core.tasks import TaskService
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
+from choirworks.store.db import Database
+from choirworks.store.event_store import EventStore
 from tests.fake_agents.echo_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 
@@ -554,11 +554,11 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
-from agent_hub.a2a.client import RemoteAgentClient
-from agent_hub.core.orchestrator import Orchestrator
-from agent_hub.core.tasks import TaskNotFound
-from agent_hub.models.enums import EventType, NodeStatus, TaskStatus
-from agent_hub.store import projections
+from choirworks.a2a.client import RemoteAgentClient
+from choirworks.core.orchestrator import Orchestrator
+from choirworks.core.tasks import TaskNotFound
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store import projections
 
 
 class RollbackReport(BaseModel):
