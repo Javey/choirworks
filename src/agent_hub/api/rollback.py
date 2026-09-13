@@ -16,7 +16,10 @@ async def rollback(task_id: str, body: RollbackIn, request: Request) -> Rollback
     try:
         if body.mode == "dry_run":
             return await plan_rollback(
-                request.app.state.db, task_id, body.checkpoint_id
+                request.app.state.db,
+                request.app.state.event_store,
+                task_id,
+                body.checkpoint_id,
             )
         return await perform_rollback(
             request.app.state.db,

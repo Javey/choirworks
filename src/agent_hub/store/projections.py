@@ -234,12 +234,40 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 event.task_id,
             ),
         )
-        for node_id in payload["reset_node_ids"]:
+        for node_id, deps in (payload.get("deps_restore") or {}).items():
+            await conn.execute(
+                "UPDATE nodes SET deps = ? WHERE id = ? AND task_id = ?",
+                (json.dumps(deps), node_id, event.task_id),
+            )
+        for node_id in payload.get("reset_node_ids", []):
             await conn.execute(
                 "UPDATE nodes SET status = 'pending', attempt = 0, output = NULL,"
                 " error = NULL, a2a_task_id = NULL, a2a_context_id = NULL,"
                 " started_at = NULL, ended_at = NULL WHERE id = ? AND task_id = ?",
                 (node_id, event.task_id),
+            )
+        for node_id in payload.get("invalidate_node_ids", []):
+            await conn.execute(
+                "UPDATE nodes SET status = ?, a2a_task_id = NULL,"
+                " a2a_context_id = NULL WHERE id = ? AND task_id = ?",
+                (
+                    NodeStatus.INVALIDATED.value,
+                    node_id,
+                    event.task_id,
+                ),
+            )
+        if payload.get("plan_id") and payload.get("dag"):
+            await conn.execute(
+                "UPDATE plans SET dag = ? WHERE id = ?",
+                (json.dumps(payload["dag"], ensure_ascii=False), payload["plan_id"]),
+            )
+        affected_nodes = payload.get("reset_node_ids", []) + payload.get(
+            "invalidate_node_ids", []
+        )
+        for node_id in affected_nodes:
+            await conn.execute(
+                "UPDATE interventions SET status = ? WHERE node_id = ?",
+                (InterventionStatus.INVALIDATED.value, node_id),
             )
         await conn.execute(
             "UPDATE interventions SET status = ? WHERE task_id = ? AND status = ?",

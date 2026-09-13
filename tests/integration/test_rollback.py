@@ -71,9 +71,9 @@ async def test_rollback_dry_run_and_restart(tmp_path):
         assert plan2 is not None and plan2.version == 2
         node2_id = f"{plan2.id}:n2"
 
-        dry = await plan_rollback(db, created.task_id, checkpoint.id)
+        dry = await plan_rollback(db, events, created.task_id, checkpoint.id)
         assert dry.mode == "dry_run"
-        assert node2_id in dry.reset_node_ids
+        assert node2_id in dry.invalidated_node_ids
         assert EventType.ROLLBACK_PERFORMED not in [
             e.type for e in await events.replay(created.task_id)
         ]
@@ -82,11 +82,14 @@ async def test_rollback_dry_run_and_restart(tmp_path):
             db, events, remote, orchestrator, created.task_id, checkpoint.id
         )
         assert report.mode == "restart"
+        await asyncio.wait_for(
+            orchestrator.wait(created.task_id, until_terminal=True), 10.0
+        )
         task = await projections.fetch_task(db, created.task_id)
-        assert task is not None and task.status is TaskStatus.RUNNING
+        assert task is not None and task.status is TaskStatus.COMPLETED
         assert task.plan_version == checkpoint.plan_version
         node2 = await projections.fetch_node(db, node2_id)
-        assert node2 is not None and node2.status is NodeStatus.PENDING
+        assert node2 is not None and node2.status is NodeStatus.INVALIDATED
         types = [e.type for e in await events.replay(created.task_id)]
         assert EventType.ROLLBACK_PERFORMED in types
     finally:
