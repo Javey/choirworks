@@ -122,7 +122,6 @@ class RoomCoordinator:
                 quote_id=quote_id,
                 interrupt=interrupt,
             )
-        await self.join_new_members(conversation_id, combined)
         mentions = combined
 
         if len(mentions) == 1:
@@ -141,6 +140,7 @@ class RoomCoordinator:
                 mentions=mentions,
                 task_id=created.task_id,
             )
+            await self.join_new_members(conversation_id, combined)
             self._orchestrator.start(created.task_id)
             await self._maybe_summarize(conversation_id)
             return HumanMessageResult(
@@ -160,6 +160,7 @@ class RoomCoordinator:
             mentions=mentions,
             task_id=task_id,
         )
+        await self.join_new_members(conversation_id, combined)
         self._orchestrator.start(task_id)
         await self._maybe_summarize(conversation_id)
         return HumanMessageResult(message=message, task_id=task_id, routed="new_task")
@@ -174,13 +175,20 @@ class RoomCoordinator:
         ]
         if not lines:
             return None
-        return await post_assistant_message(
+        names = list(
+            dict.fromkeys(
+                node.agent_name for node in draft.nodes if node.agent_name
+            )
+        )
+        posted = await post_assistant_message(
             self._db,
             self._events,
             conversation_id=task.conversation_id,
             text="任务已拆解：\n" + "\n".join(lines),
             task_id=task.id,
         )
+        await self.join_new_members(task.conversation_id, names, reason="plan")
+        return posted
 
     async def announce_dispatch(self, task: Any, node: Any) -> RoomMessage | None:
         if task.conversation_id is None or not node.agent_name:
@@ -590,23 +598,40 @@ class RoomCoordinator:
             forwarded += 1
         return forwarded
 
+    async def announce_agent_question(
+        self, task: Any, node: Any, question: str
+    ) -> RoomMessage | None:
+        if task.conversation_id is None or not node.agent_name:
+            return None
+        return await post_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            role="agent",
+            sender=node.agent_name,
+            text=question,
+            task_id=task.id,
+            node_id=node.id,
+        )
+
     async def announce_peer_assist(
         self, task: Any, node: Any, agent_name: str
     ) -> RoomMessage | None:
         if task.conversation_id is None:
             return None
-        await self.join_new_members(
-            task.conversation_id, [agent_name], reason="peer_assist"
-        )
         requester = node.agent_name or node.name
-        return await post_assistant_message(
+        posted = await post_assistant_message(
             self._db,
             self._events,
             conversation_id=task.conversation_id,
-            text=f"@{requester} 请求 @{agent_name} 协助，已加入工作",
+            text=f"@{requester} 请求 @{agent_name} 协助，已安排",
             task_id=task.id,
             node_id=node.id,
         )
+        await self.join_new_members(
+            task.conversation_id, [agent_name], reason="peer_assist"
+        )
+        return posted
 
     async def _maybe_summarize(self, conversation_id: str) -> None:
         if self._llm is None:

@@ -487,6 +487,8 @@ class Orchestrator:
             plan = await projections.fetch_current_plan(self._db, task.id)
             if plan is None:
                 return
+            if self._coordinator is not None:
+                await self._coordinator.announce_agent_question(task, node, question)
             try:
                 choice = await self._peer_choice(task, node, question)
                 reusable = await self._reusable_helper(plan, node, choice.agent_name)

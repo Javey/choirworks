@@ -76,6 +76,7 @@ curl -N 'localhost:8080/v1/conversations/<conversation_id>/stream?since_seq=0'
 - `@单人` 直接建单节点任务给该 Agent；`@多人` 自动入群并交由 Planner 拆解；Agent 消息里的 `@` 由协调者仲裁（复用/扩展/并入，防循环）。
 - `quote_id` 引用：干预消息 → 直接作答；在途节点 → 排队补投（`continue` 时合并）；终态消息 → follow-up 新任务；`interrupt=true` → 取消当前任务并转交新任务。
 - assistant 播报：拆解、派发、入群、协助、排队、完成总结，均可作为普通消息被引用。
+- 时间线顺序：CEO 发言 → 协调者拆解 → 成员入群播报 → 派发与产出；协助链路为「A 求助 → 协调者安排 → C 入群 → C 执行」。
 - 上下文按「房间头 + 摘要 + 与我相关 + 最近窗口」分级投喂给每次被唤醒的 Agent。
 
 
