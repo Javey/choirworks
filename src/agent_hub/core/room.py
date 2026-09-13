@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+from uuid import uuid4
+
+from agent_hub.models.domain import RoomMessage
+from agent_hub.models.enums import EventType
+from agent_hub.store import projections
+
+_seq_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(conversation_id: str) -> asyncio.Lock:
+    lock = _seq_locks.get(conversation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _seq_locks[conversation_id] = lock
+    return lock
+
+
+async def post_message(
+    db: Any,
+    events: Any,
+    *,
+    conversation_id: str,
+    role: str,
+    sender: str | None,
+    text: str,
+    mentions: list[str] | None = None,
+    quote_id: str | None = None,
+    task_id: str | None = None,
+    node_id: str | None = None,
+    intervention_id: str | None = None,
+    queued_for_node_id: str | None = None,
+) -> RoomMessage:
+    async with _lock_for(conversation_id):
+        seq = await projections.next_message_seq(db, conversation_id) + 1
+        message_id = uuid4().hex
+        await events.append(
+            task_id,
+            EventType.MESSAGE_POSTED,
+            {
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "seq": seq,
+                "role": role,
+                "sender": sender,
+                "text": text,
+                "mentions": mentions or [],
+                "quote_id": quote_id,
+                "task_id": task_id,
+                "node_id": node_id,
+                "intervention_id": intervention_id,
+                "queued_for_node_id": queued_for_node_id,
+            },
+            conversation_id=conversation_id,
+        )
+        message = await projections.fetch_message(db, message_id)
+        assert message is not None
+        return message
