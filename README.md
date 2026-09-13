@@ -50,7 +50,7 @@ uv run agent-hub-sim --port 8080 --fresh
 | 这个任务可能会偶发失败，请自动重试 | 节点自动重试（第 2 次成功） |
 | 模拟失败并降级替换 | 两次失败 → 重规划为 plan v2 |
 
-`--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。规划逻辑为确定性规则（`src/agent_hub/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/agent_hub/sim/fake_agent.py`。
+`--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。模拟 Agent 的产出默认按 **打字机效果** 分块流式返回（`--chunk-size` 每块字符数，默认 2；`--chunk-delay` 块间隔秒数，默认 0.04，设为 0 可关闭延迟）。规划逻辑为确定性规则（`src/agent_hub/sim/llm.py`），全程不访问外部服务；假 Agent 行为定义在 `src/agent_hub/sim/fake_agent.py`。
 
 
 ## 运行

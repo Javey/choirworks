@@ -124,3 +124,28 @@ async def test_continue_node_after_input_required(tmp_path):
         await remote.close()
         await db.close()
         await agent.stop()
+
+
+async def test_dispatch_streamed_artifact_is_aggregated(tmp_path):
+    agent = await start_fake_agent("write", chunk_size=3, chunk_delay=0.0)
+    db, remote, events, tasks, dispatcher = await setup(tmp_path, agent)
+    try:
+        created = await tasks.create_task("hi", TargetSpec(agent_name="fake"))
+        node = await dispatcher.dispatch_node(created.task_id, created.node_ids[0])
+        assert node.status is NodeStatus.COMPLETED
+        assert node.output is not None
+        full_text = "文稿（writer）：基于「hi」生成的模拟报告。"
+        assert node.output["artifacts"] == [
+            {"id": node.output["artifacts"][0]["id"], "name": "response", "text": full_text}
+        ]
+
+        replayed = await events.replay(created.task_id)
+        artifact_events = [event for event in replayed if event.type is EventType.NODE_ARTIFACT]
+        assert len(artifact_events) >= 3
+        assert "".join(event.payload["text"] for event in artifact_events) == full_text
+        assert not artifact_events[0].payload["append"]
+        assert artifact_events[-1].payload["append"]
+    finally:
+        await remote.close()
+        await db.close()
+        await agent.stop()

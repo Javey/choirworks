@@ -197,15 +197,28 @@ class NodeDispatcher:
                     await self._transition(node, mapped, extra=extra)
                     current = mapped
             elif chunk.HasField("artifact_update"):
-                artifact = chunk.artifact_update.artifact
-                artifact_text = _join_text(artifact.parts)
-                artifacts.append(
-                    {
+                update = chunk.artifact_update
+                artifact = update.artifact
+                piece = _join_text(artifact.parts)
+                append = bool(update.append)
+                entry = next(
+                    (item for item in artifacts if item["id"] == artifact.artifact_id),
+                    None,
+                )
+                if append and entry is not None:
+                    entry["text"] += piece
+                    if artifact.name:
+                        entry["name"] = artifact.name
+                else:
+                    merged = {
                         "id": artifact.artifact_id,
                         "name": artifact.name,
-                        "text": artifact_text,
+                        "text": piece,
                     }
-                )
+                    if entry is not None:
+                        artifacts[artifacts.index(entry)] = merged
+                    else:
+                        artifacts.append(merged)
                 await self._events.append(
                     node.task_id,
                     EventType.NODE_ARTIFACT,
@@ -213,7 +226,8 @@ class NodeDispatcher:
                         "node_id": node.id,
                         "artifact_id": artifact.artifact_id,
                         "name": artifact.name,
-                        "text": artifact_text,
+                        "text": piece,
+                        "append": append,
                     },
                 )
             elif chunk.HasField("message"):

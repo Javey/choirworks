@@ -44,10 +44,43 @@ class ScriptedExecutor(AgentExecutor):
     - flaky_always: 始终失败（触发重规划演示）
     """
 
-    def __init__(self, behavior: str = "echo", name: str = ""):
+    def __init__(
+        self,
+        behavior: str = "echo",
+        name: str = "",
+        *,
+        chunk_size: int = 0,
+        chunk_delay: float = 0.0,
+    ):
         self._behavior = behavior
         self._name = name
         self._calls = 0
+        self._chunk_size = chunk_size
+        self._chunk_delay = chunk_delay
+
+    async def _emit_artifact(self, updater: TaskUpdater, text: str) -> None:
+        if self._chunk_size <= 0:
+            await updater.add_artifact(
+                parts=[Part(text=text)], name="response", last_chunk=True
+            )
+            return
+        from uuid import uuid4
+
+        artifact_id = uuid4().hex
+        chunks = [
+            text[index : index + self._chunk_size]
+            for index in range(0, len(text), self._chunk_size)
+        ] or [""]
+        for index, piece in enumerate(chunks):
+            await updater.add_artifact(
+                parts=[Part(text=piece)],
+                artifact_id=artifact_id,
+                name="response",
+                append=index > 0,
+                last_chunk=index == len(chunks) - 1,
+            )
+            if self._chunk_delay > 0 and index < len(chunks) - 1:
+                await asyncio.sleep(self._chunk_delay)
 
     def _question_text(self) -> str:
         if self._behavior == "review":
@@ -85,11 +118,7 @@ class ScriptedExecutor(AgentExecutor):
                 await asyncio.sleep(1.2)
             if self._behavior == "delay":
                 await asyncio.sleep(0.4)
-            await updater.add_artifact(
-                parts=[Part(text=self._success_text(text))],
-                name="response",
-                last_chunk=True,
-            )
+            await self._emit_artifact(updater, self._success_text(text))
             await updater.complete()
         else:
             task = context.current_task
@@ -98,11 +127,7 @@ class ScriptedExecutor(AgentExecutor):
                 answer = f"已按你的意见定稿：{text}"
             else:
                 answer = f"answered:{text}"
-            await updater.add_artifact(
-                parts=[Part(text=answer)],
-                name="response",
-                last_chunk=True,
-            )
+            await self._emit_artifact(updater, answer)
             await updater.complete()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -154,12 +179,20 @@ def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
     )
 
 
-async def start_fake_agent(behavior: str = "echo", name: str = "") -> FakeAgent:
+async def start_fake_agent(
+    behavior: str = "echo",
+    name: str = "",
+    *,
+    chunk_size: int = 0,
+    chunk_delay: float = 0.0,
+) -> FakeAgent:
     port = free_port()
     url = f"http://127.0.0.1:{port}"
     card = _make_card(behavior, url, name)
     handler = DefaultRequestHandler(
-        agent_executor=ScriptedExecutor(behavior, name),
+        agent_executor=ScriptedExecutor(
+            behavior, name, chunk_size=chunk_size, chunk_delay=chunk_delay
+        ),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )

@@ -156,6 +156,45 @@ describe("applyEvent", () => {
     expect(view.notes.some((note) => note.text.includes("回退"))).toBe(true);
   });
 
+  it("appends streamed artifact chunks and replaces on final output", () => {
+    let view = fromSnapshot(snapshot());
+    view = applyEvent(view, {
+      seq: 6,
+      type: "node.artifact",
+      payload: {
+        node_id: "p1:n1",
+        artifact_id: "a1",
+        name: "response",
+        text: "文稿",
+        append: false,
+      },
+    });
+    expect(view.nodes[0].outputText).toBe("文稿");
+
+    view = applyEvent(view, {
+      seq: 7,
+      type: "node.artifact",
+      payload: {
+        node_id: "p1:n1",
+        artifact_id: "a1",
+        name: "response",
+        text: "：你好",
+        append: true,
+      },
+    });
+    expect(view.nodes[0].outputText).toBe("文稿：你好");
+
+    view = applyEvent(view, {
+      seq: 8,
+      type: "node.output",
+      payload: {
+        node_id: "p1:n1",
+        output: { artifacts: [{ id: "a1", name: "response", text: "文稿：你好！" }] },
+      },
+    });
+    expect(view.nodes[0].outputText).toBe("文稿：你好！");
+  });
+
   it("records errors on the node and as a note", () => {
     let view = fromSnapshot(snapshot());
     view = applyEvent(view, {

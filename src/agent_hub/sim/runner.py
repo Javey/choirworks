@@ -37,9 +37,16 @@ def build_settings(host: str, port: int, db_path: Path) -> Settings:
     )
 
 
-async def start_sim_agents() -> list[tuple[str, FakeAgent]]:
+async def start_sim_agents(
+    *, chunk_size: int = 2, chunk_delay: float = 0.04
+) -> list[tuple[str, FakeAgent]]:
     return [
-        (name, await start_fake_agent(behavior, name=name))
+        (
+            name,
+            await start_fake_agent(
+                behavior, name=name, chunk_size=chunk_size, chunk_delay=chunk_delay
+            ),
+        )
         for name, behavior in SIM_AGENTS
     ]
 
@@ -49,10 +56,18 @@ def _reset_db(db_path: Path) -> None:
         Path(f"{db_path}{suffix}").unlink(missing_ok=True)
 
 
-async def run(host: str, port: int, db_path: Path, fresh: bool) -> None:
+async def run(
+    host: str,
+    port: int,
+    db_path: Path,
+    fresh: bool,
+    *,
+    chunk_size: int = 2,
+    chunk_delay: float = 0.04,
+) -> None:
     if fresh:
         _reset_db(db_path)
-    agents = await start_sim_agents()
+    agents = await start_sim_agents(chunk_size=chunk_size, chunk_delay=chunk_delay)
     settings = build_settings(host, port, db_path)
     app = create_app(settings, llm=SimLLM())
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
@@ -99,9 +114,24 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--db", default="data/sim.db", help="模拟数据库路径")
     parser.add_argument("--fresh", action="store_true", help="启动前清空模拟数据库")
+    parser.add_argument(
+        "--chunk-size", type=int, default=2, help="打字机每块字符数（0 关闭流式）"
+    )
+    parser.add_argument(
+        "--chunk-delay", type=float, default=0.04, help="打字机块间隔秒数"
+    )
     args = parser.parse_args()
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(run(args.host, args.port, Path(args.db), args.fresh))
+        asyncio.run(
+            run(
+                args.host,
+                args.port,
+                Path(args.db),
+                args.fresh,
+                chunk_size=args.chunk_size,
+                chunk_delay=args.chunk_delay,
+            )
+        )
 
 
 if __name__ == "__main__":

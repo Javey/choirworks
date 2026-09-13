@@ -12,7 +12,7 @@ from agent_hub.sim.runner import start_sim_agents
 
 @pytest.fixture
 async def sim(tmp_path):
-    agents = await start_sim_agents()
+    agents = await start_sim_agents(chunk_size=3, chunk_delay=0.0)
     settings = Settings(
         store={"db_path": tmp_path / "sim.db"},
         policies={"overrides": [{"agent_name": "critic", "policy": "human"}]},
@@ -46,7 +46,7 @@ async def wait_for_status(
 
 
 async def test_sim_research_then_write(sim):
-    client, _ = sim
+    client, app = sim
     created = (
         await client.post("/v1/tasks", json={"request": "帮我调研 A2A 协议并写一份摘要"})
     ).json()
@@ -58,6 +58,17 @@ async def test_sim_research_then_write(sim):
     }
     assert "调研结果" in outputs["researcher"]
     assert "文稿" in outputs["writer"]
+
+    cursor = await app.state.db.conn.execute(
+        "SELECT payload FROM events WHERE task_id = ? AND type = 'node.artifact'"
+        " ORDER BY seq",
+        (created["task_id"],),
+    )
+    rows = await cursor.fetchall()
+    assert len(rows) >= 3
+    deltas = [row["payload"] for row in rows]
+    assert all('"append": true' in delta or '"append": false' in delta for delta in deltas)
+    assert any('"append": true' in delta for delta in deltas)
 
 
 async def test_sim_review_triggers_human_intervention(sim):

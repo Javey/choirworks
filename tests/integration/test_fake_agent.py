@@ -34,3 +34,30 @@ async def test_fake_agent_echoes_with_official_client():
         await client.close()
     finally:
         await agent.stop()
+
+
+async def test_fake_agent_streams_artifact_chunks():
+    agent = await start_fake_agent("write", chunk_size=3, chunk_delay=0.0)
+    try:
+        client = await create_client(
+            agent=agent.card, client_config=ClientConfig(streaming=True)
+        )
+        request = SendMessageRequest(message=new_text_message("hi", role=Role.ROLE_USER))
+        texts: list[str] = []
+        appends: list[bool] = []
+        last_chunks: list[bool] = []
+        async for chunk in client.send_message(request):
+            if chunk.HasField("artifact_update"):
+                update = chunk.artifact_update
+                texts.append(get_artifact_text(update.artifact))
+                appends.append(bool(update.append))
+                last_chunks.append(bool(update.last_chunk))
+        assert len(texts) >= 3
+        assert "".join(texts) == "文稿（writer）：基于「hi」生成的模拟报告。"
+        assert appends[0] is False
+        assert all(appends[1:])
+        assert last_chunks[-1] is True
+        assert not any(last_chunks[:-1])
+        await client.close()
+    finally:
+        await agent.stop()

@@ -277,6 +277,19 @@ body {
   padding: 8px 10px;
 }
 
+.node-card.status-working .node-output::after,
+.node-card.status-dispatched .node-output::after {
+  content: "▍";
+  color: var(--primary);
+  animation: caret-blink 1s step-end infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .node-error {
   color: var(--danger);
   white-space: pre-wrap;

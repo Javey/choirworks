@@ -228,6 +228,15 @@ export function applyEvent(view: TaskView, event: EventDto): TaskView {
       const to = payload.to as NodeStatus;
       return withNode(base, nodeId, (node) => ({ ...node, status: to }));
     }
+    case "node.artifact": {
+      if (!nodeId) return base;
+      const piece = typeof payload.text === "string" ? payload.text : "";
+      const append = payload.append === true;
+      return withNode(base, nodeId, (node) => ({
+        ...node,
+        outputText: append && node.outputText ? node.outputText + piece : piece,
+      }));
+    }
     case "node.output": {
       if (!nodeId) return base;
       const output = payload.output as NodeDto["output"];
