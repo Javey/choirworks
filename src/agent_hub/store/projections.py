@@ -712,3 +712,30 @@ async def fetch_room_summary(db: Any, conversation_id: str) -> RoomSummary | Non
     )
     row = await cursor.fetchone()
     return _row_to_room_summary(row) if row else None
+
+
+async def fetch_assistant_message_for_node(db: Any, node_id: str) -> RoomMessage | None:
+    cursor = await db.conn.execute(
+        "SELECT * FROM messages WHERE node_id = ? AND role = 'assistant'"
+        " ORDER BY seq LIMIT 1",
+        (node_id,),
+    )
+    row = await cursor.fetchone()
+    return _row_to_room_message(row) if row else None
+
+
+async def fetch_queued_messages(db: Any, node_id: str) -> list[RoomMessage]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM messages WHERE queued_for_node_id = ? AND delivered_at IS NULL"
+        " ORDER BY seq",
+        (node_id,),
+    )
+    return [_row_to_room_message(row) for row in await cursor.fetchall()]
+
+
+async def fetch_undelivered_queued_messages(db: Any) -> list[RoomMessage]:
+    cursor = await db.conn.execute(
+        "SELECT * FROM messages WHERE queued_for_node_id IS NOT NULL"
+        " AND delivered_at IS NULL ORDER BY seq"
+    )
+    return [_row_to_room_message(row) for row in await cursor.fetchall()]

@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agent_hub.core.room import post_assistant_message, post_message
+from agent_hub.core.room import artifact_text, post_assistant_message, post_message
 from agent_hub.core.summary import maybe_update_summary
 from agent_hub.core.tasks import TargetSpec
 from agent_hub.models.domain import RoomMessage
@@ -118,6 +118,83 @@ class RoomCoordinator:
         self._orchestrator.start(task_id)
         await self._maybe_summarize(conversation_id)
         return HumanMessageResult(message=message, task_id=task_id, routed="new_task")
+
+    async def announce_plan(self, task: Any, draft: Any) -> RoomMessage | None:
+        if task.conversation_id is None:
+            return None
+        lines = [
+            f"- @{node.agent_name} 负责 {node.name}"
+            for node in draft.nodes
+            if node.agent_name
+        ]
+        if not lines:
+            return None
+        return await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text="任务已拆解：\n" + "\n".join(lines),
+            task_id=task.id,
+        )
+
+    async def announce_dispatch(self, task: Any, node: Any) -> RoomMessage | None:
+        if task.conversation_id is None or not node.agent_name:
+            return None
+        existing = await projections.fetch_assistant_message_for_node(
+            self._db, node.id
+        )
+        if existing is not None:
+            return None
+        return await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text=f"已派发 @{node.agent_name}：{node.name}",
+            task_id=task.id,
+            node_id=node.id,
+        )
+
+    async def announce_completion(self, task: Any, nodes: list[Any]) -> RoomMessage | None:
+        if task.conversation_id is None:
+            return None
+        messages = await projections.fetch_messages(
+            self._db, task.conversation_id, limit=1000
+        )
+        if any(
+            message.role == "assistant"
+            and message.task_id == task.id
+            and message.text.startswith("任务完成")
+            for message in messages
+        ):
+            return None
+        lines = [
+            f"- {node.agent_name or node.name}：{(artifact_text(node.output) or '（无输出）')[:80]}"
+            for node in nodes
+            if node.agent_name or node.output
+        ]
+        return await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text="任务完成：\n" + "\n".join(lines),
+            task_id=task.id,
+        )
+
+    async def announce_intervention(
+        self, task: Any, node: Any, intervention_id: str, question: str
+    ) -> RoomMessage | None:
+        if task.conversation_id is None:
+            return None
+        label = node.agent_name or node.name
+        return await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text=f"@{label} 需要确认：{question}",
+            task_id=task.id,
+            node_id=node.id,
+            intervention_id=intervention_id,
+        )
 
     async def _maybe_summarize(self, conversation_id: str) -> None:
         if self._llm is None:

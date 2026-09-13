@@ -16,7 +16,7 @@ from agent_hub.core.dispatcher import InvalidNodeState, NodeDispatcher
 from agent_hub.core.llm import LLMClient
 from agent_hub.core.planner import Planner, PlanNodeDraft
 from agent_hub.core.policy import PolicyEngine
-from agent_hub.core.room import post_agent_messages
+from agent_hub.core.room import post_agent_messages, post_message
 from agent_hub.core.tasks import TaskService
 from agent_hub.models.domain import Node, OrchestrationTask
 from agent_hub.models.enums import (
@@ -232,6 +232,8 @@ class Orchestrator:
             if ready:
                 slots = max(0, self._max_parallel - len(self._inflight))
                 for node in ready[:slots]:
+                    if self._coordinator is not None:
+                        await self._coordinator.announce_dispatch(task, node)
                     self._inflight.add(
                         asyncio.create_task(
                             self._dispatcher.dispatch_node(task_id, node.id)
@@ -253,6 +255,8 @@ class Orchestrator:
             if active_nodes and all(
                 node.status is NodeStatus.COMPLETED for node in active_nodes
             ):
+                if self._coordinator is not None:
+                    await self._coordinator.announce_completion(task, active_nodes)
                 await self._task_service.finalize_if_complete(task_id)
                 return
             await self._events.append(
@@ -273,6 +277,8 @@ class Orchestrator:
             drafted = await self._planner.plan(task.request, context=context)
             await self._task_service.create_plan_from_draft(task.id, drafted, version=1)
             await self._task_service.mark_running(task.id)
+            if self._coordinator is not None:
+                await self._coordinator.announce_plan(task, drafted)
         except Exception as exc:  # noqa: BLE001 - 规划失败统一标记任务失败
             await self._events.append(task.id, EventType.ERROR, {"message": str(exc)})
             await self._events.append(task.id, EventType.TASK_FAILED, {})
@@ -519,6 +525,10 @@ class Orchestrator:
         )
 
         if policy == "human":
+            if self._coordinator is not None:
+                await self._coordinator.announce_intervention(
+                    task, node, intervention_id, question
+                )
             self._timeout_tasks[intervention_id] = asyncio.create_task(
                 self._timeout_watcher(
                     task.id, intervention_id, self._policy.config.timeout_seconds
@@ -720,7 +730,11 @@ class Orchestrator:
                 self._timeout_tasks.pop(intervention_id, None)
 
     async def answer_intervention(
-        self, intervention_id: str, text: str, responder: str = "user"
+        self,
+        intervention_id: str,
+        text: str,
+        responder: str = "user",
+        quote_id: str | None = None,
     ) -> None:
         intervention = await projections.fetch_intervention(
             self._db, intervention_id
@@ -740,6 +754,24 @@ class Orchestrator:
                 "responder": responder,
             },
         )
+        task = await projections.fetch_task(self._db, intervention.task_id)
+        if (
+            task is not None
+            and task.conversation_id is not None
+            and self._coordinator is not None
+        ):
+            await post_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                role="user",
+                sender="CEO",
+                text=text,
+                quote_id=quote_id,
+                task_id=task.id,
+                node_id=intervention.node_id,
+                intervention_id=intervention_id,
+            )
         timer = self._timeout_tasks.pop(intervention_id, None)
         if timer is not None:
             timer.cancel()
