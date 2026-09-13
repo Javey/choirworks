@@ -13,14 +13,16 @@ from agent_hub.sim.fake_agent import FakeAgent, start_fake_agent
 from agent_hub.sim.llm import SimLLM
 
 SIM_AGENTS: list[tuple[str, str]] = [
-    ("researcher", "research"),
-    ("writer", "write"),
+    ("researcher", "collaborate"),
+    ("writer", "inquire"),
     ("critic", "review"),
+    ("analyst", "assist"),
     ("flaky", "flaky_once"),
     ("broken", "flaky_always"),
 ]
 
 EXAMPLES = [
+    "请协调多个子代理协作完成这项分析",
     "帮我调研 A2A 协议并写一份摘要",
     "帮我评审这段文案",
     "这个任务可能会偶发失败，请自动重试",
@@ -32,7 +34,13 @@ def build_settings(host: str, port: int, db_path: Path) -> Settings:
     return Settings(
         server={"host": host, "port": port},
         store={"db_path": db_path},
-        policies={"overrides": [{"agent_name": "critic", "policy": "human"}]},
+        policies={
+            "overrides": [
+                {"agent_name": "critic", "policy": "human"},
+                {"agent_name": "researcher", "policy": "peer_agent"},
+                {"agent_name": "writer", "policy": "peer_agent"},
+            ]
+        },
         scheduler={"retry_backoff_seconds": 0.2},
     )
 

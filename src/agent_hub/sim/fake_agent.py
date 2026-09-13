@@ -85,6 +85,10 @@ class ScriptedExecutor(AgentExecutor):
     def _question_text(self) -> str:
         if self._behavior == "review":
             return "请确认是否采用该方案？"
+        if self._behavior == "collaborate":
+            return "需要 C 参与确认技术细节，请协助。"
+        if self._behavior == "inquire":
+            return "缺少关键信息：请 A 提供调研结论。"
         return "who are you?"
 
     def _success_text(self, text: str) -> str:
@@ -92,6 +96,14 @@ class ScriptedExecutor(AgentExecutor):
             return f"调研结果（{self._name or 'researcher'}）：关于「{text}」的模拟要点。"
         if self._behavior == "write":
             return f"文稿（{self._name or 'writer'}）：基于「{text}」生成的模拟报告。"
+        if self._behavior == "collaborate":
+            if "请补充信息" in text:
+                return f"调研补充（{self._name or 'researcher'}）：这是 A 提供的模拟关键信息。"
+            return f"调研结果（{self._name or 'researcher'}）：关于「{text}」的模拟要点。"
+        if self._behavior == "inquire":
+            return f"文稿（{self._name or 'writer'}）：基于「{text}」生成的模拟报告。"
+        if self._behavior == "assist":
+            return "分析结论：这是模拟的专家答复。"
         return f"echo:{text}"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -102,7 +114,12 @@ class ScriptedExecutor(AgentExecutor):
             await event_queue.enqueue_event(task)
             updater = TaskUpdater(event_queue, task.id, task.context_id)
             await updater.start_work()
-            if self._behavior in ("ask", "review"):
+            if self._behavior in ("ask", "review") or (
+                self._behavior in ("collaborate", "inquire")
+                and "协作" in text
+                and "请补充信息" not in text
+                and self._calls == 1
+            ):
                 await updater.requires_input(
                     updater.new_agent_message(parts=[Part(text=self._question_text())])
                 )
@@ -116,6 +133,10 @@ class ScriptedExecutor(AgentExecutor):
                 await asyncio.sleep(5)
             if self._behavior == "research":
                 await asyncio.sleep(1.2)
+            if self._behavior == "collaborate" and "请补充信息" in text:
+                await asyncio.sleep(0.6)
+            if self._behavior == "assist":
+                await asyncio.sleep(0.5)
             if self._behavior == "delay":
                 await asyncio.sleep(0.4)
             await self._emit_artifact(updater, self._success_text(text))
@@ -125,6 +146,10 @@ class ScriptedExecutor(AgentExecutor):
             updater = TaskUpdater(event_queue, task.id, task.context_id)
             if self._behavior == "review":
                 answer = f"已按你的意见定稿：{text}"
+            elif self._behavior == "collaborate":
+                answer = f"协作完成（{self._name or 'researcher'}）：已结合 C 的协助。"
+            elif self._behavior == "inquire":
+                answer = f"B 已获得信息并完成：{text}"
             else:
                 answer = f"answered:{text}"
             await self._emit_artifact(updater, answer)

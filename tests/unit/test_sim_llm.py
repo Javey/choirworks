@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from agent_hub.core.orchestrator import PeerChoice
 from agent_hub.core.planner import PlanDraft, validate_plan
 from agent_hub.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
 from agent_hub.models.domain import AgentRecord
@@ -18,7 +19,10 @@ def agent(name: str) -> AgentRecord:
     )
 
 
-AGENTS = [agent(name) for name in ("researcher", "writer", "critic", "flaky", "broken")]
+AGENTS = [
+    agent(name)
+    for name in ("researcher", "writer", "critic", "flaky", "broken", "analyst")
+]
 
 
 def prompt(request: str) -> str:
@@ -68,12 +72,10 @@ async def test_broken_plan_triggers_replan_without_broken_agent():
 
 
 async def test_peer_choice_skips_broken_agents():
-    from agent_hub.core.orchestrator import PeerChoice
-
     llm = SimLLM()
     choice = await llm.structured(system="peer", user=prompt("谁来回答？"), schema=PeerChoice)
     assert isinstance(choice, PeerChoice)
-    assert choice.agent_name in {"researcher", "writer", "critic", "flaky"}
+    assert choice.agent_name in {"researcher", "writer", "critic", "flaky", "analyst"}
     assert choice.instruction
 
 
@@ -92,3 +94,33 @@ async def test_unknown_schema_rejected():
 
     with pytest.raises(ValueError):
         await llm.structured(system="x", user="y", schema=Other)  # type: ignore[arg-type]
+
+
+async def test_peer_choice_routes_to_researcher_for_writer():
+    prompt_text = (
+        prompt("协作任务")
+        + "\n\nWorker node 'writer' asks:\n缺少关键信息：请 A 提供调研结论。"
+    )
+    llm = SimLLM()
+    choice = await llm.structured(system="peer", user=prompt_text, schema=PeerChoice)
+    assert choice.agent_name == "researcher"
+    assert "请补充信息" in choice.instruction
+    assert "缺少关键信息" in choice.instruction
+
+
+async def test_peer_choice_routes_to_analyst_for_researcher():
+    prompt_text = (
+        prompt("协作任务")
+        + "\n\nWorker node 'researcher' asks:\n需要 C 参与确认技术细节。"
+    )
+    llm = SimLLM()
+    choice = await llm.structured(system="peer", user=prompt_text, schema=PeerChoice)
+    assert choice.agent_name == "analyst"
+    assert "需要 C 参与" in choice.instruction
+
+
+async def test_coordination_plan_runs_workers_in_parallel():
+    draft = await plan_for("请协调多个子代理协作完成这项分析")
+    assert agents_of(draft) == ["researcher", "writer"]
+    assert draft.nodes[0].deps == []
+    assert draft.nodes[1].deps == []

@@ -13,6 +13,13 @@ FLAKY_AGENTS = {"broken"}
 
 REQUEST_PATTERN = re.compile(r"User request:\n(.*?)(?:\n\nAvailable agents:|\Z)", re.S)
 AGENT_PATTERN = re.compile(r"^- (\S+):", re.M)
+WORKER_PATTERN = re.compile(
+    r"Worker node '(\S+)' asks:\n(.*?)(?:\n\nRegistered agents:|\Z)", re.S
+)
+PEER_ROUTES = {
+    "writer": ("researcher",),
+    "researcher": ("analyst",),
+}
 
 
 class SimLLM:
@@ -22,6 +29,13 @@ class SimLLM:
         if schema.__name__ == "PlanDraft":
             return self._plan(user)  # type: ignore[return-value]
         if schema.__name__ == "PeerChoice":
+            route = self._peer_route(user)
+            if route is not None:
+                agent_name, question = route
+                return schema(  # type: ignore[call-arg]
+                    agent_name=agent_name,
+                    instruction=f"请补充信息：{question}",
+                )
             return schema(  # type: ignore[call-arg]
                 agent_name=self._pick(user, preferred=("researcher", "writer", "critic")),
                 instruction="请基于已有信息回答 worker agent 的问题。",
@@ -44,6 +58,12 @@ class SimLLM:
                 self._node("n2", "critic", f"请评审上一步产出：{request}", deps=["n1"]),
             ]
             return PlanDraft(rationale="模拟计划：先产出再评审", nodes=nodes)
+        if any(key in request for key in ("协作", "协调", "配合")):
+            nodes = [
+                self._node("n1", "researcher", request, deps=[]),
+                self._node("n2", "writer", request, deps=[]),
+            ]
+            return PlanDraft(rationale="模拟计划：两个 worker 并行协作", nodes=nodes)
         if any(key in request for key in ("重试", "偶发")):
             nodes = [
                 self._node("n1", "flaky", request, deps=[]),
@@ -65,6 +85,22 @@ class SimLLM:
     def _request(self, user: str) -> str:
         match = REQUEST_PATTERN.search(user)
         return (match.group(1).strip() if match else user.strip()) or "模拟任务"
+
+    def _peer_route(self, user: str) -> tuple[str, str] | None:
+        match = WORKER_PATTERN.search(user)
+        if match is None:
+            return None
+        asking = match.group(1)
+        question = match.group(2).strip()
+        registered = self._registered(user)
+        preferred = PEER_ROUTES.get(asking, ("researcher", "writer", "critic", "analyst"))
+        for name in preferred:
+            if name in registered and name != asking:
+                return name, question
+        available = sorted(registered - FLAKY_AGENTS - {asking})
+        if available:
+            return available[0], question
+        return None
 
     def _registered(self, user: str) -> set[str]:
         return set(AGENT_PATTERN.findall(user))
