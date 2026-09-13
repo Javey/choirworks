@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from a2a.types import Role, TaskState
 
 from choirworks.a2a.mapping import TASK_STATE_MAP, snapshot_to_task
@@ -30,8 +31,20 @@ def _snapshot(status: TaskStatus, node_status: NodeStatus = NodeStatus.COMPLETED
     return TaskSnapshot(task=task, plan=None, nodes=[node], last_seq=7)
 
 
-def test_task_state_map_covers_all_statuses():
-    assert set(TASK_STATE_MAP) == set(TaskStatus)
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (TaskStatus.PENDING, TaskState.TASK_STATE_SUBMITTED),
+        (TaskStatus.PLANNING, TaskState.TASK_STATE_WORKING),
+        (TaskStatus.RUNNING, TaskState.TASK_STATE_WORKING),
+        (TaskStatus.AWAITING_INPUT, TaskState.TASK_STATE_INPUT_REQUIRED),
+        (TaskStatus.COMPLETED, TaskState.TASK_STATE_COMPLETED),
+        (TaskStatus.FAILED, TaskState.TASK_STATE_FAILED),
+        (TaskStatus.CANCELED, TaskState.TASK_STATE_CANCELED),
+    ],
+)
+def test_task_state_map_maps_each_status(status: TaskStatus, expected: TaskState):
+    assert TASK_STATE_MAP[status] is expected
 
 
 def test_snapshot_maps_state_and_artifacts():
@@ -58,6 +71,29 @@ def test_snapshot_metadata_lists_nodes():
     assert nodes[0].struct_value.fields["attempt"].number_value == 2
 
 
+def test_snapshot_without_conversation_maps_to_empty_context():
+    snapshot = _snapshot(TaskStatus.RUNNING)
+    snapshot.task.conversation_id = None
+    mapped = snapshot_to_task(snapshot)
+    assert mapped.context_id == ""
+
+
+def test_artifact_without_name_or_text_uses_defaults():
+    snapshot = _snapshot(TaskStatus.RUNNING)
+    snapshot.nodes[0].output = {"artifacts": [{"id": "a1"}]}
+    mapped = snapshot_to_task(snapshot)
+    assert mapped.artifacts[0].artifact_id == "plan1:n1:a1"
+    assert mapped.artifacts[0].name == "a1"
+    assert mapped.artifacts[0].parts[0].text == ""
+
+
+def test_snapshot_without_output_has_no_artifacts():
+    snapshot = _snapshot(TaskStatus.RUNNING)
+    snapshot.nodes[0].output = None
+    mapped = snapshot_to_task(snapshot)
+    assert len(mapped.artifacts) == 0
+
+
 def test_failed_snapshot_carries_error_message():
     snapshot = _snapshot(TaskStatus.FAILED, node_status=NodeStatus.FAILED)
     snapshot.nodes[0].error = "boom"
@@ -66,8 +102,46 @@ def test_failed_snapshot_carries_error_message():
     assert mapped.status.message.parts[0].text == "boom"
 
 
+def test_failed_snapshot_without_node_error_has_no_message():
+    mapped = snapshot_to_task(_snapshot(TaskStatus.FAILED, node_status=NodeStatus.FAILED))
+    assert not mapped.status.HasField("message")
+
+
+def test_failed_snapshot_uses_last_error_among_failed_nodes():
+    snapshot = _snapshot(TaskStatus.FAILED, node_status=NodeStatus.FAILED)
+    snapshot.nodes[0].error = "first"
+    snapshot.nodes.append(
+        snapshot.nodes[0].model_copy(update={"id": "plan1:n2", "error": "second"})
+    )
+    mapped = snapshot_to_task(snapshot)
+    assert mapped.status.message.parts[0].text == "second"
+
+
+def test_failed_snapshot_ignores_invalidated_node_error():
+    snapshot = _snapshot(TaskStatus.FAILED, node_status=NodeStatus.INVALIDATED)
+    snapshot.nodes[0].error = "stale"
+    failed = _snapshot(TaskStatus.FAILED, node_status=NodeStatus.FAILED)
+    failed.nodes[0].error = "boom"
+    snapshot.nodes.extend(failed.nodes)
+    mapped = snapshot_to_task(snapshot)
+    assert mapped.status.message.parts[0].text == "boom"
+
+
+def test_failed_snapshot_with_only_invalidated_error_has_no_message():
+    snapshot = _snapshot(TaskStatus.FAILED, node_status=NodeStatus.INVALIDATED)
+    snapshot.nodes[0].error = "stale"
+    mapped = snapshot_to_task(snapshot)
+    assert not mapped.status.HasField("message")
+
+
 def test_input_required_question_message():
     snapshot = _snapshot(TaskStatus.AWAITING_INPUT, node_status=NodeStatus.INPUT_REQUIRED)
     mapped = snapshot_to_task(snapshot, question="请补充预算口径")
     assert mapped.status.state is TaskState.TASK_STATE_INPUT_REQUIRED
     assert mapped.status.message.parts[0].text == "请补充预算口径"
+
+
+def test_input_required_without_question_has_no_message():
+    snapshot = _snapshot(TaskStatus.AWAITING_INPUT, node_status=NodeStatus.INPUT_REQUIRED)
+    mapped = snapshot_to_task(snapshot)
+    assert not mapped.status.HasField("message")

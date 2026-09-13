@@ -18,7 +18,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.core.tasks import TaskSnapshot
 from choirworks.models.domain import Node
-from choirworks.models.enums import TaskStatus
+from choirworks.models.enums import NodeStatus, TaskStatus
 
 A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
@@ -96,9 +96,14 @@ def _status_message(
             return agent_message(question, message_id=f"{task.id}:question")
         return None
     if task.status is TaskStatus.FAILED:
+        error: str | None = None
         for node in snapshot.nodes:
+            if node.status is NodeStatus.INVALIDATED:
+                continue
             if node.error:
-                return agent_message(node.error, message_id=f"{task.id}:error")
+                error = node.error
+        if error:
+            return agent_message(error, message_id=f"{task.id}:error")
     return None
 
 
