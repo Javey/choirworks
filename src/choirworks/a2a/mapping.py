@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
 from a2a.types import (
@@ -7,8 +8,11 @@ from a2a.types import (
     Message,
     Part,
     Role,
+    StreamResponse,
     Task,
+    TaskArtifactUpdateEvent,
     TaskState,
+    TaskStatusUpdateEvent,
 )
 from a2a.types import (
     TaskStatus as A2ATaskStatus,
@@ -18,7 +22,8 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.core.tasks import TaskSnapshot
 from choirworks.models.domain import Node
-from choirworks.models.enums import NodeStatus, TaskStatus
+from choirworks.models.enums import EventType, NodeStatus, TaskStatus
+from choirworks.store.event_store import Event
 
 A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
@@ -133,3 +138,173 @@ def snapshot_to_task(
         ],
         metadata=struct_value(metadata),
     )
+
+
+_TERMINAL_NODE_VALUES = {
+    NodeStatus.COMPLETED.value,
+    NodeStatus.FAILED.value,
+    NodeStatus.CANCELED.value,
+    NodeStatus.INVALIDATED.value,
+}
+
+_PLAN_EVENTS = {
+    EventType.PLAN_CREATED,
+    EventType.PLAN_EXTENDED,
+    EventType.PLAN_SUPERSEDED,
+}
+
+_NOTIFICATION_STATES = {
+    EventType.NODE_DISPATCH_INTENT,
+    EventType.NODE_DISPATCHED,
+    EventType.NODE_STATE_CHANGED,
+    EventType.NODE_RETRY_SCHEDULED,
+    EventType.NODE_INVALIDATED,
+    EventType.NODE_CANCEL_SENT,
+    EventType.INTERVENTION_RESOLVED,
+    EventType.INTERVENTION_FAILED,
+    EventType.CHECKPOINT_CREATED,
+    EventType.ROLLBACK_PERFORMED,
+    EventType.ERROR,
+}
+
+
+class TaskStreamMapper:
+    def __init__(self, snapshot: TaskSnapshot):
+        self.terminal = False
+        self._task_id = snapshot.task.id
+        self._context_id = snapshot.task.conversation_id or ""
+        self._state = TASK_STATE_MAP[snapshot.task.status]
+        self._node_artifacts: dict[str, set[str]] = defaultdict(set)
+        for node in snapshot.nodes:
+            for item in (node.output or {}).get("artifacts", []):
+                self._node_artifacts[node.id].add(item["id"])
+
+    def _status_update(
+        self,
+        state: TaskState | None = None,
+        *,
+        metadata: dict[str, Any] | None = None,
+        message_text: str | None = None,
+        message_id: str = "m",
+    ) -> StreamResponse:
+        status = A2ATaskStatus(state=state or self._state)
+        if message_text is not None:
+            status.message.CopyFrom(agent_message(message_text, message_id=message_id))
+        return StreamResponse(
+            status_update=TaskStatusUpdateEvent(
+                task_id=self._task_id,
+                context_id=self._context_id,
+                status=status,
+                metadata=struct_value(metadata or {}),
+            )
+        )
+
+    def _apply_state(self, state: TaskState) -> list[StreamResponse]:
+        if state is self._state:
+            return []
+        self._state = state
+        if state in TERMINAL_A2A_STATES:
+            self.terminal = True
+        return [self._status_update(state)]
+
+    def _last_chunks(self, node_id: str) -> list[StreamResponse]:
+        responses: list[StreamResponse] = []
+        for inner_id in sorted(self._node_artifacts.get(node_id, set())):
+            responses.append(
+                StreamResponse(
+                    artifact_update=TaskArtifactUpdateEvent(
+                        task_id=self._task_id,
+                        context_id=self._context_id,
+                        artifact=Artifact(artifact_id=artifact_id(node_id, inner_id)),
+                        append=True,
+                        last_chunk=True,
+                    )
+                )
+            )
+        return responses
+
+    def map_event(self, event: Event) -> list[StreamResponse]:
+        event_type = event.type
+        payload = event.payload
+        if event_type is EventType.TASK_STATE_CHANGED:
+            state = TASK_STATE_MAP[TaskStatus(payload["to"])]
+            responses = self._apply_state(state)
+            if not responses:
+                return []
+            responses[0].status_update.metadata.CopyFrom(
+                struct_value({"from": payload.get("from"), "to": payload.get("to")})
+            )
+            return responses
+        if event_type is EventType.TASK_COMPLETED:
+            return self._apply_state(TaskState.TASK_STATE_COMPLETED)
+        if event_type is EventType.TASK_FAILED:
+            return self._apply_state(TaskState.TASK_STATE_FAILED)
+        if event_type is EventType.NODE_ARTIFACT:
+            node_id = payload["node_id"]
+            self._node_artifacts[node_id].add(payload["artifact_id"])
+            return [
+                StreamResponse(
+                    artifact_update=TaskArtifactUpdateEvent(
+                        task_id=self._task_id,
+                        context_id=self._context_id,
+                        artifact=Artifact(
+                            artifact_id=artifact_id(node_id, payload["artifact_id"]),
+                            name=payload.get("name") or "",
+                            parts=[Part(text=payload.get("text", ""))],
+                        ),
+                        append=bool(payload.get("append")),
+                        last_chunk=False,
+                        metadata=struct_value({"node_id": node_id}),
+                    )
+                )
+            ]
+        if event_type in _PLAN_EVENTS:
+            dag = payload.get("dag")
+            parts = [data_part(dag)] if dag is not None else []
+            return [
+                StreamResponse(
+                    artifact_update=TaskArtifactUpdateEvent(
+                        task_id=self._task_id,
+                        context_id=self._context_id,
+                        artifact=Artifact(
+                            artifact_id=f"plan:{payload.get('plan_id')}",
+                            name="plan",
+                            parts=parts,
+                        ),
+                        append=False,
+                        last_chunk=True,
+                        metadata=struct_value(
+                            {
+                                "version": payload.get("version"),
+                                "rationale": payload.get("rationale"),
+                            }
+                        ),
+                    )
+                )
+            ]
+        if event_type is EventType.INTERVENTION_REQUESTED:
+            question = (payload.get("question") or {}).get("text", "")
+            self._state = TaskState.TASK_STATE_INPUT_REQUIRED
+            return [
+                self._status_update(
+                    TaskState.TASK_STATE_INPUT_REQUIRED,
+                    metadata={
+                        "kind": event_type.value,
+                        "intervention_id": payload.get("intervention_id"),
+                        "node_id": payload.get("node_id"),
+                        "policy": payload.get("policy"),
+                    },
+                    message_text=question,
+                    message_id=payload.get("intervention_id") or "intervention",
+                )
+            ]
+        if event_type in _NOTIFICATION_STATES:
+            metadata = {"kind": event_type.value, **payload}
+            responses = [self._status_update(metadata=metadata)]
+            if (
+                event_type is EventType.NODE_STATE_CHANGED
+                and payload.get("to") in _TERMINAL_NODE_VALUES
+            ):
+                responses.extend(self._last_chunks(payload["node_id"]))
+            return responses
+        return []
