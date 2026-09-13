@@ -88,7 +88,13 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
             replan_on_failure=resolved.scheduler.replan_on_failure,
         )
         coordinator = RoomCoordinator(
-            db, event_store, task_service, orchestrator, registry, llm=llm_client
+            db,
+            event_store,
+            task_service,
+            orchestrator,
+            registry,
+            llm=llm_client,
+            remote=remote,
         )
         orchestrator.set_coordinator(coordinator)
 

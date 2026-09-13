@@ -18,7 +18,7 @@ from agent_hub.core.planner import Planner, PlanNodeDraft
 from agent_hub.core.policy import PolicyEngine
 from agent_hub.core.room import post_agent_messages, post_message
 from agent_hub.core.tasks import TaskService
-from agent_hub.models.domain import Node, OrchestrationTask
+from agent_hub.models.domain import Node, OrchestrationTask, RoomMessage
 from agent_hub.models.enums import (
     TERMINAL_TASK_STATUSES,
     EventType,
@@ -745,7 +745,7 @@ class Orchestrator:
         text: str,
         responder: str = "user",
         quote_id: str | None = None,
-    ) -> None:
+    ) -> RoomMessage | None:
         intervention = await projections.fetch_intervention(
             self._db, intervention_id
         )
@@ -765,12 +765,13 @@ class Orchestrator:
             },
         )
         task = await projections.fetch_task(self._db, intervention.task_id)
+        posted: RoomMessage | None = None
         if (
             task is not None
             and task.conversation_id is not None
             and self._coordinator is not None
         ):
-            await post_message(
+            posted = await post_message(
                 self._db,
                 self._events,
                 conversation_id=task.conversation_id,
@@ -786,6 +787,7 @@ class Orchestrator:
         if timer is not None:
             timer.cancel()
         self.start(intervention.task_id)
+        return posted
 
     async def _question_text(self, task_id: str, node_id: str) -> str:
         events = await self._events.replay(task_id)

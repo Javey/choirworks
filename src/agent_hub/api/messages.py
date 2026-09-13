@@ -49,23 +49,23 @@ async def create_message(
         raise HTTPException(
             status_code=404, detail=f"conversation not found: {conversation_id}"
         )
-    if body.quote_id is not None or body.interrupt:
-        raise HTTPException(
-            status_code=400,
-            detail="引用与打断路由将在 M9 后续任务提供，当前请直接发送新消息",
-        )
+    if body.interrupt and body.quote_id is None:
+        raise HTTPException(status_code=400, detail="打断需要引用一条消息")
     for agent_name in body.mentions:
         if await registry.get_by_name(agent_name) is None:
             raise HTTPException(
                 status_code=400, detail=f"agent not registered: {agent_name}"
             )
-    result = await request.app.state.coordinator.handle_human_message(
-        conversation_id,
-        text=body.text,
-        mentions=body.mentions,
-        quote_id=body.quote_id,
-        interrupt=body.interrupt,
-    )
+    try:
+        result = await request.app.state.coordinator.handle_human_message(
+            conversation_id,
+            text=body.text,
+            mentions=body.mentions,
+            quote_id=body.quote_id,
+            interrupt=body.interrupt,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PostMessageOut(
         message_id=result.message.id, seq=result.message.seq, task_id=result.task_id
     )

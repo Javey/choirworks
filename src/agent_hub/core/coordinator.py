@@ -15,7 +15,14 @@ from agent_hub.core.room import (
 from agent_hub.core.summary import maybe_update_summary
 from agent_hub.core.tasks import TargetSpec
 from agent_hub.models.domain import RoomMessage
-from agent_hub.models.enums import TERMINAL_NODE_STATUSES, EventType
+from agent_hub.models.enums import (
+    TERMINAL_NODE_STATUSES,
+    TERMINAL_TASK_STATUSES,
+    EventType,
+    InterventionStatus,
+    NodeStatus,
+    TaskStatus,
+)
 from agent_hub.store import projections
 
 MAX_MENTIONS_PER_MESSAGE = 3
@@ -37,6 +44,7 @@ class RoomCoordinator:
         orchestrator: Any,
         registry: Any,
         llm: Any | None = None,
+        remote: Any | None = None,
     ):
         self._db = db
         self._events = events
@@ -44,6 +52,7 @@ class RoomCoordinator:
         self._orchestrator = orchestrator
         self._registry = registry
         self._llm = llm
+        self._remote = remote
 
     async def join_new_members(
         self, conversation_id: str, names: list[str], *, reason: str = "human_mention"
@@ -89,7 +98,13 @@ class RoomCoordinator:
         interrupt: bool = False,
     ) -> HumanMessageResult:
         if quote_id is not None or interrupt:
-            raise ValueError("引用与打断路由尚未启用")
+            return await self._route_quote(
+                conversation_id,
+                text=text,
+                mentions=mentions,
+                quote_id=quote_id,
+                interrupt=interrupt,
+            )
         await self.join_new_members(conversation_id, mentions)
 
         if len(mentions) == 1:
@@ -330,6 +345,163 @@ class RoomCoordinator:
             text=f"@{target} 已有完成的工作可复用，未重复创建节点",
             task_id=task.id,
         )
+
+    async def _route_quote(
+        self,
+        conversation_id: str,
+        *,
+        text: str,
+        mentions: list[str],
+        quote_id: str | None,
+        interrupt: bool,
+    ) -> HumanMessageResult:
+        if quote_id is None:
+            raise ValueError("打断需要引用一条消息")
+        quote = await projections.fetch_message(self._db, quote_id)
+        if quote is None or quote.conversation_id != conversation_id:
+            raise ValueError("被引用的消息不存在")
+        await self.join_new_members(conversation_id, mentions)
+
+        if quote.intervention_id:
+            intervention = await projections.fetch_intervention(
+                self._db, quote.intervention_id
+            )
+            if (
+                intervention is not None
+                and intervention.status is InterventionStatus.PENDING
+            ):
+                posted = await self._orchestrator.answer_intervention(
+                    intervention.id, text, responder="CEO", quote_id=quote.id
+                )
+                if posted is None:
+                    posted = await post_message(
+                        self._db,
+                        self._events,
+                        conversation_id=conversation_id,
+                        role="user",
+                        sender="CEO",
+                        text=text,
+                        quote_id=quote.id,
+                        intervention_id=intervention.id,
+                    )
+                return HumanMessageResult(
+                    message=posted,
+                    task_id=intervention.task_id,
+                    routed="intervention_answer",
+                )
+
+        if quote.node_id:
+            node = await projections.fetch_node(self._db, quote.node_id)
+            if node is not None and node.status not in TERMINAL_NODE_STATUSES:
+                if interrupt:
+                    await self._cancel_task_and_signal(node.task_id)
+                    task_id = await self._start_followup(conversation_id, quote, text)
+                    message = await post_message(
+                        self._db,
+                        self._events,
+                        conversation_id=conversation_id,
+                        role="user",
+                        sender="CEO",
+                        text=text,
+                        quote_id=quote.id,
+                        task_id=task_id,
+                    )
+                    await post_assistant_message(
+                        self._db,
+                        self._events,
+                        conversation_id=conversation_id,
+                        text=f"已打断 @{quote.sender} 的当前工作，并转交新任务",
+                        task_id=task_id,
+                    )
+                    return HumanMessageResult(
+                        message=message, task_id=task_id, routed="interrupted"
+                    )
+                message = await post_message(
+                    self._db,
+                    self._events,
+                    conversation_id=conversation_id,
+                    role="user",
+                    sender="CEO",
+                    text=text,
+                    quote_id=quote.id,
+                    task_id=node.task_id,
+                    queued_for_node_id=node.id,
+                )
+                await post_assistant_message(
+                    self._db,
+                    self._events,
+                    conversation_id=conversation_id,
+                    text=f"已排队，将在 @{quote.sender} 当前工作结束后投递",
+                    task_id=node.task_id,
+                )
+                return HumanMessageResult(
+                    message=message, task_id=node.task_id, routed="queued"
+                )
+
+        task_id = await self._start_followup(conversation_id, quote, text)
+        message = await post_message(
+            self._db,
+            self._events,
+            conversation_id=conversation_id,
+            role="user",
+            sender="CEO",
+            text=text,
+            quote_id=quote.id,
+            task_id=task_id,
+        )
+        await self._maybe_summarize(conversation_id)
+        return HumanMessageResult(message=message, task_id=task_id, routed="follow_up")
+
+    async def _start_followup(
+        self, conversation_id: str, quote: RoomMessage, text: str
+    ) -> str:
+        agent_name = quote.sender
+        record = (
+            await self._registry.get_by_name(agent_name)
+            if agent_name and agent_name not in {"CEO", "assistant"}
+            else None
+        )
+        if record is not None:
+            await self.join_new_members(
+                conversation_id, [agent_name], reason="follow_up"
+            )
+            created = await self._task_service.create_task(
+                text, TargetSpec(agent_name=agent_name), conversation_id=conversation_id
+            )
+            self._orchestrator.start(created.task_id)
+            return created.task_id
+        task_id = await self._task_service.create_pending_task(
+            text, conversation_id=conversation_id
+        )
+        self._orchestrator.start(task_id)
+        return task_id
+
+    async def _cancel_task_and_signal(self, task_id: str) -> None:
+        task = await projections.fetch_task(self._db, task_id)
+        if task is None or task.status in TERMINAL_TASK_STATUSES:
+            return
+        plan = await projections.fetch_current_plan(self._db, task_id)
+        if plan is not None and self._remote is not None:
+            for node in await projections.fetch_nodes(self._db, task_id, plan.id):
+                if node.a2a_task_id and node.status in (
+                    NodeStatus.DISPATCHED,
+                    NodeStatus.WORKING,
+                    NodeStatus.INPUT_REQUIRED,
+                ):
+                    await self._remote.cancel_task(
+                        node.agent_url or "", node.a2a_task_id
+                    )
+                    await self._events.append(
+                        task_id,
+                        EventType.NODE_CANCEL_SENT,
+                        {"node_id": node.id, "a2a_task_id": node.a2a_task_id},
+                    )
+        await self._events.append(
+            task_id,
+            EventType.TASK_STATE_CHANGED,
+            {"from": task.status.value, "to": TaskStatus.CANCELED.value},
+        )
+        await self._orchestrator.stop_task(task_id)
 
     async def _maybe_summarize(self, conversation_id: str) -> None:
         if self._llm is None:
