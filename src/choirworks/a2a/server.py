@@ -18,13 +18,17 @@ from a2a.types import (
     TaskStatusUpdateEvent,
 )
 from a2a.utils.errors import (
+    InternalError,
+    InvalidParamsError,
     TaskNotCancelableError,
+    TaskNotFoundError,
     UnsupportedOperationError,
 )
 from fastapi import FastAPI
 
-from choirworks.a2a.mapping import snapshot_to_task
+from choirworks.a2a.mapping import room_message_to_a2a, snapshot_to_task
 from choirworks.core.cancel import TaskNotCancelable, cancel_task
+from choirworks.core.room import post_message
 from choirworks.core.tasks import TaskNotFound, TaskSnapshot
 from choirworks.models.enums import InterventionStatus, TaskStatus
 from choirworks.store import projections
@@ -81,10 +85,78 @@ class HubA2AHandler(RequestHandler):
     ) -> ListTasksResponse:
         raise UnsupportedOperationError("ListTasks is not supported yet")
 
+    async def _submit(self, params: SendMessageRequest) -> Task | Message:
+        message = params.message
+        text = "\n".join(
+            part.text for part in message.parts if part.text
+        ).strip()
+        if not text:
+            raise InvalidParamsError("message text is empty")
+
+        task_id = message.task_id or None
+        context_id = message.context_id or None
+
+        if task_id is not None:
+            try:
+                snapshot = await self._snapshot(task_id)
+            except TaskNotFound as exc:
+                raise TaskNotFoundError(f"task not found: {task_id}") from exc
+            status = snapshot.task.status
+            if status is TaskStatus.AWAITING_INPUT:
+                interventions = await projections.fetch_interventions(
+                    self._app.state.db, task_id, InterventionStatus.PENDING
+                )
+                if not interventions:
+                    raise InvalidParamsError(
+                        "task is awaiting input but has no pending intervention"
+                    )
+                await self._app.state.orchestrator.answer_intervention(
+                    interventions[-1].id, text, responder="user"
+                )
+                return await self._a2a_task(task_id)
+            if status in (
+                TaskStatus.PENDING,
+                TaskStatus.PLANNING,
+                TaskStatus.RUNNING,
+            ):
+                conversation_id = snapshot.task.conversation_id
+                if conversation_id is None:
+                    conversation_id = await self._app.state.coordinator.create_conversation(
+                        title=text[:30]
+                    )
+                row = await post_message(
+                    self._app.state.db,
+                    self._app.state.event_store,
+                    conversation_id=conversation_id,
+                    role="user",
+                    sender="user",
+                    text=text,
+                    task_id=task_id,
+                )
+                await self._app.state.coordinator.arbitrate_message(
+                    snapshot.task, row
+                )
+                return await self._a2a_task(task_id)
+            context_id = snapshot.task.conversation_id or context_id
+
+        if context_id is None:
+            context_id = await self._app.state.coordinator.create_conversation(
+                title=text[:30]
+            )
+        try:
+            result = await self._app.state.coordinator.handle_human_message(
+                context_id, text=text, mentions=[]
+            )
+        except Exception as exc:  # noqa: BLE001 - 统一映射为 A2A 内部错误
+            raise InternalError(str(exc)) from exc
+        if result.task_id is None:
+            return room_message_to_a2a(result.message)
+        return await self._a2a_task(result.task_id)
+
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Task | Message:
-        raise UnsupportedOperationError("SendMessage not implemented yet")
+        return await self._submit(params)
 
     async def on_message_send_stream(
         self,

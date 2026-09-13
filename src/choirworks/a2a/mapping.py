@@ -140,6 +140,30 @@ def snapshot_to_task(
     )
 
 
+def room_message_to_a2a(message: Any) -> Message:
+    metadata = {
+        A2A_ROOM_URI: {
+            "kind": "message",
+            "sender": message.sender,
+            "seq": message.seq,
+            "mentions": list(message.mentions),
+            "quote_id": message.quote_id,
+            "node_id": message.node_id,
+            "intervention_id": message.intervention_id,
+            "queued_for_node_id": message.queued_for_node_id,
+        }
+    }
+    return Message(
+        message_id=message.id,
+        context_id=message.conversation_id,
+        task_id=message.task_id or message.conversation_id,
+        role=Role.ROLE_USER if message.role == "user" else Role.ROLE_AGENT,
+        parts=[Part(text=message.text)],
+        extensions=[A2A_ROOM_URI],
+        metadata=struct_value(metadata),
+    )
+
+
 _TERMINAL_NODE_VALUES = {
     NodeStatus.COMPLETED.value,
     NodeStatus.FAILED.value,
