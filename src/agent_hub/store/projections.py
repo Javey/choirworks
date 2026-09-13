@@ -174,14 +174,15 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
     elif event_type is EventType.INTERVENTION_REQUESTED:
         await conn.execute(
             "INSERT INTO interventions"
-            " (id, task_id, node_id, assigned_node_id, source, policy, question,"
-            "  responder, status, deadline_at, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " (id, task_id, node_id, assigned_node_id, assigned_to, source, policy,"
+            "  question, responder, status, deadline_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 payload["intervention_id"],
                 event.task_id,
                 payload.get("node_id"),
                 payload.get("assigned_node_id"),
+                payload.get("assigned_to"),
                 payload["source"],
                 payload["policy"],
                 json.dumps(payload.get("question"), ensure_ascii=False),
@@ -424,6 +425,7 @@ def _row_to_intervention(row: aiosqlite.Row) -> Intervention:
         task_id=row["task_id"],
         node_id=row["node_id"],
         assigned_node_id=row["assigned_node_id"],
+        assigned_to=row["assigned_to"],
         source=row["source"],
         policy=row["policy"],
         question=json.loads(row["question"]),

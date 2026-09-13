@@ -94,3 +94,43 @@ describe("NodeCard", () => {
     expect(onRetry).toHaveBeenCalledWith("p1:n1");
   });
 });
+
+
+describe("assist renderings", () => {
+  it("shows assignee while a helper is working", () => {
+    render(
+      <InterventionCard
+        taskId="t1"
+        intervention={{
+          id: "iv1",
+          status: "pending",
+          policy: "peer_agent",
+          source: "remote_input_required",
+          questionText: "缺少关键信息",
+          assignedTo: "researcher",
+        }}
+        onAnswer={() => Promise.resolve()}
+      />,
+    );
+    expect(screen.getByText(/已指派 researcher 处理中/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("marks derived nodes with an assist badge", () => {
+    render(
+      <NodeCard
+        node={{
+          id: "p1:a1",
+          name: "协助 · researcher",
+          agentName: "researcher",
+          status: "working",
+          attempt: 1,
+          order: 1,
+          derived: true,
+        }}
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.getByText("协助")).toBeInTheDocument();
+  });
+});

@@ -39,7 +39,11 @@ export function InterventionCard({
         </span>
       </div>
       <div className="intervention-question">{intervention.questionText}</div>
-      {pending ? (
+      {pending && intervention.assignedTo ? (
+        <div className="intervention-waiting">
+          已指派 {intervention.assignedTo} 处理中…
+        </div>
+      ) : pending ? (
         <div className="intervention-answer">
           <textarea
             rows={2}
@@ -56,6 +60,8 @@ export function InterventionCard({
             提交回答
           </button>
         </div>
+      ) : intervention.status === "failed" ? (
+        <div className="intervention-resolved">协助失败，任务将重试或重规划</div>
       ) : (
         <div className="intervention-resolved">
           已由 {intervention.responder ?? "unknown"} 回答：

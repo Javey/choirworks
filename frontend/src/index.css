@@ -434,6 +434,12 @@ body {
   color: var(--warn);
 }
 
+.badge.assist {
+  background: var(--primary-soft);
+  border-color: #b7cdf8;
+  color: var(--primary);
+}
+
 .badge.status-running {
   color: var(--primary);
   border-color: var(--primary);

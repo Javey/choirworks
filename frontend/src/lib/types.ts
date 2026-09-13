@@ -18,7 +18,7 @@ export type NodeStatus =
   | "canceled"
   | "invalidated";
 
-export type InterventionStatus = "pending" | "resolved" | "expired" | "invalidated";
+export type InterventionStatus = "pending" | "resolved" | "expired" | "failed" | "invalidated";
 
 export interface PlanNodeDto {
   id: string;
@@ -26,6 +26,7 @@ export interface PlanNodeDto {
   agent_name?: string;
   deps: string[];
   input?: Record<string, unknown>;
+  derived?: boolean;
 }
 
 export interface PlanDto {
@@ -92,6 +93,8 @@ export interface InterventionDto {
   id: string;
   task_id: string;
   node_id?: string | null;
+  assigned_node_id?: string | null;
+  assigned_to?: string | null;
   source: string;
   policy: string;
   question: { text?: string } & Record<string, unknown>;

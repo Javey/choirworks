@@ -18,6 +18,7 @@ export interface NodeView {
   error?: string;
   order: number;
   superseded?: boolean;
+  derived?: boolean;
 }
 
 export interface InterventionView {
@@ -29,6 +30,7 @@ export interface InterventionView {
   questionText: string;
   answerText?: string;
   responder?: string;
+  assignedTo?: string;
   deadlineAt?: string;
 }
 
@@ -76,7 +78,7 @@ function textOf(value: unknown): string | undefined {
   return undefined;
 }
 
-function nodeView(node: NodeDto, order: number): NodeView {
+function nodeView(node: NodeDto, order: number, derived = false): NodeView {
   return {
     id: node.id,
     name: node.name,
@@ -87,16 +89,23 @@ function nodeView(node: NodeDto, order: number): NodeView {
     outputText: artifactText(node.output),
     error: node.error ?? undefined,
     order,
+    derived,
   };
 }
 
 export function fromSnapshot(snapshot: TaskSnapshotDto): TaskView {
-  const planOrder = (snapshot.plan?.dag.nodes ?? []).map(
-    (node) => `${snapshot.plan?.id}:${node.id}`,
-  );
+  const planNodes = snapshot.plan?.dag.nodes ?? [];
+  const planOrder = planNodes.map((node) => `${snapshot.plan?.id}:${node.id}`);
   const orders = new Map(planOrder.map((id, index) => [id, index]));
+  const derivedKeys = new Set(
+    planNodes
+      .filter((node) => node.derived)
+      .map((node) => `${snapshot.plan?.id}:${node.id}`),
+  );
   const nodes = snapshot.nodes
-    .map((node) => nodeView(node, orders.get(node.id) ?? orders.size + 1))
+    .map((node) =>
+      nodeView(node, orders.get(node.id) ?? orders.size + 1, derivedKeys.has(node.id)),
+    )
     .sort((left, right) => left.order - right.order);
   return {
     id: snapshot.task.id,
@@ -183,7 +192,9 @@ export function applyEvent(view: TaskView, event: EventDto): TaskView {
         updatedAt: now,
       };
     case "plan.created": {
-      const dag = payload.dag as { nodes?: { id: string; name: string; agent_name?: string }[] };
+      const dag = payload.dag as {
+        nodes?: { id: string; name: string; agent_name?: string; derived?: boolean }[];
+      };
       const planId = String(payload.plan_id ?? "");
       const nextIds = (dag?.nodes ?? []).map((node) => `${planId}:${node.id}`);
       const superseded =
@@ -207,9 +218,35 @@ export function applyEvent(view: TaskView, event: EventDto): TaskView {
           ...node,
           name: dagNode.name,
           agentName: dagNode.agent_name,
+          derived: dagNode.derived === true,
           order: view.nodes.length + index,
         }));
       });
+      return { ...next, updatedAt: now };
+    }
+    case "plan.extended": {
+      const added = (payload.added_nodes as {
+        id: string;
+        name: string;
+        agent_name?: string;
+        derived?: boolean;
+      }[]) ?? [];
+      const planId = String(payload.plan_id ?? "");
+      let next: TaskView = base;
+      for (const dagNode of added) {
+        next = withNode(next, `${planId}:${dagNode.id}`, (node) => ({
+          ...node,
+          name: dagNode.name,
+          agentName: dagNode.agent_name,
+          derived: dagNode.derived !== false,
+          order: view.nodes.length,
+        }));
+        next = addNote(
+          next,
+          event,
+          `已创建协助节点：${dagNode.agent_name ?? dagNode.name}`,
+        );
+      }
       return { ...next, updatedAt: now };
     }
     case "plan.superseded":
@@ -271,6 +308,8 @@ export function applyEvent(view: TaskView, event: EventDto): TaskView {
         policy: String(payload.policy ?? ""),
         source: String(payload.source ?? ""),
         questionText: textOf(payload.question) ?? "Agent 需要补充信息",
+        assignedTo:
+          typeof payload.assigned_to === "string" ? payload.assigned_to : undefined,
         deadlineAt: typeof payload.deadline_at === "string" ? payload.deadline_at : undefined,
       };
       return {
@@ -293,6 +332,15 @@ export function applyEvent(view: TaskView, event: EventDto): TaskView {
                   typeof payload.responder === "string" ? payload.responder : item.responder,
               }
             : item,
+        ),
+      };
+    }
+    case "intervention.failed": {
+      const interventionId = String(payload.intervention_id);
+      return {
+        ...base,
+        interventions: view.interventions.map((item) =>
+          item.id === interventionId ? { ...item, status: "failed" } : item,
         ),
       };
     }

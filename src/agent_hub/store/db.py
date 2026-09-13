@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS interventions (
   task_id     TEXT NOT NULL,
   node_id     TEXT,
   assigned_node_id TEXT,
+  assigned_to TEXT,
   source      TEXT NOT NULL,
   policy      TEXT NOT NULL,
   question    TEXT NOT NULL,
@@ -147,6 +148,8 @@ class Database:
             await conn.execute(
                 "ALTER TABLE interventions ADD COLUMN assigned_node_id TEXT"
             )
+        if "assigned_to" not in intervention_columns:
+            await conn.execute("ALTER TABLE interventions ADD COLUMN assigned_to TEXT")
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_conversation"
             " ON orchestration_tasks(conversation_id)"

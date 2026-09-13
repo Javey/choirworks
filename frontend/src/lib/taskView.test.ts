@@ -242,3 +242,59 @@ describe("mergeSnapshot", () => {
     expect(merged.lastSeq).toBeGreaterThanOrEqual(8);
   });
 });
+
+describe("plan extension and assigned interventions", () => {
+  it("adds derived helper nodes from plan.extended", () => {
+    let view = fromSnapshot(snapshot());
+    view = applyEvent(view, {
+      seq: 6,
+      type: "plan.extended",
+      payload: {
+        plan_id: "p1",
+        version: 1,
+        rationale: "peer assistance",
+        added_nodes: [
+          {
+            id: "a1",
+            name: "协助 · researcher",
+            agent_name: "researcher",
+            deps: [],
+            input: { text: "请补充信息" },
+            derived: true,
+          },
+        ],
+        added_edges: [{ from: "a1", to: "n1" }],
+      },
+    });
+    const helper = view.nodes.find((node) => node.id === "p1:a1");
+    expect(helper).toBeDefined();
+    expect(helper?.derived).toBe(true);
+    expect(helper?.agentName).toBe("researcher");
+    expect(view.notes.some((note) => note.text.includes("协助"))).toBe(true);
+  });
+
+  it("tracks assigned and failed interventions", () => {
+    let view = fromSnapshot(snapshot());
+    view = applyEvent(view, {
+      seq: 6,
+      type: "intervention.requested",
+      payload: {
+        intervention_id: "iv1",
+        node_id: "p1:n1",
+        source: "remote_input_required",
+        policy: "peer_agent",
+        question: { text: "need help" },
+        assigned_node_id: "p1:a1",
+        assigned_to: "researcher",
+      },
+    });
+    expect(view.interventions[0].assignedTo).toBe("researcher");
+
+    view = applyEvent(view, {
+      seq: 7,
+      type: "intervention.failed",
+      payload: { intervention_id: "iv1" },
+    });
+    expect(view.interventions[0].status).toBe("failed");
+  });
+});

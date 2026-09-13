@@ -13,6 +13,7 @@ export function NodeCard({
         <span className={`dot ${node.status}`} />
         <span className="node-name">{node.name}</span>
         {node.agentName ? <span className="badge">{node.agentName}</span> : null}
+        {node.derived ? <span className="badge assist">协助</span> : null}
         <span className="node-status">{node.status}</span>
         {node.attempt > 1 ? <span className="muted">第 {node.attempt} 次尝试</span> : null}
         {node.status === "failed" ? (

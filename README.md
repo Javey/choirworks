@@ -41,10 +41,11 @@ npm test
 uv run agent-hub-sim --port 8080 --fresh
 ```
 
-启动后自动注册 5 个脚本化 Agent（researcher / writer / critic / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8080` 直接对话：
+启动后自动注册 6 个脚本化 Agent（researcher / writer / critic / analyst / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8080` 直接对话：
 
 | 请求示例 | 演示场景 |
 |---|---|
+| 请协调多个子代理协作完成这项分析 | 动态 DAG 协作：两个 worker 分别暂停，编排器扩展协助节点（带「协助」徽章）执行后回填、续跑（上下文保留） |
 | 帮我调研 A2A 协议并写一份摘要 | 调研 → 写作依赖链 |
 | 帮我评审这段文案 | critic 提问 → 人工介入 → 定稿 |
 | 这个任务可能会偶发失败，请自动重试 | 节点自动重试（第 2 次成功） |

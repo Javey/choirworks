@@ -139,6 +139,7 @@ async def test_intervention_assignment_and_failure_projection(tmp_path):
         intervention = await projections.fetch_intervention(db, "iv1")
         assert intervention is not None
         assert intervention.assigned_node_id == "p1:a1"
+        assert intervention.assigned_to == "researcher"
         assert intervention.status is InterventionStatus.PENDING
 
         await store.append(
