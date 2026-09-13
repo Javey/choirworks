@@ -6,6 +6,7 @@ from typing import Any
 from a2a.types import TaskState
 
 from agent_hub.a2a.client import RemoteAgentClient
+from agent_hub.core.context import ContextPackage, build_agent_context
 from agent_hub.core.state import assert_node_transition
 from agent_hub.models.domain import Node
 from agent_hub.models.enums import EventType, NodeStatus
@@ -58,16 +59,28 @@ class NodeDispatcher:
 
         attempt = node.attempt + 1
         message_id = f"{task_id}:{node_id}:{attempt}"
+        package = await self._context_for(node)
+        intent_payload: dict[str, Any] = {
+            "node_id": node_id,
+            "message_id": message_id,
+            "attempt": attempt,
+        }
+        if package is not None:
+            intent_payload["context_included"] = package.included_message_ids
         await self._events.append(
             task_id,
             EventType.NODE_DISPATCH_INTENT,
-            {"node_id": node_id, "message_id": message_id, "attempt": attempt},
+            intent_payload,
         )
 
         artifacts: list[dict[str, Any]] = []
         current = NodeStatus.READY
         try:
-            text = str((node.input or {}).get("text", ""))
+            text = (
+                package.text
+                if package is not None
+                else str((node.input or {}).get("text", ""))
+            )
             async with asyncio.timeout(self._timeout):
                 current = await self._consume(
                     node,
@@ -103,6 +116,8 @@ class NodeDispatcher:
             raise InvalidNodeState(f"node {node_id} has no remote task id")
 
         await self._transition(node, NodeStatus.WORKING)
+        package = await self._context_for(node)
+        continue_text = package.text if package is not None else text
         artifacts: list[dict[str, Any]] = []
         current = NodeStatus.WORKING
         try:
@@ -111,7 +126,7 @@ class NodeDispatcher:
                     node,
                     self._remote.send_text(
                         node.agent_url or "",
-                        text,
+                        continue_text,
                         task_id=node.a2a_task_id,
                         context_id=node.a2a_context_id,
                         message_id=f"{task_id}:{node_id}:continue:{node.attempt}",
@@ -159,6 +174,20 @@ class NodeDispatcher:
         refreshed = await projections.fetch_node(self._db, node_id)
         assert refreshed is not None
         return refreshed
+
+    async def _context_for(self, node: Node) -> ContextPackage | None:
+        task = await projections.fetch_task(self._db, node.task_id)
+        if task is None or task.conversation_id is None or not node.agent_name:
+            return None
+        messages = await projections.fetch_messages(
+            self._db, task.conversation_id, limit=1
+        )
+        if not messages:
+            return None
+        instruction = str((node.input or {}).get("text", ""))
+        return await build_agent_context(
+            self._db, task.conversation_id, node.agent_name, instruction
+        )
 
     async def _consume(
         self,

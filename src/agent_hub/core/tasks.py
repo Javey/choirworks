@@ -88,6 +88,7 @@ class TaskService:
                     "id": dag_node_id,
                     "name": target.name,
                     "agent_url": agent_url,
+                    "agent_name": target.agent_name,
                     "skill_id": target.skill_id,
                     "deps": [],
                     "input": node_input,
