@@ -5,7 +5,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_hub.core.tasks import TaskSnapshot
-from agent_hub.models.domain import ConversationSummary
+from agent_hub.models.domain import (
+    ConversationSummary,
+    RoomMember,
+    RoomMessage,
+    RoomSummary,
+)
 
 
 class TargetIn(BaseModel):
@@ -46,3 +51,23 @@ class AnswerInterventionIn(BaseModel):
 class RollbackIn(BaseModel):
     checkpoint_id: str
     mode: str = Field(default="restart", pattern="^(restart|dry_run)$")
+
+
+class PostMessageIn(BaseModel):
+    text: str = Field(min_length=1)
+    mentions: list[str] = Field(default_factory=list)
+    quote_id: str | None = None
+    interrupt: bool = False
+
+
+class PostMessageOut(BaseModel):
+    message_id: str
+    seq: int
+    task_id: str | None = None
+
+
+class RoomMessagesOut(BaseModel):
+    messages: list[RoomMessage]
+    members: list[RoomMember]
+    summary: RoomSummary | None = None
+    last_seq: int = 0
