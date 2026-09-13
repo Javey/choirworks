@@ -110,7 +110,7 @@ class RoomCoordinator:
         if len(mentions) == 1:
             created = await self._task_service.create_task(
                 text,
-                TargetSpec(agent_name=mentions[0]),
+                TargetSpec(agent_name=mentions[0], name=mentions[0]),
                 conversation_id=conversation_id,
             )
             message = await post_message(
@@ -466,7 +466,9 @@ class RoomCoordinator:
                 conversation_id, [agent_name], reason="follow_up"
             )
             created = await self._task_service.create_task(
-                text, TargetSpec(agent_name=agent_name), conversation_id=conversation_id
+                text,
+                TargetSpec(agent_name=agent_name, name=agent_name),
+                conversation_id=conversation_id,
             )
             self._orchestrator.start(created.task_id)
             return created.task_id
@@ -569,6 +571,24 @@ class RoomCoordinator:
             self._orchestrator.start(created.task_id)
             forwarded += 1
         return forwarded
+
+    async def announce_peer_assist(
+        self, task: Any, node: Any, agent_name: str
+    ) -> RoomMessage | None:
+        if task.conversation_id is None:
+            return None
+        await self.join_new_members(
+            task.conversation_id, [agent_name], reason="peer_assist"
+        )
+        requester = node.agent_name or node.name
+        return await post_assistant_message(
+            self._db,
+            self._events,
+            conversation_id=task.conversation_id,
+            text=f"@{requester} 请求 @{agent_name} 协助，已加入工作",
+            task_id=task.id,
+            node_id=node.id,
+        )
 
     async def _maybe_summarize(self, conversation_id: str) -> None:
         if self._llm is None:

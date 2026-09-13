@@ -532,6 +532,10 @@ class Orchestrator:
                     edges=[(helper_key, self._dag_id(plan.id, node.id))],
                     rationale=f"peer assistance for node {node.name}",
                 )
+                if self._coordinator is not None:
+                    await self._coordinator.announce_peer_assist(
+                        task, node, choice.agent_name
+                    )
             assigned_to = choice.agent_name
 
         await self._append_intervention_requested(
