@@ -281,6 +281,16 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 InterventionStatus.PENDING.value,
             ),
         )
+    elif event_type is EventType.CONVERSATION_CREATED:
+        await conn.execute(
+            "INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(id) DO NOTHING",
+            (
+                payload["conversation_id"],
+                payload.get("title") or "新对话",
+                ts,
+            ),
+        )
     elif event_type is EventType.MESSAGE_POSTED:
         await conn.execute(
             "INSERT INTO messages"

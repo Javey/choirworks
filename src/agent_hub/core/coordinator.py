@@ -88,6 +88,19 @@ class RoomCoordinator:
             )
             members.add(name)
 
+    async def create_conversation(self, title: str | None = None) -> str:
+        conversation_id = uuid4().hex
+        await self._events.append(
+            None,
+            EventType.CONVERSATION_CREATED,
+            {
+                "conversation_id": conversation_id,
+                "title": (title or "新对话").strip()[:60] or "新对话",
+            },
+            conversation_id=conversation_id,
+        )
+        return conversation_id
+
     async def handle_human_message(
         self,
         conversation_id: str,
@@ -97,15 +110,20 @@ class RoomCoordinator:
         quote_id: str | None = None,
         interrupt: bool = False,
     ) -> HumanMessageResult:
+        records = await self._registry.list()
+        known = {record.name for record in records}
+        parsed = extract_mentions(text, known)
+        combined = list(dict.fromkeys([*mentions, *parsed]))
         if quote_id is not None or interrupt:
             return await self._route_quote(
                 conversation_id,
                 text=text,
-                mentions=mentions,
+                mentions=combined,
                 quote_id=quote_id,
                 interrupt=interrupt,
             )
-        await self.join_new_members(conversation_id, mentions)
+        await self.join_new_members(conversation_id, combined)
+        mentions = combined
 
         if len(mentions) == 1:
             created = await self._task_service.create_task(

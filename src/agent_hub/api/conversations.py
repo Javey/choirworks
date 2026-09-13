@@ -2,11 +2,32 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agent_hub.api.schemas import ConversationDetail
+from agent_hub.api.schemas import (
+    ConversationDetail,
+    CreateConversationIn,
+    CreateConversationOut,
+)
 from agent_hub.models.domain import ConversationSummary
 from agent_hub.store import projections
 
 router = APIRouter(tags=["conversations"])
+
+
+@router.post(
+    "/conversations", status_code=201, response_model=CreateConversationOut
+)
+async def create_conversation(
+    body: CreateConversationIn, request: Request
+) -> CreateConversationOut:
+    coordinator = request.app.state.coordinator
+    conversation_id = await coordinator.create_conversation(body.title)
+    conversation = await projections.fetch_conversation(
+        request.app.state.db, conversation_id
+    )
+    assert conversation is not None
+    return CreateConversationOut(
+        conversation_id=conversation_id, title=conversation.title
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationSummary])

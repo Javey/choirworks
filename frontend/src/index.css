@@ -560,3 +560,284 @@ body {
   max-height: 160px;
   overflow-y: auto;
 }
+
+/* Room chat */
+.room-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.room-head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.room-head-title > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.room-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.room-msg {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.room-msg.user {
+  flex-direction: row-reverse;
+}
+
+.room-msg.system {
+  justify-content: center;
+}
+
+.room-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.room-avatar.agent {
+  background: #7c3aed;
+}
+
+.room-avatar.assistant {
+  background: var(--primary);
+}
+
+.room-bubble {
+  max-width: 78%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  min-width: 0;
+}
+
+.room-msg.user .room-bubble {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.room-msg.assistant .room-bubble {
+  background: var(--primary-soft);
+  border-color: #cfe0fd;
+}
+
+.room-msg.system .room-bubble {
+  background: rgba(0, 0, 0, 0.04);
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.room-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.room-msg.user .room-meta {
+  color: rgba(255, 255, 255, 0.85);
+  justify-content: flex-end;
+}
+
+.room-sender {
+  font-weight: 600;
+}
+
+.room-actions {
+  display: none;
+  gap: 4px;
+}
+
+.room-msg:hover .room-actions {
+  display: inline-flex;
+}
+
+.room-action {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  text-decoration: underline;
+}
+
+.room-action.danger {
+  color: var(--danger);
+}
+
+.room-msg.user .room-action.danger {
+  color: #fecaca;
+}
+
+.room-quote {
+  display: block;
+  border-left: 3px solid var(--primary);
+  background: rgba(47, 111, 237, 0.06);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.room-quote-sender {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.room-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.room-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  background: var(--primary);
+  animation: caret-blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+.mention {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.room-msg.user .mention {
+  color: #dbeafe;
+}
+
+.reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--primary-soft);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.reply-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-interrupt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.room-composer {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.composer-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.mention-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mention-list button {
+  border: none;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mention-list button.active,
+.mention-list button:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.room-body {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.task-panel {
+  width: 420px;
+  min-width: 360px;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  overflow: hidden;
+}
+
+.task-panel .main {
+  flex: 1;
+}

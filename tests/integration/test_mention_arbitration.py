@@ -45,9 +45,17 @@ async def test_agent_mention_creates_helper_node_and_joins(api):
     await client.post("/v1/agents", json={"name": "analyst", "card_url": agent_url})
     conversation_id = await make_conversation(app)
 
+    from agent_hub.core.room import post_assistant_message
+
+    await post_assistant_message(
+        app.state.db,
+        app.state.event_store,
+        conversation_id=conversation_id,
+        text="稍后请 @analyst 复核结果",
+    )
     resp = await client.post(
         f"/v1/conversations/{conversation_id}/messages",
-        json={"text": "请 @analyst 帮忙分析", "mentions": ["echo"]},
+        json={"text": "请帮忙分析", "mentions": ["echo"]},
     )
     task_id = resp.json()["task_id"]
     snapshot = await wait_completed(client, task_id)

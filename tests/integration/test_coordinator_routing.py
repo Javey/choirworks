@@ -115,3 +115,24 @@ async def test_unknown_mention_rejected(api):
         json={"text": "hi", "mentions": ["ghost"]},
     )
     assert resp.status_code == 400
+
+
+async def test_create_conversation_and_text_only_mention(api):
+    client, app, agent_url = api
+    await client.post("/v1/agents", json={"name": "echo", "card_url": agent_url})
+
+    created = await client.post("/v1/conversations", json={"title": "演示群"})
+    assert created.status_code == 201
+    conversation_id = created.json()["conversation_id"]
+
+    resp = await client.post(
+        f"/v1/conversations/{conversation_id}/messages",
+        json={"text": "@echo 你好"},
+    )
+    assert resp.status_code == 201
+    await wait_completed(client, resp.json()["task_id"])
+
+    timeline = (await client.get(f"/v1/conversations/{conversation_id}/messages")).json()
+    assert "echo" in {member["agent_name"] for member in timeline["members"]}
+    snapshot = (await client.get(f"/v1/tasks/{resp.json()['task_id']}")).json()
+    assert snapshot["nodes"][0]["agent_name"] == "echo"

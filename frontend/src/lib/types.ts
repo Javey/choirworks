@@ -129,3 +129,50 @@ export interface EventDto {
   type: string;
   payload: Record<string, unknown>;
 }
+
+export type RoomRole = "user" | "assistant" | "agent" | "system";
+
+export interface RoomMessageDto {
+  id: string;
+  conversation_id: string;
+  seq: number;
+  role: RoomRole;
+  sender?: string | null;
+  text: string;
+  mentions: string[];
+  quote_id?: string | null;
+  task_id?: string | null;
+  node_id?: string | null;
+  intervention_id?: string | null;
+  queued_for_node_id?: string | null;
+  delivered_at?: string | null;
+  created_at: string;
+}
+
+export interface RoomMemberDto {
+  conversation_id: string;
+  agent_name: string;
+  agent_url: string;
+  reason?: string | null;
+  joined_at: string;
+}
+
+export interface RoomSummaryDto {
+  conversation_id: string;
+  covers_seq: number;
+  summary: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface RoomMessagesDto {
+  messages: RoomMessageDto[];
+  members: RoomMemberDto[];
+  summary: RoomSummaryDto | null;
+  last_seq: number;
+}
+
+export interface PostMessageOutDto {
+  message_id: string;
+  seq: number;
+  task_id?: string | null;
+}

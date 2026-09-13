@@ -53,6 +53,15 @@ class RollbackIn(BaseModel):
     mode: str = Field(default="restart", pattern="^(restart|dry_run)$")
 
 
+class CreateConversationIn(BaseModel):
+    title: str | None = None
+
+
+class CreateConversationOut(BaseModel):
+    conversation_id: str
+    title: str
+
+
 class PostMessageIn(BaseModel):
     text: str = Field(min_length=1)
     mentions: list[str] = Field(default_factory=list)

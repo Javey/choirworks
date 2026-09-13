@@ -3,7 +3,9 @@ import type {
   ConversationDetailDto,
   ConversationSummaryDto,
   CreateTaskOutDto,
+  PostMessageOutDto,
   RollbackReportDto,
+  RoomMessagesDto,
   TaskSnapshotDto,
 } from "../lib/types";
 
@@ -37,6 +39,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   listConversations: () => request<ConversationSummaryDto[]>("GET", "/v1/conversations"),
+  createConversation: (title?: string) =>
+    request<{ conversation_id: string; title: string }>(
+      "POST",
+      "/v1/conversations",
+      title ? { title } : {},
+    ),
   getConversation: (conversationId: string) =>
     request<ConversationDetailDto>("GET", `/v1/conversations/${conversationId}`),
   createTask: (text: string, conversationId?: string | null) =>
@@ -62,4 +70,23 @@ export const api = {
     request<TaskSnapshotDto>("POST", `/v1/tasks/${taskId}/nodes/${nodeId}/retry`),
   cancelTask: (taskId: string) =>
     request<TaskSnapshotDto>("POST", `/v1/tasks/${taskId}/cancel`),
+  getRoomMessages: (conversationId: string, sinceSeq = 0) =>
+    request<RoomMessagesDto>(
+      "GET",
+      `/v1/conversations/${conversationId}/messages?since_seq=${sinceSeq}`,
+    ),
+  postRoomMessage: (
+    conversationId: string,
+    input: {
+      text: string;
+      mentions?: string[];
+      quote_id?: string;
+      interrupt?: boolean;
+    },
+  ) =>
+    request<PostMessageOutDto>(
+      "POST",
+      `/v1/conversations/${conversationId}/messages`,
+      input,
+    ),
 };

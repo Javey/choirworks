@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "./api/client";
 import { Composer } from "./components/Composer";
 import { RollbackDialog } from "./components/RollbackDialog";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
+import { RoomComposer, type RoomSendInput } from "./components/room/RoomComposer";
+import { RoomThread, type WorkingBubble } from "./components/room/RoomThread";
 import { useConversation } from "./hooks/useConversation";
-import { pendingTaskView } from "./lib/taskView";
-import type { ConversationSummaryDto, TaskStatus } from "./lib/types";
+import { useRoom } from "./hooks/useRoom";
+import type { ConversationSummaryDto, RoomMessageDto, TaskStatus } from "./lib/types";
 
 const TERMINAL: TaskStatus[] = ["completed", "failed", "canceled"];
+const WORKING_NODE_STATUSES = ["ready", "dispatched", "working"];
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "请求失败";
@@ -20,10 +23,13 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("c"),
   );
-  const { views, loading, error, load, appendTask, refreshTask } =
-    useConversation(activeId);
+  const { views, error, load, refreshTask } = useConversation(activeId);
+  const room = useRoom(activeId);
   const [banner, setBanner] = useState<string | null>(null);
   const [rollbackFor, setRollbackFor] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<RoomMessageDto | null>(null);
+  const [interrupt, setInterrupt] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -53,18 +59,30 @@ export default function App() {
     async (text: string) => {
       setBanner(null);
       try {
-        const created = await api.createTask(text, activeId);
-        if (!activeId) {
-          navigate(created.conversation_id ?? null);
-        } else {
-          appendTask(pendingTaskView(created.task_id, text, created.conversation_id));
-        }
+        const created = await api.createConversation(text.slice(0, 40));
+        navigate(created.conversation_id);
+        await api.postRoomMessage(created.conversation_id, { text });
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));
       }
     },
-    [activeId, navigate, appendTask, refreshConversations],
+    [navigate, refreshConversations],
+  );
+
+  const sendRoom = useCallback(
+    async (input: RoomSendInput) => {
+      setBanner(null);
+      try {
+        await room.send(input);
+        setReplyTo(null);
+        setInterrupt(false);
+        await refreshConversations();
+      } catch (exc) {
+        setBanner(messageOf(exc));
+      }
+    },
+    [room, refreshConversations],
   );
 
   const answer = useCallback(
@@ -99,8 +117,31 @@ export default function App() {
     [refreshTask],
   );
 
+  const workingBubbles = useMemo<WorkingBubble[]>(() => {
+    const bubbles: WorkingBubble[] = [];
+    for (const view of views) {
+      if (TERMINAL.includes(view.status)) continue;
+      for (const node of view.nodes) {
+        if (WORKING_NODE_STATUSES.includes(node.status)) {
+          bubbles.push({
+            nodeId: node.id,
+            agentName: node.agentName ?? node.name,
+            text: node.outputText ?? "",
+          });
+        }
+      }
+    }
+    return bubbles;
+  }, [views]);
+
+  const workingAgents = useMemo(
+    () => new Set(workingBubbles.map((bubble) => bubble.agentName)),
+    [workingBubbles],
+  );
+
   const latest = views.at(-1);
   const running = Boolean(latest && !TERMINAL.includes(latest.status));
+  const activeConversation = conversations.find((item) => item.id === activeId);
 
   return (
     <div className="app">
@@ -127,18 +168,88 @@ export default function App() {
             </button>
           </div>
         ) : null}
-        {loading && views.length === 0 ? (
-          <div className="thread-empty">加载中…</div>
+        {activeId ? (
+          <>
+            <header className="room-head">
+              <div className="room-head-title">
+                <span>{activeConversation?.title ?? "工作群"}</span>
+                {(room.error ?? room.loading) ? (
+                  <span className="badge warn">
+                    {room.error ? "消息加载失败" : "加载中…"}
+                  </span>
+                ) : null}
+              </div>
+              <div className="member-chips">
+                {room.view.members.map((member) => (
+                  <span key={member.agent_name} className="badge">
+                    {workingAgents.has(member.agent_name) ? "● " : ""}@
+                    {member.agent_name}
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="button small"
+                onClick={() => setPanelOpen((value) => !value)}
+              >
+                {panelOpen ? "收起详情" : "任务详情"}
+              </button>
+            </header>
+            <div className="room-body">
+              <div className="content">
+                <RoomThread
+                  view={room.view}
+                  workingBubbles={workingBubbles}
+                  onQuote={(message) => {
+                    setReplyTo(message);
+                    setInterrupt(false);
+                  }}
+                  onInterrupt={(message) => {
+                    setReplyTo(message);
+                    setInterrupt(true);
+                  }}
+                />
+                <RoomComposer
+                  members={room.view.members}
+                  replyTo={replyTo}
+                  interrupt={interrupt}
+                  onToggleInterrupt={setInterrupt}
+                  onCancelReply={() => {
+                    setReplyTo(null);
+                    setInterrupt(false);
+                  }}
+                  onSend={sendRoom}
+                />
+              </div>
+              {panelOpen ? (
+                <aside className="task-panel">
+                  <Thread
+                    views={views}
+                    onAnswer={answer}
+                    onRetry={retry}
+                    onCancel={cancel}
+                    onRollback={setRollbackFor}
+                  />
+                </aside>
+              ) : null}
+            </div>
+          </>
         ) : (
-          <Thread
-            views={views}
-            onAnswer={answer}
-            onRetry={retry}
-            onCancel={cancel}
-            onRollback={setRollbackFor}
-          />
+          <>
+            <Thread
+              views={views}
+              onAnswer={answer}
+              onRetry={retry}
+              onCancel={cancel}
+              onRollback={setRollbackFor}
+            />
+            <Composer
+              disabled={running}
+              hint={running ? "任务执行中…" : ""}
+              onSend={send}
+            />
+          </>
         )}
-        <Composer disabled={running} hint={running ? "任务执行中…" : ""} onSend={send} />
       </div>
       {rollbackFor ? (
         <RollbackDialog
@@ -146,6 +257,7 @@ export default function App() {
           onClose={() => setRollbackFor(null)}
           onDone={() => {
             void load();
+            void room.load();
           }}
         />
       ) : null}

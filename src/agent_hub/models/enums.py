@@ -63,6 +63,7 @@ class EventType(StrEnum):
     MESSAGE_DELIVERED = "message.delivered"
     ROOM_PARTICIPANT_JOINED = "room.participant_joined"
     ROOM_SUMMARY_UPDATED = "room.summary_updated"
+    CONVERSATION_CREATED = "conversation.created"
 
     ERROR = "error"
 
