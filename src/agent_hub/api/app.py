@@ -119,6 +119,10 @@ def create_app(settings: Settings | None = None, llm: LLMClient | None = None) -
             app.state.recovery = recovery
             if recovery.background:
                 asyncio.gather(*recovery.background, return_exceptions=True)
+            try:
+                await coordinator.reconcile()
+            except Exception:  # noqa: BLE001 - 对账失败不阻塞启动
+                logger.exception("room coordinator reconcile failed")
         reconcile_task = asyncio.create_task(
             _reconcile_loop(
                 db,

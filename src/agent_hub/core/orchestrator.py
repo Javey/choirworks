@@ -190,6 +190,8 @@ class Orchestrator:
                     )
             if arbitrated:
                 continue
+            if self._coordinator is not None:
+                await self._coordinator.deliver_queued_for_terminal(task, nodes)
 
             completed_count = sum(
                 1 for node in nodes if node.status is NodeStatus.COMPLETED
@@ -244,6 +246,7 @@ class Orchestrator:
                 for node in ready[:slots]:
                     if self._coordinator is not None:
                         await self._coordinator.announce_dispatch(task, node)
+                        await self._coordinator.mark_delivered_for_node(node.id)
                     self._inflight.add(
                         asyncio.create_task(
                             self._dispatcher.dispatch_node(task_id, node.id)
@@ -401,6 +404,14 @@ class Orchestrator:
             )
             if resolved is not None:
                 text = str((resolved.answer or {}).get("text", ""))
+                if self._coordinator is not None:
+                    queued = await projections.fetch_queued_messages(
+                        self._db, node.id
+                    )
+                    if queued:
+                        supplement = "；".join(message.text for message in queued)
+                        text = f"{text}\n（CEO 补充：{supplement}）"
+                        await self._coordinator.mark_delivered_for_node(node.id)
                 run = asyncio.create_task(
                     self._dispatcher.continue_node(task.id, node.id, text)
                 )

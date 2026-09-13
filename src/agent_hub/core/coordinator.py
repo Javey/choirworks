@@ -503,6 +503,73 @@ class RoomCoordinator:
         )
         await self._orchestrator.stop_task(task_id)
 
+    async def mark_delivered_for_node(self, node_id: str) -> int:
+        queued = await projections.fetch_queued_messages(self._db, node_id)
+        for message in queued:
+            await self._events.append(
+                message.task_id,
+                EventType.MESSAGE_DELIVERED,
+                {"message_id": message.id, "node_id": node_id},
+            )
+        return len(queued)
+
+    async def deliver_queued_for_terminal(self, task: Any, nodes: list[Any]) -> int:
+        if task.conversation_id is None:
+            return 0
+        forwarded = 0
+        for node in nodes:
+            if node.status is not NodeStatus.COMPLETED:
+                continue
+            queued = await projections.fetch_queued_messages(self._db, node.id)
+            if not queued or not node.agent_name:
+                continue
+            text = "\n".join(message.text for message in queued)
+            created = await self._task_service.create_task(
+                text,
+                TargetSpec(agent_name=node.agent_name),
+                conversation_id=task.conversation_id,
+            )
+            await self.mark_delivered_for_node(node.id)
+            await post_assistant_message(
+                self._db,
+                self._events,
+                conversation_id=task.conversation_id,
+                text=f"已转交 @{node.agent_name} 继续处理",
+                task_id=created.task_id,
+            )
+            self._orchestrator.start(created.task_id)
+            forwarded += 1
+        return forwarded
+
+    async def reconcile(self) -> int:
+        pending = await projections.fetch_undelivered_queued_messages(self._db)
+        forwarded = 0
+        for message in pending:
+            if message.queued_for_node_id is None:
+                continue
+            node = await projections.fetch_node(self._db, message.queued_for_node_id)
+            if node is None or node.status not in TERMINAL_NODE_STATUSES:
+                continue
+            if not node.agent_name:
+                await self.mark_delivered_for_node(node.id)
+                continue
+            created = await self._task_service.create_task(
+                message.text,
+                TargetSpec(agent_name=node.agent_name),
+                conversation_id=message.conversation_id,
+            )
+            await self.mark_delivered_for_node(node.id)
+            await post_assistant_message(
+                self._db,
+                self._events,
+                conversation_id=message.conversation_id,
+                text=f"已转交 @{node.agent_name} 继续处理",
+                task_id=created.task_id,
+            )
+            self._orchestrator.start(created.task_id)
+            forwarded += 1
+        return forwarded
+
     async def _maybe_summarize(self, conversation_id: str) -> None:
         if self._llm is None:
             return
