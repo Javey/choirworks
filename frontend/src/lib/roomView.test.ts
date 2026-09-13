@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyRoomEvent, fromRoomSnapshot } from "./roomView";
+import { applyRoomEvent, fromRoomSnapshot, mergeRoomSnapshot } from "./roomView";
 import type { EventDto, RoomMessageDto, RoomMessagesDto } from "./types";
 
 function message(overrides: Partial<RoomMessageDto> = {}): RoomMessageDto {
@@ -124,5 +124,35 @@ describe("roomView", () => {
     const view = fromRoomSnapshot(snapshot([message({ id: "m1" })]));
     const next = applyRoomEvent(view, event("node.artifact", 9, { text: "x" }));
     expect(next).toBe(view);
+  });
+});
+
+describe("mergeRoomSnapshot", () => {
+  it("keeps live messages and merges the rest", () => {
+    const live = message({ id: "m2", seq: 2, text: "实时" });
+    const view = { ...fromRoomSnapshot(snapshot([live])), lastSeq: 2 };
+    const merged = mergeRoomSnapshot(
+      view,
+      snapshot([message({ id: "m1", seq: 1 }), live]),
+    );
+    expect(merged.messages.map((item) => item.id)).toEqual(["m1", "m2"]);
+    expect(merged.lastSeq).toBe(2);
+  });
+
+  it("keeps the newer summary and unions members", () => {
+    const view = fromRoomSnapshot({
+      messages: [],
+      members: [{ conversation_id: "c1", agent_name: "a", agent_url: "u", joined_at: "" }],
+      summary: { conversation_id: "c1", covers_seq: 5, summary: {}, updated_at: "" },
+      last_seq: 0,
+    });
+    const merged = mergeRoomSnapshot(view, {
+      messages: [],
+      members: [{ conversation_id: "c1", agent_name: "b", agent_url: "u", joined_at: "" }],
+      summary: { conversation_id: "c1", covers_seq: 3, summary: { old: 1 }, updated_at: "" },
+      last_seq: 0,
+    });
+    expect(merged.members.map((member) => member.agent_name)).toEqual(["a", "b"]);
+    expect(merged.summary?.covers_seq).toBe(5);
   });
 });

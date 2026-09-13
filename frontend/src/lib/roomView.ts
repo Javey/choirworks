@@ -23,6 +23,38 @@ export function fromRoomSnapshot(snapshot: RoomMessagesDto): RoomView {
   };
 }
 
+export function mergeRoomSnapshot(
+  view: RoomView,
+  snapshot: RoomMessagesDto,
+): RoomView {
+  const byId = new Map(view.messages.map((message) => [message.id, message]));
+  for (const message of snapshot.messages) {
+    if (!byId.has(message.id)) byId.set(message.id, message);
+  }
+  const messages = [...byId.values()].sort((left, right) => left.seq - right.seq);
+  const members = [...view.members];
+  for (const member of snapshot.members) {
+    if (!members.some((item) => item.agent_name === member.agent_name)) {
+      members.push(member);
+    }
+  }
+  const summary =
+    snapshot.summary &&
+    (!view.summary || snapshot.summary.covers_seq >= view.summary.covers_seq)
+      ? snapshot.summary
+      : view.summary;
+  return {
+    messages,
+    members,
+    summary,
+    lastSeq: Math.max(
+      view.lastSeq,
+      snapshot.last_seq,
+      messages.at(-1)?.seq ?? 0,
+    ),
+  };
+}
+
 function textOf(value: unknown): string {
   if (value && typeof value === "object" && "text" in value) {
     const text = (value as { text?: unknown }).text;
