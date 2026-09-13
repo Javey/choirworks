@@ -75,6 +75,50 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
             (payload["version"], ts, event.task_id),
         )
         await _materialize_nodes(conn, event.task_id, payload["plan_id"], payload["dag"])
+    elif event_type is EventType.PLAN_EXTENDED:
+        plan_id = payload["plan_id"]
+        added_nodes = payload.get("added_nodes", [])
+        added_edges = payload.get("added_edges", [])
+        for node in added_nodes:
+            await _materialize_nodes(conn, event.task_id, plan_id, {"nodes": [node]})
+        for edge in added_edges:
+            from_id = f"{plan_id}:{edge['from']}"
+            to_id = f"{plan_id}:{edge['to']}"
+            cursor = await conn.execute("SELECT deps FROM nodes WHERE id = ?", (to_id,))
+            row = await cursor.fetchone()
+            if row is not None:
+                deps = json.loads(row["deps"])
+                if from_id not in deps:
+                    deps.append(from_id)
+                    await conn.execute(
+                        "UPDATE nodes SET deps = ? WHERE id = ?",
+                        (json.dumps(deps), to_id),
+                    )
+        cursor = await conn.execute("SELECT dag FROM plans WHERE id = ?", (plan_id,))
+        row = await cursor.fetchone()
+        if row is not None:
+            dag = json.loads(row["dag"])
+            for node in added_nodes:
+                dag["nodes"].append(node)
+            for edge in added_edges:
+                for node in dag["nodes"]:
+                    if node["id"] == edge["to"]:
+                        deps = node.setdefault("deps", [])
+                        if edge["from"] not in deps:
+                            deps.append(edge["from"])
+            await conn.execute(
+                "UPDATE plans SET dag = ? WHERE id = ?",
+                (json.dumps(dag, ensure_ascii=False), plan_id),
+            )
+    elif event_type is EventType.PLAN_SUPERSEDED:
+        await conn.execute(
+            "UPDATE interventions SET status = ? WHERE task_id = ? AND status = ?",
+            (
+                InterventionStatus.INVALIDATED.value,
+                event.task_id,
+                InterventionStatus.PENDING.value,
+            ),
+        )
     elif event_type is EventType.TASK_STATE_CHANGED:
         await conn.execute(
             "UPDATE orchestration_tasks SET status = ?, updated_at = ? WHERE id = ?",
@@ -130,13 +174,14 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
     elif event_type is EventType.INTERVENTION_REQUESTED:
         await conn.execute(
             "INSERT INTO interventions"
-            " (id, task_id, node_id, source, policy, question, responder, status,"
-            "  deadline_at, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " (id, task_id, node_id, assigned_node_id, source, policy, question,"
+            "  responder, status, deadline_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 payload["intervention_id"],
                 event.task_id,
                 payload.get("node_id"),
+                payload.get("assigned_node_id"),
                 payload["source"],
                 payload["policy"],
                 json.dumps(payload.get("question"), ensure_ascii=False),
@@ -145,6 +190,11 @@ async def apply_event(conn: aiosqlite.Connection, event: Any) -> None:
                 payload.get("deadline_at"),
                 ts,
             ),
+        )
+    elif event_type is EventType.INTERVENTION_FAILED:
+        await conn.execute(
+            "UPDATE interventions SET status = ? WHERE id = ?",
+            (InterventionStatus.FAILED.value, payload["intervention_id"]),
         )
     elif event_type is EventType.INTERVENTION_RESOLVED:
         await conn.execute(
@@ -345,6 +395,7 @@ def _row_to_intervention(row: aiosqlite.Row) -> Intervention:
         id=row["id"],
         task_id=row["task_id"],
         node_id=row["node_id"],
+        assigned_node_id=row["assigned_node_id"],
         source=row["source"],
         policy=row["policy"],
         question=json.loads(row["question"]),

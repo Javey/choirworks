@@ -29,6 +29,7 @@ class InterventionStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     EXPIRED = "expired"
+    FAILED = "failed"
     INVALIDATED = "invalidated"
 
 
@@ -39,6 +40,7 @@ class EventType(StrEnum):
     TASK_FAILED = "task.failed"
 
     PLAN_CREATED = "plan.created"
+    PLAN_EXTENDED = "plan.extended"
     PLAN_SUPERSEDED = "plan.superseded"
 
     NODE_DISPATCH_INTENT = "node.dispatch.intent"
@@ -52,6 +54,7 @@ class EventType(StrEnum):
 
     INTERVENTION_REQUESTED = "intervention.requested"
     INTERVENTION_RESOLVED = "intervention.resolved"
+    INTERVENTION_FAILED = "intervention.failed"
 
     CHECKPOINT_CREATED = "checkpoint.created"
     ROLLBACK_PERFORMED = "rollback.performed"

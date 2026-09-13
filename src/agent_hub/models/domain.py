@@ -69,6 +69,7 @@ class Intervention(BaseModel):
     id: str
     task_id: str
     node_id: str | None = None
+    assigned_node_id: str | None = None
     source: str
     policy: str
     question: dict[str, Any]
