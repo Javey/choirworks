@@ -192,6 +192,27 @@ async def test_send_running_task_stays_same(tmp_path):
         await slow.stop()
 
 
+async def test_send_pending_task_without_active_node_is_room_only(hub_echo):
+    app, http, client = hub_echo
+    task_id = await app.state.task_service.create_pending_task("等待中任务")
+    snapshot = await app.state.task_service.get_snapshot(task_id)
+    conversation_id = snapshot.task.conversation_id
+
+    reply = await _send(client, _message("补充说明", task_id=task_id))
+
+    assert reply.id == task_id
+    timeline = (
+        await http.get(f"/v1/conversations/{conversation_id}/messages")
+    ).json()
+    queued = [
+        message
+        for message in timeline["messages"]
+        if message["text"] == "补充说明"
+    ]
+    assert queued
+    assert queued[0]["queued_for_node_id"] is None
+
+
 async def test_send_empty_text_raises(hub_echo):
     _, _, client = hub_echo
     with pytest.raises(InvalidParamsError):

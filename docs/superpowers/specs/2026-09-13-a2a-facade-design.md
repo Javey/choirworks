@@ -172,7 +172,7 @@ ChoirWorks 已有内部事件流（自定义 SSE）与南向 A2A 客户端（平
 - 文本 `@` 解析保持服务端现有逻辑；扩展 metadata 中的 `mentions`/`quote_id` 与文本解析结果合并；
 - `SendMessage` 返回 `SendMessageResponse{task|message}`（SDK 自动包装）；
 - `CancelTask` → hub `cancel_task`；终态任务抛 `TaskNotCancelableError`；
-- **已知限制（M11）**：运行中追加消息以第一个活跃节点为目标入队，随现有 `deliver_queued_for_terminal` 机制投递；A2A Task `metadata` 的 queued 标注推迟到 M12（当前以房间消息与投递事件体现）。
+- **已知限制（M11）**：运行中追加消息以第一个 `DISPATCHED/WORKING` 节点为目标入队，随现有 `deliver_queued_for_terminal` 机制在节点 COMPLETED 时投递；**无活跃节点时（如任务刚创建、尚未出现活跃节点）消息仅进入房间时间线、不做投递**；队列消息所属节点 FAILED 时依赖启动 `reconcile()` 兜底投递。A2A Task `metadata` 的 queued 标注推迟到 M12。
 
 ## 6. Room Extension v1
 
