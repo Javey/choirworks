@@ -9,9 +9,10 @@ from a2a.types import (
     Part,
     Role,
     SendMessageRequest,
+    SubscribeToTaskRequest,
     TaskState,
 )
-from a2a.utils.errors import InvalidParamsError
+from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
 
 from choirworks.a2a.mapping import A2A_ROOM_URI, struct_value
 from choirworks.api.app import create_app
@@ -20,6 +21,7 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.core.room import post_message
 from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
+from tests.support.hubs import start_hub
 
 
 def _plan(agent_name: str) -> PlanDraft:
@@ -45,7 +47,7 @@ def _settings(tmp_path, db_name: str, *, port: int | None = None) -> Settings:
     )
 
 
-async def _connect(app):
+async def _connect(app, *, streaming: bool = False):
     transport = httpx.ASGITransport(app=app)
     http = httpx.AsyncClient(transport=transport, base_url="http://test")
     card = await A2ACardResolver(
@@ -53,7 +55,7 @@ async def _connect(app):
     ).get_agent_card()
     client = await create_client(
         agent=card,
-        client_config=ClientConfig(streaming=False, httpx_client=http),
+        client_config=ClientConfig(streaming=streaming, httpx_client=http),
     )
     return http, client
 
@@ -257,3 +259,76 @@ async def test_send_interrupt_requires_quote(hub_room):
             _send("打断", room_meta={"interrupt": True})
         ):
             pass
+
+
+async def test_subscribe_room_streams_live_messages(tmp_path):
+    async with start_hub(
+        lambda port: _settings(tmp_path, "room_stream.db", port=port)
+    ) as (app, base_url):
+        http = httpx.AsyncClient(base_url=base_url, timeout=10.0)
+        card = await A2ACardResolver(
+            httpx_client=http, base_url=base_url
+        ).get_agent_card()
+        client = await create_client(
+            agent=card,
+            client_config=ClientConfig(streaming=True, httpx_client=http),
+        )
+        try:
+            created = (
+                await http.post("/v1/conversations", json={"title": "直播群"})
+            ).json()
+            conversation_id = created["conversation_id"]
+            stream = client.subscribe(SubscribeToTaskRequest(id=conversation_id))
+            first = await asyncio.wait_for(anext(stream), timeout=10)
+            assert first.WhichOneof("payload") == "task"
+            assert first.task.id == conversation_id
+            assert first.task.status.state is TaskState.TASK_STATE_INPUT_REQUIRED
+
+            posting = asyncio.create_task(
+                _post_room_message(app, conversation_id, "直播消息")
+            )
+            frame = None
+            for _ in range(20):
+                candidate = await asyncio.wait_for(anext(stream), timeout=10)
+                if candidate.WhichOneof("payload") == "message":
+                    frame = candidate
+                    break
+            await posting
+            await stream.aclose()
+        finally:
+            await client.close()
+            await http.aclose()
+
+    assert frame is not None
+    assert frame.message.parts[0].text == "直播消息"
+    fields = frame.message.metadata.fields[A2A_ROOM_URI].struct_value.fields
+    assert fields["kind"].string_value == "message"
+    assert fields["seq"].number_value == 1
+
+
+async def test_subscribe_unknown_raises(hub_room):
+    app, _, _ = hub_room
+    http, stream_client = await _connect(app, streaming=True)
+    try:
+        with pytest.raises(TaskNotFoundError):
+            async for _ in stream_client.subscribe(
+                SubscribeToTaskRequest(id="missing")
+            ):
+                pass
+    finally:
+        await stream_client.close()
+        await http.aclose()
+
+
+async def test_room_task_is_readable_without_extension_activation(hub_room):
+    app, http, client = hub_room
+    conversation_id = await _new_room(http)
+    await _post_room_message(app, conversation_id, "纯文本消息")
+
+    room = await client.get_task(GetTaskRequest(id=conversation_id))
+
+    assert room.history
+    for message in room.history:
+        assert message.message_id
+        assert message.role in {Role.ROLE_USER, Role.ROLE_AGENT}
+        assert message.parts[0].text

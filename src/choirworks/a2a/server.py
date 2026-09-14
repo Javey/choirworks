@@ -31,6 +31,7 @@ from fastapi import FastAPI
 
 from choirworks.a2a.mapping import (
     A2A_ROOM_URI,
+    RoomStreamMapper,
     TaskStreamMapper,
     room_message_to_a2a,
     room_send_options,
@@ -316,6 +317,33 @@ class HubA2AHandler(RequestHandler):
             subscription.close()
             bus.unsubscribe(subscription)
 
+    async def _stream_room(self, conversation_id: str):
+        store = self._app.state.event_store
+        bus = self._app.state.event_bus
+        seen = await store.latest_conversation_seq(conversation_id)
+        room, running = await self._room_snapshot(conversation_id)
+        mapper = RoomStreamMapper(conversation_id, running=running)
+        subscription = bus.subscribe(f"room:{conversation_id}")
+        try:
+            yield room
+            for event in await store.replay_conversation(conversation_id, seen):
+                seen = event.seq
+                for response in mapper.map_event(event):
+                    yield _unwrap_stream_response(response)
+            while True:
+                try:
+                    event = await subscription.get()
+                except SubscriptionClosed:
+                    break
+                if event.seq <= seen:
+                    continue
+                seen = event.seq
+                for response in mapper.map_event(event):
+                    yield _unwrap_stream_response(response)
+        finally:
+            subscription.close()
+            bus.unsubscribe(subscription)
+
     async def on_message_send_stream(
         self,
         params: SendMessageRequest,
@@ -337,10 +365,17 @@ class HubA2AHandler(RequestHandler):
     ) -> AsyncGenerator[
         Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
+        self._note_extensions(context)
         try:
             await self._snapshot(params.id)
-        except TaskNotFound as exc:
-            raise TaskNotFoundError(f"task not found: {params.id}") from exc
+        except TaskNotFound:
+            try:
+                await self._room_task(params.id)
+            except TaskNotFound as exc:
+                raise TaskNotFoundError(f"task not found: {params.id}") from exc
+            async for response in self._stream_room(params.id):
+                yield response
+            return
         async for response in self._stream_task(params.id):
             yield response
 
