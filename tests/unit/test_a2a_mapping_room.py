@@ -4,6 +4,7 @@ from a2a.types import Role, TaskState
 
 from choirworks.a2a.mapping import (
     A2A_ROOM_URI,
+    RoomStreamMapper,
     room_message_from_event,
     room_to_task,
 )
@@ -139,3 +140,99 @@ def test_room_message_from_event_rebuilds_message():
     assert message.task_id == "t1"
     assert message.node_id == "p1:n1"
     assert message.created_at == _NOW
+
+
+def _event(event_type: EventType, payload: dict) -> Event:
+    return Event(
+        seq=1,
+        task_id=None,
+        conversation_id="c1",
+        type=event_type,
+        payload=payload,
+        created_at=_NOW,
+    )
+
+
+def test_room_stream_mapper_maps_message_posted():
+    mapper = RoomStreamMapper("c1", running=False)
+    responses = mapper.map_event(
+        _event(
+            EventType.MESSAGE_POSTED,
+            {
+                "message_id": "m1",
+                "conversation_id": "c1",
+                "seq": 1,
+                "role": "assistant",
+                "sender": "assistant",
+                "text": "hi",
+                "mentions": [],
+                "task_id": None,
+            },
+        )
+    )
+    assert len(responses) == 1
+    assert responses[0].WhichOneof("payload") == "message"
+    message = responses[0].message
+    assert message.message_id == "m1"
+    assert message.context_id == "c1"
+    assert message.task_id == "c1"
+    assert message.role is Role.ROLE_AGENT
+    assert message.parts[0].text == "hi"
+    assert message.extensions == [A2A_ROOM_URI]
+    fields = message.metadata.fields[A2A_ROOM_URI].struct_value.fields
+    assert fields["kind"].string_value == "message"
+
+
+def test_room_stream_mapper_maps_status_events():
+    mapper = RoomStreamMapper("c1", running=True)
+    delivered = mapper.map_event(
+        _event(
+            EventType.MESSAGE_DELIVERED,
+            {"message_id": "m1", "node_id": "p1:n1"},
+        )
+    )[0]
+    assert delivered.WhichOneof("payload") == "status_update"
+    assert delivered.status_update.task_id == "c1"
+    assert delivered.status_update.context_id == "c1"
+    assert delivered.status_update.status.state is TaskState.TASK_STATE_WORKING
+    fields = delivered.status_update.metadata.fields
+    assert fields["kind"].string_value == "message.delivered"
+    assert fields["message_id"].string_value == "m1"
+    assert fields["node_id"].string_value == "p1:n1"
+
+    joined = mapper.map_event(
+        _event(
+            EventType.ROOM_PARTICIPANT_JOINED,
+            {
+                "agent_name": "echo",
+                "agent_url": "http://agent",
+                "reason": "human_mention",
+            },
+        )
+    )[0]
+    fields = joined.status_update.metadata.fields
+    assert fields["kind"].string_value == "room.participant_joined"
+    assert fields["agent_name"].string_value == "echo"
+
+    summary = mapper.map_event(
+        _event(
+            EventType.ROOM_SUMMARY_UPDATED,
+            {"covers_seq": 5, "summary": {"topics": ["x"]}},
+        )
+    )[0]
+    fields = summary.status_update.metadata.fields
+    assert fields["kind"].string_value == "room.summary_updated"
+    assert fields["covers_seq"].number_value == 5
+    assert (
+        fields["summary"].struct_value.fields["topics"].list_value.values[
+            0
+        ].string_value
+        == "x"
+    )
+
+
+def test_room_stream_mapper_ignores_non_room_events():
+    mapper = RoomStreamMapper("c1", running=False)
+    assert mapper.map_event(_event(EventType.CONVERSATION_CREATED, {})) == []
+    assert mapper.map_event(_event(EventType.TASK_COMPLETED, {})) == []
+    assert mapper.map_event(_event(EventType.NODE_STATE_CHANGED, {})) == []

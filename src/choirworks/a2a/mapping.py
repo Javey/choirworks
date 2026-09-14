@@ -262,6 +262,64 @@ _NOTIFICATION_STATES = {
 }
 
 
+class RoomStreamMapper:
+    def __init__(self, conversation_id: str, *, running: bool):
+        self._conversation_id = conversation_id
+        self._running = running
+
+    def _status_update(self, metadata: dict[str, Any]) -> StreamResponse:
+        state = (
+            TaskState.TASK_STATE_WORKING
+            if self._running
+            else TaskState.TASK_STATE_INPUT_REQUIRED
+        )
+        return StreamResponse(
+            status_update=TaskStatusUpdateEvent(
+                task_id=self._conversation_id,
+                context_id=self._conversation_id,
+                status=A2ATaskStatus(state=state),
+                metadata=struct_value(metadata),
+            )
+        )
+
+    def map_event(self, event: Event) -> list[StreamResponse]:
+        if event.type is EventType.MESSAGE_POSTED:
+            message = room_message_from_event(event)
+            return [StreamResponse(message=room_message_to_a2a(message))]
+        if event.type is EventType.MESSAGE_DELIVERED:
+            return [
+                self._status_update(
+                    {
+                        "kind": "message.delivered",
+                        "message_id": event.payload.get("message_id"),
+                        "node_id": event.payload.get("node_id"),
+                    }
+                )
+            ]
+        if event.type is EventType.ROOM_PARTICIPANT_JOINED:
+            return [
+                self._status_update(
+                    {
+                        "kind": "room.participant_joined",
+                        "agent_name": event.payload.get("agent_name"),
+                        "agent_url": event.payload.get("agent_url"),
+                        "reason": event.payload.get("reason"),
+                    }
+                )
+            ]
+        if event.type is EventType.ROOM_SUMMARY_UPDATED:
+            return [
+                self._status_update(
+                    {
+                        "kind": "room.summary_updated",
+                        "covers_seq": event.payload.get("covers_seq"),
+                        "summary": event.payload.get("summary") or {},
+                    }
+                )
+            ]
+        return []
+
+
 class TaskStreamMapper:
     def __init__(self, snapshot: TaskSnapshot):
         self.terminal = False
