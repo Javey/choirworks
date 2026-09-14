@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { A2AError, postJson, postSse } from "./a2a";
+import {
+  A2AError,
+  A2A_ROOM_URI,
+  postJson,
+  postSse,
+  roomEventFromResult,
+  roomSnapshotFromTask,
+  sendMessageParams,
+} from "./a2a";
 
 const encoder = new TextEncoder();
 
@@ -145,5 +153,202 @@ describe("postJson", () => {
     const error = await postJson("/v1/a2a", {}).catch((exc: unknown) => exc);
     expect(error).toBeInstanceOf(A2AError);
     expect((error as A2AError).code).toBe(-32001);
+  });
+});
+
+const ROOM_TASK_FRAME = {
+  id: "c1",
+  contextId: "c1",
+  status: { state: "TASK_STATE_INPUT_REQUIRED" },
+  history: [
+    {
+      messageId: "m1",
+      contextId: "c1",
+      taskId: "c1",
+      role: "ROLE_USER",
+      parts: [{ text: "大家好" }],
+      metadata: {
+        [A2A_ROOM_URI]: {
+          kind: "message",
+          sender: "CEO",
+          seq: 1,
+          mentions: [],
+          quote_id: null,
+          node_id: null,
+        },
+      },
+    },
+  ],
+  metadata: {
+    [A2A_ROOM_URI]: {
+      kind: "room",
+      title: "测试群",
+      members: [
+        {
+          agent_name: "echo",
+          agent_url: "http://agent",
+          reason: "human_mention",
+          joined_at: "2026-09-14T00:00:00+00:00",
+        },
+      ],
+      summary: {
+        covers_seq: 1,
+        updated_at: "2026-09-14T00:00:00+00:00",
+        content: { topics: ["问候"] },
+      },
+      message_count: 1,
+      last_seq: 1,
+    },
+  },
+};
+
+describe("roomSnapshotFromTask", () => {
+  it("rebuilds RoomMessagesDto from synthetic room task", () => {
+    const snapshot = roomSnapshotFromTask(ROOM_TASK_FRAME);
+    expect(snapshot.last_seq).toBe(1);
+    expect(snapshot.messages[0].id).toBe("m1");
+    expect(snapshot.messages[0].role).toBe("user");
+    expect(snapshot.messages[0].seq).toBe(1);
+    expect(snapshot.members[0].agent_name).toBe("echo");
+    expect(snapshot.summary?.covers_seq).toBe(1);
+    expect(snapshot.summary?.summary).toEqual({ topics: ["问候"] });
+  });
+
+  it("handles a room without summary", () => {
+    const task = {
+      ...ROOM_TASK_FRAME,
+      metadata: {
+        [A2A_ROOM_URI]: {
+          ...ROOM_TASK_FRAME.metadata[A2A_ROOM_URI],
+          summary: {},
+        },
+      },
+    };
+    expect(roomSnapshotFromTask(task).summary).toBeNull();
+  });
+});
+
+describe("roomEventFromResult", () => {
+  it("maps message frames to message.posted", () => {
+    const event = roomEventFromResult({
+      message: {
+        messageId: "m9",
+        contextId: "c1",
+        taskId: "t1",
+        role: "ROLE_AGENT",
+        parts: [{ text: "直播消息" }],
+        metadata: {
+          [A2A_ROOM_URI]: {
+            kind: "message",
+            sender: "echo",
+            seq: 9,
+            mentions: ["writer"],
+            quote_id: "m1",
+            node_id: "p1:n1",
+            queued_for_node_id: null,
+          },
+        },
+      },
+    });
+    expect(event?.type).toBe("message.posted");
+    expect(event?.seq).toBe(9);
+    expect(event?.payload).toMatchObject({
+      message_id: "m9",
+      role: "agent",
+      sender: "echo",
+      text: "直播消息",
+      mentions: ["writer"],
+      quote_id: "m1",
+      node_id: "p1:n1",
+    });
+  });
+
+  it("maps room status updates by metadata kind", () => {
+    const delivered = roomEventFromResult({
+      statusUpdate: {
+        contextId: "c1",
+        status: { state: "TASK_STATE_WORKING" },
+        metadata: {
+          [A2A_ROOM_URI]: {
+            kind: "message.delivered",
+            message_id: "m1",
+            node_id: "p1:n1",
+          },
+        },
+      },
+    });
+    expect(delivered?.type).toBe("message.delivered");
+
+    const joined = roomEventFromResult({
+      statusUpdate: {
+        contextId: "c1",
+        status: { state: "TASK_STATE_INPUT_REQUIRED" },
+        metadata: {
+          [A2A_ROOM_URI]: {
+            kind: "room.participant_joined",
+            agent_name: "echo",
+            agent_url: "http://a",
+            reason: "human_mention",
+          },
+        },
+      },
+    });
+    expect(joined?.type).toBe("room.participant_joined");
+    expect(joined?.payload.agent_name).toBe("echo");
+
+    const summary = roomEventFromResult({
+      statusUpdate: {
+        contextId: "c1",
+        status: { state: "TASK_STATE_INPUT_REQUIRED" },
+        metadata: {
+          [A2A_ROOM_URI]: {
+            kind: "room.summary_updated",
+            covers_seq: 5,
+            summary: { topics: ["x"] },
+          },
+        },
+      },
+    });
+    expect(summary?.type).toBe("room.summary_updated");
+    expect(summary?.payload.covers_seq).toBe(5);
+  });
+
+  it("ignores task events and room tasks", () => {
+    expect(
+      roomEventFromResult({
+        statusUpdate: {
+          contextId: "c1",
+          status: { state: "TASK_STATE_WORKING" },
+          metadata: { kind: "node.state_changed", node_id: "n1" },
+        },
+      }),
+    ).toBeNull();
+    expect(roomEventFromResult({ task: { id: "c1" } })).toBeNull();
+  });
+});
+
+describe("sendMessageParams", () => {
+  it("builds message with contextId and room metadata", () => {
+    const params = sendMessageParams({
+      text: "请处理",
+      contextId: "c1",
+      roomMeta: { mentions: ["echo"], quote_id: "m1", interrupt: true },
+    }) as { message: Record<string, unknown> };
+    expect(params.message.contextId).toBe("c1");
+    expect(params.message.role).toBe("ROLE_USER");
+    expect(params.message.parts).toEqual([{ text: "请处理" }]);
+    expect(params.message.metadata).toEqual({
+      [A2A_ROOM_URI]: { mentions: ["echo"], quote_id: "m1", interrupt: true },
+    });
+    expect(String(params.message.messageId)).toMatch(/^web-/);
+  });
+
+  it("omits empty options", () => {
+    const params = sendMessageParams({ text: "hi" }) as {
+      message: Record<string, unknown>;
+    };
+    expect("contextId" in params.message).toBe(false);
+    expect("taskId" in params.message).toBe(false);
+    expect("metadata" in params.message).toBe(false);
   });
 });
