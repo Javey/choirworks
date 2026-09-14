@@ -230,6 +230,8 @@ ChoirWorks 已有内部事件流（自定义 SSE）与南向 A2A 客户端（平
 | `room.summary_updated` | `status_update`（`kind:"room.summary_updated"` + summary 对象，并同步进合成 Task metadata） |
 | `conversation.created` | 不发（建群通过 REST 或首条消息隐式发生） |
 
+> **M12 实现说明**：房间订阅仅转发本表事件；任务/节点事件不进入房间流，房间状态变化在重新订阅时由快照体现。history 阶段 1 全量返回上限 1000 条，分页 TODO。
+
 ### 6.5 订阅与发送
 
 - **订阅**：`SubscribeToTask(conversation_id)` → 先发合成 Task 快照（含 history），再转发 live；房间流**常开**（客户端主动断开）；
@@ -364,3 +366,10 @@ ChoirWorks 已有内部事件流（自定义 SSE）与南向 A2A 客户端（平
 | RequestHandler 接口 | `RequestHandler.on_message_send/on_message_send_stream/on_get_task/on_cancel_task/on_subscribe_to_task/on_list_tasks` |
 | 路由注册 | `create_jsonrpc_routes(request_handler, rpc_url, enable_v0_3_compat=False)`；sim 用例 `src/choirworks/sim/fake_agent.py:233` |
 | 错误类 | `a2a.utils.errors` |
+
+## M12 实施记录
+
+- `room_send_options`：`metadata[room-uri]` 支持 `mentions`/`quote_id`/`interrupt`；未给 metadata 时保持 M11 行为；
+- 发送响应分支：`queued`/`interrupted` 路由返回 `Message`（消息 metadata 含 `task_id`/`queued_for_node_id`），其余产生任务的路由返回 `Task`；
+- 房间订阅首帧为合成 Task 快照，`seen` 取订阅前会话最新事件 seq；快照与回放可能重复一条消息，client 按 `messageId` 去重；
+- `CancelTask` 对 conversation id 返回 `TaskNotFoundError`（房间不是任务）。

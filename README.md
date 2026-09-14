@@ -91,6 +91,7 @@ ChoirWorks 自身是一个标准 A2A v1.0 Server，可被任意 A2A client（包
 - 公共地址由 `a2a.public_url`（env `CHOIRWORKS_A2A__PUBLIC_URL`）配置
 - 映射：hub task = 1 个 A2A Task（`conversation_id` = `contextId`），节点状态/产物经 `metadata` 与 `artifact_update` 流式表达；`input-required` 即干预问题
 - 嵌套：把内层实例的 AgentCard 地址作为 `card_url` 注册为 agent，即可派发任务并把产物回传
+- Room Extension v1：`conversation_id` 即合成 Room Task 的 `id`/`contextId`，`GetTask`/`SubscribeToTask`/`SendMessage` 均可直接操作房间；规范见 `docs/extensions/room-v1.md`
 
 ```bash
 # AgentCard
