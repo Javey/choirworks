@@ -13,7 +13,7 @@ from choirworks.a2a.registry import AgentRegistry
 from choirworks.config import PolicyConfig
 from choirworks.core.conversations import build_conversation_context
 from choirworks.core.dispatcher import InvalidNodeState, NodeDispatcher
-from choirworks.core.llm import LLMClient
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner, PlanNodeDraft
 from choirworks.core.policy import PolicyEngine
 from choirworks.core.room import post_agent_messages, post_message
@@ -60,7 +60,7 @@ class Orchestrator:
         *,
         registry: AgentRegistry | None = None,
         remote: RemoteAgentClient | None = None,
-        llm: LLMClient | None = None,
+        llm: LiteLLMClient | None = None,
         policy_engine: PolicyEngine | None = None,
         max_parallel: int = 4,
         max_node_attempts: int = 2,

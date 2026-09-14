@@ -27,7 +27,7 @@ from choirworks.a2a.executor import ChoirWorksAgentExecutor
 from choirworks.a2a.registry import AgentRegistry
 from choirworks.api import agents as agents_routes
 from choirworks.config import Settings
-from choirworks.core.llm import LiteLLMClient, LLMClient
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner
 from choirworks.core.policy import PolicyEngine
 from choirworks.store.db import Database
@@ -47,7 +47,7 @@ _AGENT_REGISTRY_DDL = (
 
 
 async def create_app(
-    settings: Settings | None = None, llm: LLMClient | None = None
+    settings: Settings | None = None, llm: LiteLLMClient | None = None
 ) -> FastAPI:
     resolved = settings or Settings()
     llm_client = llm or LiteLLMClient(

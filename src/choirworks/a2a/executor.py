@@ -26,7 +26,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.core.llm import LLMClient
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import (
     PlanDraft,
     PlanNodeDraft,
@@ -76,8 +76,6 @@ class PlanState:
                 for dep in node.deps
                 if dep in self.nodes
             ):
-                result.append(node)
-            elif node.status == "ready":
                 result.append(node)
         return result
 
@@ -150,7 +148,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         remote: RemoteAgentClient,
         planner: Planner,
         policy: PolicyEngine,
-        llm: LLMClient,
+        llm: LiteLLMClient,
         *,
         max_parallel: int = 5,
         node_timeout: float = 600.0,
@@ -197,9 +195,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         # Resolve members from mentions
         mentions = self._extract_mentions(text)
-        await self._join_members(event_queue, task_id, context_id, mentions)
-
-        # Resolve members from mentions
         await self._join_members(event_queue, task_id, context_id, mentions)
 
         # Plan
@@ -303,34 +298,35 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
         updater: TaskUpdater,
     ) -> None:
-        max_iterations = 100
-        for _ in range(max_iterations):
+        pending_tasks: set[asyncio.Task] = set()
+
+        for _ in range(100):
             ready = plan.ready_nodes()
-            if not ready:
+            if ready:
+                slots = self._max_parallel - len(pending_tasks)
+                for node in ready[:max(0, slots)]:
+                    node.status = "dispatched"
+                    task = asyncio.create_task(
+                        self._dispatch_node(node, plan, task_id, context_id, event_queue)
+                    )
+                    pending_tasks.add(task)
+                    task.add_done_callback(pending_tasks.discard)
+
+            if not pending_tasks:
                 if plan.all_completed():
                     return
                 if plan.has_failures():
                     await self._handle_failures(plan, task_id, context_id, event_queue)
                     continue
-                # Stalled - check for input_required
                 if any(n.status == "input_required" for n in plan.nodes.values()):
                     return
-                # Nothing ready, nothing failed, not all completed - stalled
                 logger.warning("Schedule loop stalled for task %s", task_id)
                 return
 
-            # Dispatch up to max_parallel
-            slots = self._max_parallel
-            for node in ready[:slots]:
-                asyncio.create_task(
-                    self._dispatch_node(node, plan, task_id, context_id, event_queue)
-                )
+            done, pending_tasks = await asyncio.wait(
+                pending_tasks, return_when=asyncio.FIRST_COMPLETED,
+            )
 
-            # Wait for at least one to complete
-            # (In a full implementation, we'd use asyncio.wait with FIRST_COMPLETED)
-            await asyncio.sleep(0.1)
-
-            # Check for input_required
             if any(n.status == "input_required" for n in plan.nodes.values()):
                 await self._process_interventions(
                     plan, task_id, context_id, event_queue
@@ -344,7 +340,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_id: str,
         event_queue: EventQueue,
     ) -> None:
-        node.status = "ready"
         node.attempt += 1
 
         # Emit dispatch intent

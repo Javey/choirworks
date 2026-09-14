@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.core.llm import LLMClient
+from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
 
 
@@ -113,7 +113,7 @@ Return only JSON matching the required schema. Rules:
 class Planner:
     def __init__(
         self,
-        llm: LLMClient,
+        llm: LiteLLMClient,
         registry: AgentRegistry,
         *,
         max_nodes: int = 20,

@@ -2,11 +2,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.orchestrator import PeerChoice
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
 from choirworks.models.domain import AgentRecord
-from choirworks.sim.llm import SimLLM
+from choirworks.sim.litellm_mock import sim_acompletion
 
 
 def agent(name: str) -> AgentRecord:
@@ -30,9 +31,13 @@ def prompt(request: str) -> str:
     return f"User request:\n{request}\n\nAvailable agents:\n{lines}"
 
 
+def make_client() -> LiteLLMClient:
+    return LiteLLMClient(model="sim", completion_fn=sim_acompletion)
+
+
 async def plan_for(request: str) -> PlanDraft:
-    llm = SimLLM()
-    draft = await llm.structured(system="plan", user=prompt(request), schema=PlanDraft)
+    client = make_client()
+    draft = await client.structured(system="plan", user=prompt(request), schema=PlanDraft)
     validate_plan(draft, AGENTS, 20)
     return draft
 
@@ -64,36 +69,26 @@ async def test_broken_plan_triggers_replan_without_broken_agent():
 
     replan_prompt = prompt("模拟失败并降级替换")
     replan_prompt += "\n\nReason for replanning:\nnode 'n1' failed: boom"
-    llm = SimLLM()
-    replanned = await llm.structured(system="plan", user=replan_prompt, schema=PlanDraft)
+    client = make_client()
+    replanned = await client.structured(system="plan", user=replan_prompt, schema=PlanDraft)
     validate_plan(replanned, AGENTS, 20)
     assert "broken" not in agents_of(replanned)
     assert agents_of(replanned) == ["writer"]
 
 
 async def test_peer_choice_skips_broken_agents():
-    llm = SimLLM()
-    choice = await llm.structured(system="peer", user=prompt("谁来回答？"), schema=PeerChoice)
+    client = make_client()
+    choice = await client.structured(system="peer", user=prompt("谁来回答？"), schema=PeerChoice)
     assert isinstance(choice, PeerChoice)
     assert choice.agent_name in {"researcher", "writer", "critic", "flaky", "analyst"}
     assert choice.instruction
 
 
 async def test_text_returns_nonempty_simulated_answer():
-    llm = SimLLM()
-    answer = await llm.text(system="assist", user="question: who are you?")
+    client = make_client()
+    answer = await client.text(system="assist", user="question: who are you?")
     assert answer.startswith("模拟")
     assert len(answer) > 2
-
-
-async def test_unknown_schema_rejected():
-    llm = SimLLM()
-
-    class Other:
-        pass
-
-    with pytest.raises(ValueError):
-        await llm.structured(system="x", user="y", schema=Other)  # type: ignore[arg-type]
 
 
 async def test_peer_choice_routes_to_researcher_for_writer():
@@ -101,8 +96,8 @@ async def test_peer_choice_routes_to_researcher_for_writer():
         prompt("协作任务")
         + "\n\nWorker node 'writer' asks:\n缺少关键信息：请 A 提供调研结论。"
     )
-    llm = SimLLM()
-    choice = await llm.structured(system="peer", user=prompt_text, schema=PeerChoice)
+    client = make_client()
+    choice = await client.structured(system="peer", user=prompt_text, schema=PeerChoice)
     assert choice.agent_name == "researcher"
     assert "请补充信息" in choice.instruction
     assert "缺少关键信息" in choice.instruction
@@ -113,8 +108,8 @@ async def test_peer_choice_routes_to_analyst_for_researcher():
         prompt("协作任务")
         + "\n\nWorker node 'researcher' asks:\n需要 C 参与确认技术细节。"
     )
-    llm = SimLLM()
-    choice = await llm.structured(system="peer", user=prompt_text, schema=PeerChoice)
+    client = make_client()
+    choice = await client.structured(system="peer", user=prompt_text, schema=PeerChoice)
     assert choice.agent_name == "analyst"
     assert "需要 C 参与" in choice.instruction
 
@@ -124,3 +119,16 @@ async def test_coordination_plan_runs_workers_in_parallel():
     assert agents_of(draft) == ["researcher", "writer"]
     assert draft.nodes[0].deps == []
     assert draft.nodes[1].deps == []
+
+
+async def test_raw_response_has_reasoning_content():
+    """The mock should populate message.content with reasoning text."""
+    client = make_client()
+    draft = await client.structured(
+        system="plan", user=prompt("帮我调研"), schema=PlanDraft,
+    )
+    raw = getattr(draft, "_raw_response", None)
+    assert raw is not None
+    content = raw.choices[0].message.content
+    assert "收到请求" in content
+    assert "计划" in content

@@ -4,9 +4,10 @@ import httpx
 
 from choirworks.api.app import create_app
 from choirworks.config import Settings
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
-from choirworks.sim.llm import SimLLM
+from choirworks.sim.litellm_mock import sim_acompletion
 from tests.support.fakes import FakeLLM
 
 
@@ -45,7 +46,12 @@ async def test_planner_narrative_order(tmp_path, echo_agent):
         store={"db_path": tmp_path / "order-plan.db"},
         scheduler={"retry_backoff_seconds": 0.0, "max_parallel_nodes": 1},
     )
-    app = create_app(settings, llm=FakeLLM(structured_results=[plan]))
+    app = create_app(
+        settings,
+        llm=LiteLLMClient(
+            model="fake", completion_fn=FakeLLM(structured_results=[plan]),
+        ),
+    )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -86,7 +92,10 @@ async def test_peer_assist_narrative_order(tmp_path):
             policies={"overrides": [{"agent_name": "researcher", "policy": "peer_agent"}]},
             scheduler={"retry_backoff_seconds": 0.0},
         )
-        app = create_app(settings, llm=SimLLM())
+        app = create_app(
+            settings,
+            llm=LiteLLMClient(model="sim", completion_fn=sim_acompletion),
+        )
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(

@@ -4,7 +4,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   AlertCircle,
-  Loader2,
 } from "lucide-react";
 
 import { TaskState, taskStateToJSON } from "@a2a-js/sdk";
@@ -49,7 +48,7 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
-  const { view, connection, error, send, setOnTaskCreated } = useConversation(activeId);
+  const { view, error, send, setOnTaskCreated } = useConversation(activeId);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -178,12 +177,6 @@ export default function App() {
                 <span className="font-semibold text-sm text-feishu-text truncate">
                   {conversations.find((c) => c.id === activeId)?.title ?? "工作群"}
                 </span>
-                {connection === "reconnecting" ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-feishu-warn-soft text-[11px] text-feishu-warn border border-feishu-warn/20">
-                    <Loader2 size={10} className="animate-spin" />
-                    重连中…
-                  </span>
-                ) : null}
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {view.members.map((member) => (

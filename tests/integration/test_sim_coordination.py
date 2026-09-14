@@ -5,7 +5,8 @@ import pytest
 
 from choirworks.api.app import create_app
 from choirworks.config import Settings
-from choirworks.sim.llm import SimLLM
+from choirworks.core.llm import LiteLLMClient
+from choirworks.sim.litellm_mock import sim_acompletion
 from choirworks.sim.runner import start_sim_agents
 
 
@@ -23,7 +24,10 @@ async def sim(tmp_path):
         },
         scheduler={"retry_backoff_seconds": 0.0},
     )
-    app = create_app(settings, llm=SimLLM())
+    app = create_app(
+        settings,
+        llm=LiteLLMClient(model="sim", completion_fn=sim_acompletion),
+    )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

@@ -1,4 +1,4 @@
-import { Ban, History, Loader2, PlayCircle } from "lucide-react";
+import { Ban, History, PlayCircle } from "lucide-react";
 
 import type { TaskView } from "../lib/taskView";
 import { buildTimeline } from "../lib/timeline";
@@ -44,12 +44,6 @@ export function Thread({
               className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${STATUS_BADGE[latest.status] ?? STATUS_BADGE.pending}`}
             >
               {statusLabel(latest.status)}
-            </span>
-          ) : null}
-          {latest && latest.connection === "reconnecting" ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-feishu-warn-soft text-[11px] text-feishu-warn border border-feishu-warn/20">
-              <Loader2 size={10} className="animate-spin" />
-              重连中…
             </span>
           ) : null}
         </div>

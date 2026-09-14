@@ -9,8 +9,9 @@ import uvicorn
 
 from choirworks.api.app import create_app
 from choirworks.config import Settings
+from choirworks.core.llm import LiteLLMClient
 from choirworks.sim.fake_agent import FakeAgent, start_fake_agent
-from choirworks.sim.llm import SimLLM
+from choirworks.sim.litellm_mock import sim_acompletion
 
 SIM_AGENTS: list[tuple[str, str]] = [
     ("researcher", "collaborate"),
@@ -77,7 +78,10 @@ async def run(
         _reset_db(db_path)
     agents = await start_sim_agents(chunk_size=chunk_size, chunk_delay=chunk_delay)
     settings = build_settings(host, port, db_path)
-    app = await create_app(settings, llm=SimLLM())
+    app = await create_app(
+        settings,
+        llm=LiteLLMClient(model="sim", completion_fn=sim_acompletion),
+    )
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
