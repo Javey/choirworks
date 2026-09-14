@@ -21,7 +21,13 @@ from google.protobuf import struct_pb2
 from google.protobuf.json_format import ParseDict
 
 from choirworks.core.tasks import TaskSnapshot
-from choirworks.models.domain import Node
+from choirworks.models.domain import (
+    Conversation,
+    Node,
+    RoomMember,
+    RoomMessage,
+    RoomSummary,
+)
 from choirworks.models.enums import EventType, NodeStatus, TaskStatus
 from choirworks.store.event_store import Event
 
@@ -160,6 +166,72 @@ def room_message_to_a2a(message: Any) -> Message:
         role=Role.ROLE_USER if message.role == "user" else Role.ROLE_AGENT,
         parts=[Part(text=message.text)],
         extensions=[A2A_ROOM_URI],
+        metadata=struct_value(metadata),
+    )
+
+
+def room_message_from_event(event: Event) -> RoomMessage:
+    payload = event.payload
+    return RoomMessage(
+        id=payload["message_id"],
+        conversation_id=payload.get("conversation_id") or event.conversation_id or "",
+        seq=payload["seq"],
+        role=payload["role"],
+        sender=payload.get("sender"),
+        text=payload["text"],
+        mentions=payload.get("mentions") or [],
+        quote_id=payload.get("quote_id"),
+        task_id=payload.get("task_id") or event.task_id,
+        node_id=payload.get("node_id"),
+        intervention_id=payload.get("intervention_id"),
+        queued_for_node_id=payload.get("queued_for_node_id"),
+        created_at=event.created_at,
+    )
+
+
+def room_to_task(
+    conversation: Conversation,
+    messages: list[RoomMessage],
+    members: list[RoomMember],
+    summary: RoomSummary | None,
+    *,
+    running: bool,
+) -> Task:
+    summary_payload: dict[str, Any] = {}
+    if summary is not None:
+        summary_payload = {
+            "covers_seq": summary.covers_seq,
+            "updated_at": summary.updated_at.isoformat(),
+            "content": summary.summary,
+        }
+    metadata = {
+        A2A_ROOM_URI: {
+            "kind": "room",
+            "title": conversation.title,
+            "members": [
+                {
+                    "agent_name": member.agent_name,
+                    "agent_url": member.agent_url,
+                    "reason": member.reason,
+                    "joined_at": member.joined_at.isoformat(),
+                }
+                for member in members
+            ],
+            "summary": summary_payload,
+            "message_count": len(messages),
+            "last_seq": messages[-1].seq if messages else 0,
+        }
+    }
+    state = (
+        TaskState.TASK_STATE_WORKING
+        if running
+        else TaskState.TASK_STATE_INPUT_REQUIRED
+    )
+    return Task(
+        id=conversation.id,
+        context_id=conversation.id,
+        status=A2ATaskStatus(state=state),
+        history=[room_message_to_a2a(message) for message in messages],
         metadata=struct_value(metadata),
     )
 
