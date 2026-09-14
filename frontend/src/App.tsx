@@ -7,6 +7,8 @@ import {
   Loader2,
 } from "lucide-react";
 
+import { TaskState, taskStateToJSON } from "@a2a-js/sdk";
+
 import { api } from "./api/client";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
@@ -102,7 +104,7 @@ export default function App() {
     [send, refreshConversations],
   );
 
-  const isRunning = view.state === "TASK_STATE_WORKING";
+  const isRunning = view.state === taskStateToJSON(TaskState.TASK_STATE_WORKING);
 
   const workingBubbles = view.workingBubbles;
   const workingAgents = new Set(workingBubbles.map((b) => b.agentName));

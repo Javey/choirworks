@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Role } from "@a2a-js/sdk";
+
 import { getClient } from "../api/a2a-client";
 import {
   applyStreamEvent,
@@ -87,7 +89,7 @@ export function useConversation(conversationId: string | null) {
       const client = await getClient();
       const message = {
         messageId: crypto.randomUUID(),
-        role: 1,
+        role: Role.ROLE_USER,
         parts: [{
           content: { $case: "text" as const, value: input.text },
           metadata: undefined,

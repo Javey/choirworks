@@ -1,3 +1,4 @@
+import { Role, TaskState, taskStateToJSON } from "@a2a-js/sdk";
 import type { EventDto, RoomMessageDto, RoomMemberDto } from "./types";
 
 export interface ChatMessage {
@@ -51,7 +52,7 @@ export interface ConversationView {
 export const emptyConversation: ConversationView = {
   taskId: "",
   contextId: "",
-  state: "TASK_STATE_SUBMITTED",
+  state: taskStateToJSON(TaskState.TASK_STATE_SUBMITTED),
   messages: [],
   notifications: [],
   members: [],
@@ -62,36 +63,55 @@ export const emptyConversation: ConversationView = {
 
 type ProtoStruct = Record<string, unknown>;
 
+const ROOM_META_KEY = "https://github.com/Javey/choirworks/extensions/room/v1";
+
+function stateName(state: unknown): string {
+  if (typeof state === "number") return taskStateToJSON(state as TaskState);
+  if (typeof state === "string") return state;
+  return taskStateToJSON(TaskState.TASK_STATE_UNSPECIFIED);
+}
+
 function textOfParts(container: ProtoStruct): string {
-  const parts = (container.parts as { text?: string }[] | undefined) ?? [];
-  return parts.map((part) => part.text ?? "").join("\n");
+  const parts = (container.parts as ProtoStruct[] | undefined) ?? [];
+  return parts
+    .map((part) => {
+      const content = part.content as { $case?: string; value?: unknown } | undefined;
+      if (content?.$case === "text") return String(content.value ?? "");
+      return "";
+    })
+    .join("\n");
 }
 
 function metaOf(container: ProtoStruct): ProtoStruct {
   return (container.metadata as ProtoStruct | undefined) ?? {};
 }
 
+function roomMetaOf(container: ProtoStruct): ProtoStruct {
+  const meta = metaOf(container);
+  return (meta[ROOM_META_KEY] as ProtoStruct | undefined) ?? {};
+}
+
 export function conversationFromTask(
   task: ProtoStruct,
   taskId: string,
 ): ConversationView {
-  const state = String(
-    (task.status as ProtoStruct | undefined)?.state ?? "TASK_STATE_SUBMITTED",
+  const state = stateName(
+    (task.status as ProtoStruct | undefined)?.state,
   );
   const history = (task.history as ProtoStruct[] | undefined) ?? [];
   const messages: ChatMessage[] = history.map((msg) => {
     const meta = metaOf(msg);
-    const role = msg.role === "ROLE_USER" ? "user" : "agent";
+    const role = msg.role === Role.ROLE_USER ? "user" : "agent";
     const sender = typeof meta.sender === "string" ? meta.sender : null;
-    const roomMeta = (meta["https://github.com/Javey/choirworks/extensions/room/v1"] as ProtoStruct | undefined) ?? {};
+    const rm = roomMetaOf(msg);
     return {
       id: String(msg.messageId ?? ""),
       role,
       sender,
       text: textOfParts(msg),
-      mentions: Array.isArray(roomMeta.mentions) ? roomMeta.mentions.map(String) : [],
-      quote_id: typeof roomMeta.quote_id === "string" ? roomMeta.quote_id : null,
-      node_id: typeof roomMeta.node_id === "string" ? roomMeta.node_id : null,
+      mentions: Array.isArray(rm.mentions) ? rm.mentions.map(String) : [],
+      quote_id: typeof rm.quote_id === "string" ? rm.quote_id : null,
+      node_id: typeof rm.node_id === "string" ? rm.node_id : null,
       task_id: typeof msg.taskId === "string" ? msg.taskId : null,
       created_at: "",
     };
@@ -137,20 +157,27 @@ export function conversationFromTask(
 
 export function applyStreamEvent(
   view: ConversationView,
-  result: ProtoStruct,
+  event: ProtoStruct,
   seq: number,
 ): ConversationView {
+  const payload = event.payload as { $case?: string; value?: unknown } | undefined;
+  if (!payload?.$case || payload.value === undefined) return view;
+  const result = payload.value as ProtoStruct;
+
   // Task snapshot
-  if (result.task) {
-    return conversationFromTask(result.task as ProtoStruct, view.taskId || String((result.task as ProtoStruct).id ?? ""));
+  if (payload.$case === "task") {
+    return conversationFromTask(
+      result,
+      view.taskId || String(result.id ?? ""),
+    );
   }
 
   // Status update
-  const update = result.statusUpdate as ProtoStruct | undefined;
-  if (update) {
+  if (payload.$case === "statusUpdate") {
+    const update = result;
     const meta = metaOf(update);
     const kind = typeof meta.kind === "string" ? meta.kind : "";
-    const state = String(
+    const state = stateName(
       (update.status as ProtoStruct | undefined)?.state ?? view.state,
     );
     const statusMsg = (update.status as ProtoStruct | undefined)?.message as ProtoStruct | undefined;
@@ -248,9 +275,9 @@ export function applyStreamEvent(
 
     if (kind === "agent.message" && statusMsg) {
       const msgText = textOfParts(statusMsg);
-      const roomMeta = (metaOf(statusMsg)["https://github.com/Javey/choirworks/extensions/room/v1"] as ProtoStruct | undefined) ?? {};
-      const sender = typeof roomMeta.sender === "string" ? roomMeta.sender : null;
-      const nodeId = typeof roomMeta.node_id === "string" ? roomMeta.node_id : null;
+      const rm = roomMetaOf(statusMsg);
+      const sender = typeof rm.sender === "string" ? rm.sender : null;
+      const nodeId = typeof rm.node_id === "string" ? rm.node_id : null;
       const chatMsg: ChatMessage = {
         id: String(statusMsg.messageId ?? `msg-${seq}`),
         role: "agent",
@@ -295,7 +322,7 @@ export function applyStreamEvent(
       const nodeId = String(meta.node_id ?? "");
       return {
         ...view,
-        state: "TASK_STATE_INPUT_REQUIRED",
+        state: taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
         nodes: view.nodes.map((n) =>
           n.id === nodeId ? { ...n, status: "input_required" } : n,
         ),
@@ -308,8 +335,8 @@ export function applyStreamEvent(
   }
 
   // Artifact update
-  const artUpdate = result.artifactUpdate as ProtoStruct | undefined;
-  if (artUpdate) {
+  if (payload.$case === "artifactUpdate") {
+    const artUpdate = result;
     const artifact = (artUpdate.artifact as ProtoStruct | undefined) ?? {};
     const meta = metaOf(artUpdate);
     const nodeId = typeof meta.node_id === "string" ? meta.node_id : null;
@@ -325,8 +352,8 @@ export function applyStreamEvent(
         ...view,
         workingBubbles: existing
           ? view.workingBubbles.map((b) =>
-              b.nodeId === nodeId ? { ...b, text: newText } : b,
-            )
+            b.nodeId === nodeId ? { ...b, text: newText } : b,
+          )
           : [...view.workingBubbles, { nodeId, agentName, text: newText }],
         lastSeq: Math.max(view.lastSeq, seq),
       };
@@ -345,18 +372,17 @@ export function applyStreamEvent(
   }
 
   // Bare message
-  if (result.message) {
-    const msg = result.message as ProtoStruct;
-    const meta = metaOf(msg);
-    const roomMeta = (meta["https://github.com/Javey/choirworks/extensions/room/v1"] as ProtoStruct | undefined) ?? {};
+  if (payload.$case === "message") {
+    const msg = result;
+    const rm = roomMetaOf(msg);
     const chatMsg: ChatMessage = {
       id: String(msg.messageId ?? ""),
-      role: msg.role === "ROLE_USER" ? "user" : "agent",
-      sender: typeof roomMeta.sender === "string" ? roomMeta.sender : null,
+      role: msg.role === Role.ROLE_USER ? "user" : "agent",
+      sender: typeof rm.sender === "string" ? rm.sender : null,
       text: textOfParts(msg),
-      mentions: Array.isArray(roomMeta.mentions) ? roomMeta.mentions.map(String) : [],
-      quote_id: typeof roomMeta.quote_id === "string" ? roomMeta.quote_id : null,
-      node_id: typeof roomMeta.node_id === "string" ? roomMeta.node_id : null,
+      mentions: Array.isArray(rm.mentions) ? rm.mentions.map(String) : [],
+      quote_id: typeof rm.quote_id === "string" ? rm.quote_id : null,
+      node_id: typeof rm.node_id === "string" ? rm.node_id : null,
       task_id: typeof msg.taskId === "string" ? msg.taskId : null,
       created_at: new Date().toISOString(),
     };

@@ -22,62 +22,59 @@ function setupFetch() {
       });
 
     if (url === "/v1/conversations" && method === "GET") return json([]);
-    if (url === "/v1/a2a" && method === "POST") {
-      const body = JSON.parse(String(init?.body ?? "{}"));
-      if (body.method === "SendMessage") {
-        const text = body.params?.message?.parts?.[0]?.text ?? "hello";
-        return json({
-          jsonrpc: "2.0",
-          id: body.id,
-          result: {
-            task: {
-              id: "task-1",
-              contextId: "task-1",
-              status: { state: "TASK_STATE_COMPLETED" },
-              history: [
-                {
-                  messageId: "m1",
-                  role: "ROLE_USER",
-                  parts: [{ text }],
-                  metadata: {
-                    "https://github.com/Javey/choirworks/extensions/room/v1": {
-                      sender: "CEO",
-                      role: "user",
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        });
-      }
-      if (body.method === "GetTask") {
-        return json({
-          jsonrpc: "2.0",
-          id: body.id,
-          result: {
-            task: {
-              id: body.params?.id ?? "task-1",
-              contextId: body.params?.id ?? "task-1",
-              status: { state: "TASK_STATE_COMPLETED" },
-              history: [
-                {
-                  messageId: "m1",
-                  role: "ROLE_USER",
-                  parts: [{ text: "hello" }],
-                  metadata: {
-                    "https://github.com/Javey/choirworks/extensions/room/v1": {
-                      sender: "CEO",
-                      role: "user",
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        });
-      }
+
+    // Agent card
+    if (url.endsWith("/.well-known/agent-card.json") && method === "GET") {
+      return json({
+        name: "ChoirWorks",
+        version: "0.1.0",
+        supportedInterfaces: [
+          { protocolBinding: "HTTP+JSON", url: "http://localhost/v1", protocolVersion: "1.0" },
+        ],
+      });
     }
+
+    // REST: POST /v1/message:send
+    if (url.endsWith("/v1/message:send") && method === "POST") {
+      return json({
+        id: "task-1",
+        contextId: "task-1",
+        status: { state: 3 },
+        history: [
+          {
+            messageId: "m1",
+            role: 1,
+            parts: [{ content: { $case: "text", value: "hello" } }],
+            metadata: {
+              sender: "CEO",
+            },
+          },
+        ],
+        artifacts: [],
+      });
+    }
+
+    // REST: GET /v1/tasks/{id}
+    if (url.includes("/v1/tasks/") && method === "GET") {
+      const id = url.split("/v1/tasks/")[1].split("?")[0];
+      return json({
+        id,
+        contextId: id,
+        status: { state: 3 },
+        history: [
+          {
+            messageId: "m1",
+            role: 1,
+            parts: [{ content: { $case: "text", value: "hello" } }],
+            metadata: {
+              sender: "CEO",
+            },
+          },
+        ],
+        artifacts: [],
+      });
+    }
+
     return json({ detail: `unhandled ${method} ${url}` }, 500);
   });
   vi.stubGlobal("fetch", fetchMock);
