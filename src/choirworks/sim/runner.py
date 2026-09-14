@@ -77,7 +77,7 @@ async def run(
         _reset_db(db_path)
     agents = await start_sim_agents(chunk_size=chunk_size, chunk_delay=chunk_delay)
     settings = build_settings(host, port, db_path)
-    app = create_app(settings, llm=SimLLM())
+    app = await create_app(settings, llm=SimLLM())
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
@@ -119,7 +119,7 @@ def main() -> None:
         description="离线模拟运行 ChoirWorks（假 Agent + 确定性规划器，无需 API Key）",
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=8567)
     parser.add_argument("--db", default="data/sim.db", help="模拟数据库路径")
     parser.add_argument("--fresh", action="store_true", help="启动前清空模拟数据库")
     parser.add_argument(

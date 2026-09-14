@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CornerDownLeft } from "lucide-react";
 
 export function Composer({
   disabled,
@@ -13,15 +14,16 @@ export function Composer({
 
   const submit = () => {
     const value = text.trim();
-    if (!value || disabled) return;
-    void onSend(value);
-    setText("");
+    if (value || disabled) {
+      void onSend(value);
+    }
+    if (!disabled) setText("");
   };
 
   return (
-    <div className="composer">
+    <div className="flex gap-2.5 items-end px-6 py-3 bg-white border-t border-feishu-border flex-shrink-0">
       <textarea
-        className="composer-input"
+        className="flex-1 resize-none border border-feishu-border rounded-xl px-3.5 py-2.5 text-sm font-sans outline-none focus:border-feishu-primary focus:ring-2 focus:ring-feishu-primary/10 transition-all bg-feishu-bg/50 placeholder:text-feishu-muted"
         rows={3}
         placeholder={disabled ? hint : "输入消息，Enter 发送，Shift+Enter 换行"}
         value={text}
@@ -36,11 +38,12 @@ export function Composer({
       />
       <button
         type="button"
-        className="button primary"
         disabled={disabled || !text.trim()}
         onClick={submit}
+        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-feishu-primary text-white text-[13px] font-medium hover:bg-feishu-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         发送
+        <CornerDownLeft size={14} />
       </button>
     </div>
   );

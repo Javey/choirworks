@@ -6,7 +6,7 @@ from choirworks.config import Settings, load_settings
 def test_defaults():
     settings = Settings()
     assert settings.server.host == "127.0.0.1"
-    assert settings.server.port == 8080
+    assert settings.server.port == 8567
     assert settings.scheduler.node_timeout_seconds == 600.0
     assert settings.store.db_path == Path("./data/choirworks.db")
 

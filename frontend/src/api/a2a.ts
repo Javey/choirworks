@@ -7,6 +7,10 @@ import type {
 } from "../lib/types";
 
 export const A2A_URL = "/v1/a2a";
+
+function a2aUrl(method: string): string {
+  return `${A2A_URL}?method=${method}`;
+}
 export const A2A_ROOM_URI =
   "https://github.com/Javey/choirworks/extensions/room/v1";
 
@@ -67,7 +71,12 @@ export async function postJson(
   url: string,
   body: unknown,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(url, {
+  const method =
+    typeof body === "object" && body !== null && "method" in body
+      ? String((body as { method: unknown }).method)
+      : "";
+  const target = method ? a2aUrl(method) : url;
+  const response = await fetch(target, {
     method: "POST",
     headers: requestHeaders(),
     body: JSON.stringify(body),
@@ -90,7 +99,12 @@ export async function* postSse(
   body: unknown,
   signal?: AbortSignal,
 ): AsyncGenerator<JsonRpcResponse> {
-  const response = await fetch(url, {
+  const method =
+    typeof body === "object" && body !== null && "method" in body
+      ? String((body as { method: unknown }).method)
+      : "";
+  const target = method ? a2aUrl(method) : url;
+  const response = await fetch(target, {
     method: "POST",
     headers: { ...requestHeaders(), accept: "text/event-stream" },
     body: JSON.stringify(body),

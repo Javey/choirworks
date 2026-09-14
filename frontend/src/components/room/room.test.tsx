@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { emptyRoom } from "../../lib/roomView";
+import { emptyConversation } from "../../lib/conversationView";
 import type { RoomMemberDto, RoomMessageDto } from "../../lib/types";
 import { RoomComposer } from "./RoomComposer";
 import { RoomMessage } from "./RoomMessage";
@@ -114,7 +114,7 @@ describe("RoomThread", () => {
   it("renders persisted messages and transient working bubbles", () => {
     render(
       <RoomThread
-        view={{ ...emptyRoom, messages: [message()], members }}
+        view={{ ...emptyConversation, messages: [message()], members }}
         workingBubbles={[
           { nodeId: "p1:n1", agentName: "researcher", text: "正在生成" },
         ]}

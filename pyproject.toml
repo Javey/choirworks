@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "ChoirWorks — 多 Agent 协作工作群（A2A 编排平台 MVP）"
 requires-python = ">=3.12"
 dependencies = [
-    "a2a-sdk[http-server]>=1.1,<2",
+    "a2a-sdk[http-server,sqlite]>=1.1,<2",
     "aiosqlite>=0.20",
     "fastapi>=0.115",
     "httpx>=0.28",

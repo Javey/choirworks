@@ -114,12 +114,11 @@ async def test_get_room_task_maps_history_members(hub_room):
     assert room.status.state is TaskState.TASK_STATE_INPUT_REQUIRED
     assert [message.parts[0].text for message in room.history] == [
         "大家早上好",
-        "已将 @echo 加入群聊",
     ]
     fields = room.metadata.fields[A2A_ROOM_URI].struct_value.fields
     assert fields["kind"].string_value == "room"
     assert fields["title"].string_value == "测试群"
-    assert fields["message_count"].number_value == 2
+    assert fields["message_count"].number_value == 1
     member = fields["members"].list_value.values[0].struct_value.fields
     assert member["agent_name"].string_value == "echo"
 

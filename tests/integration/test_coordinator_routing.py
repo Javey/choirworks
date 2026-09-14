@@ -97,12 +97,6 @@ async def test_multiple_mentions_join_members_and_announce(api):
 
     timeline = (await client.get(f"/v1/conversations/{conversation_id}/messages")).json()
     assert {member["agent_name"] for member in timeline["members"]} == {"echo", "writer"}
-    join_notes = [
-        message["text"]
-        for message in timeline["messages"]
-        if message["role"] == "assistant" and "加入群聊" in message["text"]
-    ]
-    assert len(join_notes) == 2
 
 
 async def test_unknown_mention_rejected(api):

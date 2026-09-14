@@ -8,7 +8,7 @@ from a2a.types import (
     AgentSkill,
 )
 
-from choirworks.a2a.mapping import A2A_ROOM_URI
+A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
 _ROOM_DESCRIPTION = (
     "Conversations as long-lived A2A tasks; room messages as A2A Messages"

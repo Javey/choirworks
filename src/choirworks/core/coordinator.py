@@ -80,12 +80,6 @@ class RoomCoordinator:
                 },
                 conversation_id=conversation_id,
             )
-            await post_assistant_message(
-                self._db,
-                self._events,
-                conversation_id=conversation_id,
-                text=f"已将 @{name} 加入群聊",
-            )
             members.add(name)
 
     async def create_conversation(self, title: str | None = None) -> str:

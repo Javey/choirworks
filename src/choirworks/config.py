@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8567
     frontend_dir: Path = Path("frontend/dist")
 
 
@@ -52,7 +52,7 @@ class RecoveryConfig(BaseModel):
 
 
 class A2AConfig(BaseModel):
-    public_url: str = "http://127.0.0.1:8080"
+    public_url: str = "http://127.0.0.1:8567"
 
 
 class Settings(BaseSettings):

@@ -1,6 +1,6 @@
 server:
   host: 127.0.0.1
-  port: 8080
+  port: 8567
 
 llm:
   planner_model: openai/gpt-4.1
@@ -34,4 +34,4 @@ store:
   db_path: ./data/choirworks.db
 
 a2a:
-  public_url: http://127.0.0.1:8080
+  public_url: http://127.0.0.1:8567

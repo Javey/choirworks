@@ -67,13 +67,14 @@ async def test_planner_narrative_order(tmp_path, echo_agent):
 
             user = index_of(texts, "帮我调研并写报告")
             plan_index = index_of(texts, "任务已拆解")
-            join_echo = index_of(texts, "已将 @echo 加入群聊")
-            join_writer = index_of(texts, "已将 @writer 加入群聊")
             dispatch_echo = index_of(texts, "已派发 @echo")
             dispatch_writer = index_of(texts, "已派发 @writer")
-            assert user < plan_index < join_echo < join_writer
-            assert join_echo < dispatch_echo
-            assert join_writer < dispatch_writer
+            assert user < plan_index < dispatch_echo
+            assert plan_index < dispatch_writer
+
+            members = {member["agent_name"] for member in timeline["members"]}
+            assert "echo" in members
+            assert "writer" in members
 
 
 async def test_peer_assist_narrative_order(tmp_path):
@@ -114,9 +115,11 @@ async def test_peer_assist_narrative_order(tmp_path):
 
                 request = index_of(texts, "需要 C 参与确认技术细节")
                 decision = index_of(texts, "请求 @analyst 协助")
-                joined = index_of(texts, "已将 @analyst 加入群聊")
                 dispatched = index_of(texts, "已派发 @analyst")
-                assert request < decision < joined < dispatched
+                assert request < decision < dispatched
+
+                members = {member["agent_name"] for member in timeline["members"]}
+                assert "analyst" in members
     finally:
         await researcher.stop()
         await analyst.stop()

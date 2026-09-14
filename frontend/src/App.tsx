@@ -1,22 +1,42 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  X,
+  PanelRightClose,
+  PanelRightOpen,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
 
-import { sendRoomMessage } from "./api/a2a";
 import { api } from "./api/client";
 import { Composer } from "./components/Composer";
-import { RollbackDialog } from "./components/RollbackDialog";
 import { Sidebar } from "./components/Sidebar";
-import { Thread } from "./components/Thread";
-import { RoomComposer, type RoomSendInput } from "./components/room/RoomComposer";
-import { RoomThread, type WorkingBubble } from "./components/room/RoomThread";
-import { useConversation } from "./hooks/useConversation";
-import { useRoom } from "./hooks/useRoom";
-import type { ConversationSummaryDto, RoomMessageDto, TaskStatus } from "./lib/types";
-
-const TERMINAL: TaskStatus[] = ["completed", "failed", "canceled"];
-const WORKING_NODE_STATUSES = ["ready", "dispatched", "working"];
+import { RoomThread } from "./components/room/RoomThread";
+import { RoomComposer } from "./components/room/RoomComposer";
+import { useConversation, type ConversationSendInput } from "./hooks/useConversation";
+import type { ConversationSummaryDto } from "./lib/types";
+import type { ChatMessage } from "./lib/conversationView";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "请求失败";
+}
+
+function chatMessageToRoomMessage(msg: ChatMessage) {
+  return {
+    id: msg.id,
+    conversation_id: "",
+    seq: 0,
+    role: msg.role,
+    sender: msg.sender,
+    text: msg.text,
+    mentions: msg.mentions,
+    quote_id: msg.quote_id,
+    task_id: msg.task_id,
+    node_id: msg.node_id,
+    intervention_id: null,
+    queued_for_node_id: null,
+    delivered_at: null,
+    created_at: msg.created_at,
+  };
 }
 
 export default function App() {
@@ -24,13 +44,10 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("c"),
   );
-  const { views, error, load, refreshTask } = useConversation(activeId);
-  const room = useRoom(activeId);
   const [banner, setBanner] = useState<string | null>(null);
-  const [rollbackFor, setRollbackFor] = useState<string | null>(null);
-  const [replyTo, setReplyTo] = useState<RoomMessageDto | null>(null);
-  const [interrupt, setInterrupt] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+
+  const { view, connection, error, send, setOnTaskCreated } = useConversation(activeId);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -56,212 +73,205 @@ export default function App() {
     setActiveId(id);
   }, []);
 
-  const send = useCallback(
+  const handleSend = useCallback(
     async (text: string) => {
       setBanner(null);
+      setOnTaskCreated((id) => navigate(id));
       try {
-        const created = await api.createConversation(text.slice(0, 40));
-        navigate(created.conversation_id);
-        await sendRoomMessage(created.conversation_id, { text });
+        await send({ text });
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));
+      } finally {
+        setOnTaskCreated(null);
       }
     },
-    [navigate, refreshConversations],
+    [send, navigate, refreshConversations, setOnTaskCreated],
   );
 
-  const sendRoom = useCallback(
-    async (input: RoomSendInput) => {
+  const handleRoomSend = useCallback(
+    async (input: ConversationSendInput) => {
       setBanner(null);
       try {
-        await room.send(input);
-        setReplyTo(null);
-        setInterrupt(false);
+        await send(input);
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));
       }
     },
-    [room, refreshConversations],
+    [send, refreshConversations],
   );
 
-  const answer = useCallback(
-    async (taskId: string, interventionId: string, text: string) => {
-      try {
-        await api.answerIntervention(taskId, interventionId, text);
-      } catch (exc) {
-        setBanner(messageOf(exc));
-      }
-    },
-    [],
-  );
+  const isRunning = view.state === "TASK_STATE_WORKING";
 
-  const retry = useCallback(
-    (taskId: string, nodeId: string) => {
-      void api
-        .retryNode(taskId, nodeId)
-        .then(() => refreshTask(taskId))
-        .catch((exc: unknown) => setBanner(messageOf(exc)));
-    },
-    [refreshTask],
-  );
+  const workingBubbles = view.workingBubbles;
+  const workingAgents = new Set(workingBubbles.map((b) => b.agentName));
 
-  const cancel = useCallback(
-    (taskId: string) => {
-      if (!window.confirm("确认取消该任务？")) return;
-      void api
-        .cancelTask(taskId)
-        .then(() => refreshTask(taskId))
-        .catch((exc: unknown) => setBanner(messageOf(exc)));
-    },
-    [refreshTask],
-  );
-
-  const workingBubbles = useMemo<WorkingBubble[]>(() => {
-    const bubbles: WorkingBubble[] = [];
-    for (const view of views) {
-      if (TERMINAL.includes(view.status)) continue;
-      for (const node of view.nodes) {
-        if (WORKING_NODE_STATUSES.includes(node.status)) {
-          bubbles.push({
-            nodeId: node.id,
-            agentName: node.agentName ?? node.name,
-            text: node.outputText ?? "",
-          });
-        }
-      }
-    }
-    return bubbles;
-  }, [views]);
-
-  const workingAgents = useMemo(
-    () => new Set(workingBubbles.map((bubble) => bubble.agentName)),
-    [workingBubbles],
-  );
-
-  const latest = views.at(-1);
-  const running = Boolean(latest && !TERMINAL.includes(latest.status));
-  const activeConversation = conversations.find((item) => item.id === activeId);
+  // Convert chat messages + notifications into a unified timeline
+  const timelineMessages = [
+    ...view.messages.map(chatMessageToRoomMessage),
+    ...view.notifications.map((n) => ({
+      id: n.id,
+      conversation_id: "",
+      seq: 0,
+      role: "system" as const,
+      sender: n.agent_name ?? null,
+      text: n.text,
+      mentions: [] as string[],
+      quote_id: null,
+      task_id: null,
+      node_id: n.node_id ?? null,
+      intervention_id: null,
+      queued_for_node_id: null,
+      delivered_at: null,
+      created_at: n.created_at,
+    })),
+  ].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
 
   return (
-    <div className="app">
+    <div className="flex h-screen overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeId}
         onSelect={(id) => navigate(id)}
         onNew={() => navigate(null)}
       />
-      <div className="content">
+
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {banner ? (
-          <div className="banner">
-            <span>{banner}</span>
-            <button type="button" className="button small" onClick={() => setBanner(null)}>
-              关闭
+          <div className="flex items-center justify-between gap-3 mx-6 mt-3 px-4 py-2.5 rounded-lg bg-feishu-danger-soft border border-feishu-danger/20 text-feishu-danger text-sm">
+            <span className="flex items-center gap-2">
+              <AlertCircle size={16} />
+              {banner}
+            </span>
+            <button
+              type="button"
+              onClick={() => setBanner(null)}
+              className="flex items-center justify-center w-5 h-5 rounded hover:bg-feishu-danger/10 transition-colors"
+            >
+              <X size={14} />
             </button>
           </div>
         ) : null}
         {error ? (
-          <div className="banner">
-            <span>{error}</span>
-            <button type="button" className="button small" onClick={() => void load()}>
+          <div className="flex items-center justify-between gap-3 mx-6 mt-3 px-4 py-2.5 rounded-lg bg-feishu-danger-soft border border-feishu-danger/20 text-feishu-danger text-sm">
+            <span className="flex items-center gap-2">
+              <AlertCircle size={16} />
+              {error}
+            </span>
+            <button
+              type="button"
+              onClick={() => void useConversation}
+              className="px-2.5 py-1 rounded text-xs font-medium hover:bg-feishu-danger/10 transition-colors"
+            >
               重试
             </button>
           </div>
         ) : null}
+
         {activeId ? (
           <>
-            <header className="room-head">
-              <div className="room-head-title">
-                <span>{activeConversation?.title ?? "工作群"}</span>
-                {(room.error ?? room.loading) ? (
-                  <span className="badge warn">
-                    {room.error ? "消息加载失败" : "加载中…"}
+            <header className="flex items-center justify-between gap-3 px-5 h-14 bg-white border-b border-feishu-border flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-semibold text-sm text-feishu-text truncate">
+                  {conversations.find((c) => c.id === activeId)?.title ?? "工作群"}
+                </span>
+                {connection === "reconnecting" ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-feishu-warn-soft text-[11px] text-feishu-warn border border-feishu-warn/20">
+                    <Loader2 size={10} className="animate-spin" />
+                    重连中…
                   </span>
                 ) : null}
               </div>
-              <div className="member-chips">
-                {room.view.members.map((member) => (
-                  <span key={member.agent_name} className="badge">
-                    {workingAgents.has(member.agent_name) ? "● " : ""}@
-                    {member.agent_name}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {view.members.map((member) => (
+                  <span
+                    key={member.agent_name}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-feishu-bg border border-feishu-border text-[11px] text-feishu-text-secondary"
+                  >
+                    {workingAgents.has(member.agent_name) ? (
+                      <span className="w-1.5 h-1.5 rounded-full bg-feishu-success animate-pulse" />
+                    ) : null}
+                    @{member.agent_name}
                   </span>
                 ))}
               </div>
               <button
                 type="button"
-                className="button small"
                 onClick={() => setPanelOpen((value) => !value)}
+                className="flex items-center justify-center w-8 h-8 rounded-lg text-feishu-muted hover:bg-feishu-bg hover:text-feishu-text transition-colors"
+                title={panelOpen ? "收起详情" : "任务详情"}
               >
-                {panelOpen ? "收起详情" : "任务详情"}
+                {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
               </button>
             </header>
-            <div className="room-body">
-              <div className="content">
-                <RoomThread
-                  view={room.view}
-                  workingBubbles={workingBubbles}
-                  onQuote={(message) => {
-                    setReplyTo(message);
-                    setInterrupt(false);
-                  }}
-                  onInterrupt={(message) => {
-                    setReplyTo(message);
-                    setInterrupt(true);
-                  }}
-                />
-                <RoomComposer
-                  members={room.view.members}
-                  replyTo={replyTo}
-                  interrupt={interrupt}
-                  onToggleInterrupt={setInterrupt}
-                  onCancelReply={() => {
-                    setReplyTo(null);
-                    setInterrupt(false);
-                  }}
-                  onSend={sendRoom}
-                />
-              </div>
-              {panelOpen ? (
-                <aside className="task-panel">
-                  <Thread
-                    views={views}
-                    onAnswer={answer}
-                    onRetry={retry}
-                    onCancel={cancel}
-                    onRollback={setRollbackFor}
-                  />
-                </aside>
-              ) : null}
+
+            <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+              <RoomThread
+                view={{
+                  messages: timelineMessages,
+                  members: view.members,
+                  summary: null,
+                  lastSeq: view.lastSeq,
+                }}
+                workingBubbles={workingBubbles}
+                onQuote={() => {}}
+                onInterrupt={() => {}}
+              />
+              <RoomComposer
+                members={view.members}
+                replyTo={null}
+                interrupt={false}
+                onToggleInterrupt={() => {}}
+                onCancelReply={() => {}}
+                onSend={handleRoomSend}
+              />
             </div>
+
+            {panelOpen ? (
+              <aside className="w-[400px] min-w-[360px] min-h-0 border-l border-feishu-border bg-white flex flex-col overflow-hidden p-4">
+                <h3 className="font-semibold text-sm mb-3">任务详情</h3>
+                <div className="flex-1 overflow-y-auto">
+                  <div className="space-y-2">
+                    <div className="text-xs text-feishu-muted">状态: {view.state}</div>
+                    {view.nodes.map((node) => (
+                      <div key={node.id} className="p-2 rounded-lg border border-feishu-border text-xs">
+                        <div className="font-medium">{node.name}</div>
+                        <div className="text-feishu-muted">@{node.agent_name} · {node.status}</div>
+                        {node.output ? (
+                          <div className="mt-1 text-feishu-text-secondary truncate">{node.output.slice(0, 80)}</div>
+                        ) : null}
+                        {node.error ? (
+                          <div className="mt-1 text-feishu-danger">{node.error}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </aside>
+            ) : null}
           </>
         ) : (
           <>
-            <Thread
-              views={views}
-              onAnswer={answer}
-              onRetry={retry}
-              onCancel={cancel}
-              onRollback={setRollbackFor}
-            />
+            <div className="flex-1 flex flex-col items-center justify-center py-20 text-center">
+              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-feishu-primary-soft mb-4">
+                <PanelRightOpen size={28} className="text-feishu-primary" />
+              </div>
+              <h2 className="text-lg font-bold text-feishu-text mb-2">
+                开始协作
+              </h2>
+              <p className="text-sm text-feishu-muted max-w-xs leading-relaxed mb-4">
+                描述你的目标，平台会拆解任务并把 Agent 拉进群里。
+              </p>
+            </div>
             <Composer
-              disabled={running}
-              hint={running ? "任务执行中…" : ""}
-              onSend={send}
+              disabled={isRunning}
+              hint={isRunning ? "任务执行中…" : ""}
+              onSend={handleSend}
             />
           </>
         )}
       </div>
-      {rollbackFor ? (
-        <RollbackDialog
-          taskId={rollbackFor}
-          onClose={() => setRollbackFor(null)}
-          onDone={() => {
-            void load();
-            void room.load();
-          }}
-        />
-      ) : null}
     </div>
   );
 }

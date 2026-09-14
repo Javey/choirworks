@@ -1,124 +1,148 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { subscribeTask } from "../api/a2a";
-import { api } from "../api/client";
 import {
-  applyEvent,
-  fromSnapshot,
-  isTerminal,
-  mergeSnapshot,
-  withConnection,
-  type TaskView,
-} from "../lib/taskView";
-import type { TaskStatus } from "../lib/types";
+  A2A_URL,
+  rpcRequest,
+  postJson,
+  postSse,
+  sendMessageParams,
+  type ConnectionState,
+} from "../api/a2a";
+import {
+  applyStreamEvent,
+  conversationFromTask,
+  emptyConversation,
+  type ConversationView,
+} from "../lib/conversationView";
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : "请求失败";
+type ProtoStruct = Record<string, unknown>;
+
+export interface ConversationSendInput {
+  text: string;
+  mentions?: string[];
+  quote_id?: string;
+  interrupt?: boolean;
 }
 
 export function useConversation(conversationId: string | null) {
-  const [views, setViews] = useState<TaskView[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<ConversationView>(emptyConversation);
+  const [connection, setConnection] = useState<ConnectionState>("closed");
   const [error, setError] = useState<string | null>(null);
-  const streams = useRef(new Map<string, () => void>());
-  const observed = useRef(new Map<string, TaskStatus>());
-  const version = useRef(0);
+  const seqRef = useRef(0);
+  const navigateRef = useRef<((id: string) => void) | null>(null);
 
   const load = useCallback(async () => {
-    const current = ++version.current;
     if (!conversationId) {
-      setViews([]);
+      setView(emptyConversation);
       return;
     }
-    setLoading(true);
-    setError(null);
     try {
-      const detail = await api.getConversation(conversationId);
-      if (current === version.current) setViews(detail.tasks.map(fromSnapshot));
+      const result = await postJson(
+        A2A_URL,
+        rpcRequest("GetTask", { id: conversationId }),
+      );
+      const task = (result as ProtoStruct).id ? result : (result as ProtoStruct).task;
+      if (task && (task as ProtoStruct).id) {
+        setView(conversationFromTask(task as ProtoStruct, conversationId));
+      }
     } catch (exc) {
-      if (current === version.current) setError(messageOf(exc));
-    } finally {
-      if (current === version.current) setLoading(false);
+      setError(exc instanceof Error ? exc.message : "加载失败");
     }
   }, [conversationId]);
 
   useEffect(() => {
+    setView(emptyConversation);
+    setError(null);
+    if (!conversationId) return;
     void load();
-  }, [load]);
+  }, [conversationId, load]);
 
   useEffect(() => {
-    const activeStreams = streams.current;
+    if (!conversationId) return;
+    let stopped = false;
+    let attempt = 0;
+
+    const run = async () => {
+      while (!stopped) {
+        try {
+          let received = false;
+          for await (const response of postSse(
+            A2A_URL,
+            rpcRequest("SubscribeToTask", { id: conversationId }),
+          )) {
+            if (stopped) break;
+            if (response.error) {
+              throw new Error(response.error.message ?? "订阅失败");
+            }
+            if (!received) {
+              received = true;
+              attempt = 0;
+              setConnection("live");
+            }
+            seqRef.current += 1;
+            setView((prev) =>
+              applyStreamEvent(prev, response.result ?? {}, seqRef.current),
+            );
+          }
+          if (stopped) break;
+          throw new Error("流已断开");
+        } catch {
+          if (stopped) break;
+          setConnection("reconnecting");
+          await new Promise((r) => setTimeout(r, Math.min(1000 * (attempt + 1), 5000)));
+          attempt += 1;
+        }
+      }
+    };
+    void run();
     return () => {
-      for (const close of activeStreams.values()) close();
-      activeStreams.clear();
-      observed.current.clear();
+      stopped = true;
+      setConnection("closed");
     };
   }, [conversationId]);
 
-  useEffect(() => {
-    for (const view of views) {
-      const terminal = isTerminal(view.status);
-      if (!terminal && !streams.current.has(view.id)) {
-        const close = subscribeTask(
-          view.id,
-          {
-            onEvent: (event) =>
-              setViews((prev) =>
-                prev.map((item) =>
-                  item.id === view.id
-                    ? applyEvent(item, {
-                        ...event,
-                        seq: Math.max(item.lastSeq + 1, event.seq),
-                      })
-                    : item,
-                ),
-              ),
-            onState: (state) =>
-              setViews((prev) =>
-                prev.map((item) =>
-                  item.id === view.id ? withConnection(item, state) : item,
-                ),
-              ),
-          },
-          { baseSeq: view.lastSeq },
+  const send = useCallback(
+    async (input: ConversationSendInput) => {
+      if (conversationId) {
+        // Existing conversation: non-streaming SendMessage, SubscribeToTask delivers events
+        await postJson(
+          A2A_URL,
+          rpcRequest(
+            "SendMessage",
+            sendMessageParams({
+              text: input.text,
+              contextId: conversationId,
+              taskId: conversationId,
+            }),
+          ),
         );
-        streams.current.set(view.id, close);
+        return;
       }
-      if (terminal) {
-        const close = streams.current.get(view.id);
-        if (close) {
-          close();
-          streams.current.delete(view.id);
+      // New conversation: stream all events, navigate on first Task
+      const request = rpcRequest(
+        "SendStreamingMessage",
+        sendMessageParams({ text: input.text }),
+      );
+      for await (const response of postSse(A2A_URL, request)) {
+        if (response.error) {
+          throw new Error(response.error.message ?? "发送失败");
         }
-        if (observed.current.get(view.id) !== view.status) {
-          observed.current.set(view.id, view.status);
-          void api
-            .getTask(view.id)
-            .then((snapshot) =>
-              setViews((prev) =>
-                prev.map((item) =>
-                  item.id === view.id ? mergeSnapshot(item, snapshot) : item,
-                ),
-              ),
-            )
-            .catch(() => undefined);
+        const result = response.result ?? {};
+        const task = (result as ProtoStruct).task as ProtoStruct | undefined;
+        if (task && task.id && navigateRef.current) {
+          navigateRef.current(String(task.id));
+          navigateRef.current = null;
         }
-      } else {
-        observed.current.set(view.id, view.status);
+        seqRef.current += 1;
+        setView((prev) => applyStreamEvent(prev, result, seqRef.current));
       }
-    }
-  }, [views]);
+    },
+    [conversationId],
+  );
 
-  const appendTask = useCallback((view: TaskView) => {
-    setViews((prev) => [...prev, view]);
+  const setOnTaskCreated = useCallback((fn: ((id: string) => void) | null) => {
+    navigateRef.current = fn;
   }, []);
 
-  const refreshTask = useCallback(async (taskId: string) => {
-    const snapshot = await api.getTask(taskId);
-    setViews((prev) =>
-      prev.map((item) => (item.id === taskId ? mergeSnapshot(item, snapshot) : item)),
-    );
-  }, []);
-
-  return { views, loading, error, load, appendTask, refreshTask };
+  return { view, connection, error, load, send, setOnTaskCreated };
 }
