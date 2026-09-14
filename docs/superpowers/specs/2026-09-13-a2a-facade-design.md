@@ -373,3 +373,11 @@ ChoirWorks 已有内部事件流（自定义 SSE）与南向 A2A 客户端（平
 - 发送响应分支：`queued`/`interrupted` 路由返回 `Message`（消息 metadata 含 `task_id`/`queued_for_node_id`），其余产生任务的路由返回 `Task`；
 - 房间订阅首帧为合成 Task 快照，`seen` 取订阅前会话最新事件 seq；快照与回放可能重复一条消息，client 按 `messageId` 去重；
 - `CancelTask` 对 conversation id 返回 `TaskNotFoundError`（房间不是任务）。
+
+## M13 实施记录
+
+- 所有 A2A 请求带 `A2A-Version: 1.0` 头（实测缺省时服务端按 0.3 拒绝，`-32009`）；
+- `postSse` 同时兼容：SSE 帧（`data:` 多行拼接、忽略注释、CRLF、跨 chunk）、非 SSE 的 JSON-RPC JSON 响应（版本/参数错误）；
+- 任务事件适配：`statusUpdate.metadata.kind` 直接作为内部事件名（payload snake_case 原样透传）；无 kind 时按 `status.state` 映射终态；`artifactUpdate` 的 `plan.created/plan.extended` 取 parts[].data 作 dag，节点产物用 artifactId 前缀或 metadata.node_id，`lastChunk` 空帧忽略；
+- 任务流无 event seq：适配层按订阅起点自增，hook 端以 `max(lastSeq+1, seq)` 兜底，REST 快照合并后不会丢帧；
+- 断线重连由 `subscribeRoom`/`subscribeTask` 内部负责（退避 ×1..×5，默认 1s），首帧快照负责补缺口；旧 REST 端点与 `events.ts` 的 EventSource 实现保留但不再被 hooks 使用。
