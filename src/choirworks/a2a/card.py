@@ -3,8 +3,15 @@ from __future__ import annotations
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentExtension,
     AgentInterface,
     AgentSkill,
+)
+
+from choirworks.a2a.mapping import A2A_ROOM_URI
+
+_ROOM_DESCRIPTION = (
+    "Conversations as long-lived A2A tasks; room messages as A2A Messages"
 )
 
 
@@ -14,7 +21,16 @@ def build_agent_card(public_url: str) -> AgentCard:
         name="ChoirWorks",
         description="多 Agent 协作工作群（A2A facade）",
         version="0.1.0",
-        capabilities=AgentCapabilities(streaming=True),
+        capabilities=AgentCapabilities(
+            streaming=True,
+            extensions=[
+                AgentExtension(
+                    uri=A2A_ROOM_URI,
+                    description=_ROOM_DESCRIPTION,
+                    required=False,
+                )
+            ],
+        ),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         skills=[

@@ -1,5 +1,6 @@
 import httpx
 
+from choirworks.a2a.mapping import A2A_ROOM_URI
 from choirworks.api.app import create_app
 from choirworks.config import Settings
 
@@ -22,3 +23,6 @@ async def test_agent_card_served(tmp_path):
     assert card["capabilities"]["streaming"] is True
     assert card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
     assert card["supportedInterfaces"][0]["url"] == "http://127.0.0.1:9999/v1/a2a"
+    extensions = card["capabilities"]["extensions"]
+    assert extensions[0]["uri"] == A2A_ROOM_URI
+    assert extensions[0].get("required", False) is False
