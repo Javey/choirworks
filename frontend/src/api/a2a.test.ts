@@ -8,6 +8,10 @@ import {
   roomEventFromResult,
   roomSnapshotFromTask,
   sendMessageParams,
+  subscribeRoom,
+  subscribeTask,
+  taskEventFromResult,
+  taskEventsFromSnapshot,
 } from "./a2a";
 
 const encoder = new TextEncoder();
@@ -350,5 +354,236 @@ describe("sendMessageParams", () => {
     expect("contextId" in params.message).toBe(false);
     expect("taskId" in params.message).toBe(false);
     expect("metadata" in params.message).toBe(false);
+  });
+});
+
+describe("task adapters", () => {
+  it("maps statusUpdate kinds and task states", () => {
+    const node = taskEventFromResult(
+      {
+        statusUpdate: {
+          status: { state: "TASK_STATE_WORKING" },
+          metadata: {
+            kind: "node.state_changed",
+            node_id: "p1:n1",
+            from: "dispatched",
+            to: "working",
+          },
+        },
+      },
+      3,
+    );
+    expect(node?.type).toBe("node.state_changed");
+    expect(node?.payload.to).toBe("working");
+
+    const completed = taskEventFromResult(
+      {
+        statusUpdate: {
+          status: { state: "TASK_STATE_COMPLETED" },
+          metadata: {},
+        },
+      },
+      4,
+    );
+    expect(completed?.type).toBe("task.completed");
+
+    const failed = taskEventFromResult(
+      {
+        statusUpdate: { status: { state: "TASK_STATE_FAILED" }, metadata: {} },
+      },
+      5,
+    );
+    expect(failed?.type).toBe("task.failed");
+  });
+
+  it("maps artifact updates to node.artifact with id prefix", () => {
+    const event = taskEventFromResult(
+      {
+        artifactUpdate: {
+          artifact: {
+            artifactId: "plan1:n1:remote-1",
+            parts: [{ text: "echo:hi" }],
+          },
+          append: false,
+        },
+      },
+      2,
+    );
+    expect(event?.type).toBe("node.artifact");
+    expect(event?.payload).toMatchObject({
+      node_id: "plan1:n1",
+      text: "echo:hi",
+      append: false,
+    });
+
+    const lastChunk = taskEventFromResult(
+      {
+        artifactUpdate: {
+          artifact: { artifactId: "plan1:n1:remote-1" },
+          append: true,
+          lastChunk: true,
+        },
+      },
+      3,
+    );
+    expect(lastChunk).toBeNull();
+  });
+
+  it("maps plan artifact updates with dag payload", () => {
+    const event = taskEventFromResult(
+      {
+        artifactUpdate: {
+          artifact: {
+            artifactId: "plan:plan1",
+            parts: [{ data: { nodes: [{ id: "n1", name: "step" }] } }],
+          },
+          metadata: { kind: "plan.created", plan_id: "plan1", version: 1 },
+        },
+      },
+      1,
+    );
+    expect(event?.type).toBe("plan.created");
+    expect(event?.payload.dag).toEqual({ nodes: [{ id: "n1", name: "step" }] });
+  });
+
+  it("expands a task snapshot into events", () => {
+    const events = taskEventsFromSnapshot(
+      {
+        id: "t1",
+        status: { state: "TASK_STATE_WORKING" },
+        metadata: {
+          nodes: [
+            { id: "p1:n1", status: "working", agent_name: "echo", attempt: 1 },
+          ],
+        },
+        artifacts: [
+          {
+            artifactId: "p1:n1:r1",
+            parts: [{ text: "done" }],
+          },
+        ],
+      },
+      10,
+    );
+    expect(events[0].type).toBe("task.state_changed");
+    expect(events[0].payload.to).toBe("running");
+    expect(events[1].type).toBe("node.state_changed");
+    expect(events[1].payload.node_id).toBe("p1:n1");
+    expect(events[2].type).toBe("node.artifact");
+    expect(events.map((event) => event.seq)).toEqual([11, 12, 13]);
+  });
+});
+
+describe("subscriptions", () => {
+  it("subscribes room: snapshot first, then live message, then reconnects", async () => {
+    const frames = [
+      `data: ${JSON.stringify({ result: { task: ROOM_TASK_FRAME }, id: 1, jsonrpc: "2.0" })}\n\n`,
+      `data: ${JSON.stringify({
+        result: {
+          message: {
+            messageId: "m2",
+            contextId: "c1",
+            taskId: "c1",
+            role: "ROLE_USER",
+            parts: [{ text: "live" }],
+            metadata: {
+              [A2A_ROOM_URI]: {
+                kind: "message",
+                sender: "CEO",
+                seq: 2,
+                mentions: [],
+              },
+            },
+          },
+        },
+        id: 1,
+        jsonrpc: "2.0",
+      })}\n\n`,
+    ];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) return sseResponse(frames);
+        return sseResponse([]);
+      }),
+    );
+    const snapshots: unknown[] = [];
+    const events: unknown[] = [];
+    const states: string[] = [];
+    const close = subscribeRoom(
+      "c1",
+      {
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        onEvent: (event) => events.push(event),
+        onState: (state) => states.push(state),
+      },
+      { retryDelayMs: 1 },
+    );
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    await vi.waitFor(() => expect(snapshots).toHaveLength(1));
+    await vi.waitFor(() => expect(states).toContain("reconnecting"));
+    close();
+    expect(events[0]).toMatchObject({ type: "message.posted" });
+  });
+
+  it("subscribes task with incrementing seq", async () => {
+    const frames = [
+      `data: ${JSON.stringify({
+        result: {
+          statusUpdate: {
+            status: { state: "TASK_STATE_WORKING" },
+            metadata: { kind: "node.dispatched", node_id: "p1:n1" },
+          },
+        },
+        id: 1,
+        jsonrpc: "2.0",
+      })}\n\n`,
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sseResponse(frames, { close: false })),
+    );
+    const events: { seq: number; type: string }[] = [];
+    const close = subscribeTask(
+      "t1",
+      {
+        onEvent: (event) => events.push({ seq: event.seq, type: event.type }),
+        onState: () => undefined,
+      },
+      { baseSeq: 4, retryDelayMs: 1 },
+    );
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    close();
+    expect(events[0]).toEqual({ seq: 5, type: "node.dispatched" });
+  });
+
+  it("surfaces JSON-RPC errors as reconnecting state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: { code: -32001, message: "task not found" },
+              id: 1,
+              jsonrpc: "2.0",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    const states: string[] = [];
+    const close = subscribeTask(
+      "missing",
+      {
+        onEvent: () => undefined,
+        onState: (state) => states.push(state),
+      },
+      { retryDelayMs: 1 },
+    );
+    await vi.waitFor(() => expect(states).toContain("reconnecting"));
+    close();
   });
 });

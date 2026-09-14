@@ -3,6 +3,7 @@ import type {
   PostMessageOutDto,
   RoomMessageDto,
   RoomMessagesDto,
+  TaskStatus,
 } from "../lib/types";
 
 export const A2A_URL = "/v1/a2a";
@@ -324,4 +325,234 @@ export async function sendRoomMessage(
     seq: Number(room.seq ?? 0),
     task_id: typeof message.taskId === "string" ? message.taskId : null,
   };
+}
+
+export type ConnectionState = "live" | "reconnecting" | "closed";
+
+export interface SubscriptionHandlers {
+  onSnapshot?: (task: ProtoStruct) => void;
+  onEvent: (event: EventDto) => void;
+  onState: (state: ConnectionState) => void;
+}
+
+export interface SubscriptionOptions {
+  baseSeq?: number;
+  retryDelayMs?: number;
+}
+
+const TASK_STATE_TO_STATUS: Record<string, TaskStatus> = {
+  TASK_STATE_SUBMITTED: "pending",
+  TASK_STATE_WORKING: "running",
+  TASK_STATE_INPUT_REQUIRED: "awaiting_input",
+  TASK_STATE_COMPLETED: "completed",
+  TASK_STATE_FAILED: "failed",
+  TASK_STATE_CANCELED: "canceled",
+};
+
+function nodeIdFromArtifactId(artifactId: string): string | null {
+  if (!artifactId || artifactId.startsWith("plan:")) return null;
+  const index = artifactId.lastIndexOf(":");
+  return index > 0 ? artifactId.slice(0, index) : null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function taskEventsFromSnapshot(
+  task: ProtoStruct,
+  baseSeq: number,
+): EventDto[] {
+  const events: EventDto[] = [];
+  const push = (type: string, payload: ProtoStruct) => {
+    events.push({ seq: baseSeq + events.length + 1, type, payload });
+  };
+  const state = String((task.status as ProtoStruct | undefined)?.state ?? "");
+  const status = TASK_STATE_TO_STATUS[state];
+  if (status) push("task.state_changed", { to: status });
+  const nodes = (metadataOf(task).nodes as ProtoStruct[] | undefined) ?? [];
+  for (const node of nodes) {
+    push("node.state_changed", {
+      node_id: node.id,
+      to: node.status,
+      agent_name: node.agent_name,
+      attempt: node.attempt,
+    });
+  }
+  const artifacts = (task.artifacts as ProtoStruct[] | undefined) ?? [];
+  for (const artifact of artifacts) {
+    const artifactId = String(artifact.artifactId ?? "");
+    const nodeId = nodeIdFromArtifactId(artifactId);
+    const text = textOfParts(artifact);
+    if (nodeId && text) {
+      push("node.artifact", {
+        node_id: nodeId,
+        artifact_id: artifactId,
+        text,
+        append: false,
+      });
+    }
+  }
+  return events;
+}
+
+export function taskEventFromResult(
+  result: ProtoStruct,
+  seq: number,
+): EventDto | null {
+  const update = result.statusUpdate as ProtoStruct | undefined;
+  if (update) {
+    const metadata = metadataOf(update);
+    if (typeof metadata.kind === "string") {
+      return { seq, type: metadata.kind, payload: { ...metadata } };
+    }
+    const state = String((update.status as ProtoStruct | undefined)?.state ?? "");
+    if (state === "TASK_STATE_COMPLETED") {
+      return { seq, type: "task.completed", payload: {} };
+    }
+    if (state === "TASK_STATE_FAILED") {
+      return { seq, type: "task.failed", payload: {} };
+    }
+    const status = TASK_STATE_TO_STATUS[state];
+    return status
+      ? { seq, type: "task.state_changed", payload: { to: status } }
+      : null;
+  }
+  const artifactUpdate = result.artifactUpdate as ProtoStruct | undefined;
+  if (!artifactUpdate) return null;
+  const metadata = metadataOf(artifactUpdate);
+  const artifact = (artifactUpdate.artifact as ProtoStruct | undefined) ?? {};
+  const artifactId = String(artifact.artifactId ?? "");
+  if (metadata.kind === "plan.created" || metadata.kind === "plan.extended") {
+    const parts = (artifact.parts as ProtoStruct[] | undefined) ?? [];
+    const dag = parts.length > 0 ? (parts[0].data ?? null) : null;
+    return { seq, type: metadata.kind, payload: { ...metadata, dag } };
+  }
+  const nodeId =
+    (typeof metadata.node_id === "string" && metadata.node_id) ||
+    nodeIdFromArtifactId(artifactId);
+  const text = textOfParts(artifact);
+  if (!nodeId || !text) return null;
+  return {
+    seq,
+    type: "node.artifact",
+    payload: {
+      node_id: nodeId,
+      artifact_id: artifactId,
+      text,
+      append: artifactUpdate.append === true,
+    },
+  };
+}
+
+function runStream(
+  request: ProtoStruct,
+  handlers: SubscriptionHandlers,
+  options: SubscriptionOptions,
+  nextSeq: () => number,
+  mapResponse: (result: ProtoStruct, seq: number) => void,
+): () => void {
+  const controller = new AbortController();
+  let stopped = false;
+  let attempt = 0;
+  const run = async () => {
+    while (!stopped) {
+      try {
+        let received = false;
+        for await (const response of postSse(
+          A2A_URL,
+          request,
+          controller.signal,
+        )) {
+          if (response.error) {
+            throw new A2AError(
+              response.error.code ?? -32000,
+              response.error.message ?? "A2A 订阅失败",
+            );
+          }
+          if (!received) {
+            received = true;
+            attempt = 0;
+            handlers.onState("live");
+          }
+          mapResponse(response.result ?? {}, nextSeq());
+        }
+        if (stopped) break;
+        throw new A2AError(-32000, "A2A 流已断开");
+      } catch {
+        if (stopped || controller.signal.aborted) break;
+        handlers.onState("reconnecting");
+        await sleep((options.retryDelayMs ?? 1000) * Math.min(attempt + 1, 5));
+        attempt += 1;
+      }
+    }
+  };
+  void run();
+  return () => {
+    stopped = true;
+    controller.abort();
+    handlers.onState("closed");
+  };
+}
+
+export function subscribeRoom(
+  conversationId: string,
+  handlers: SubscriptionHandlers,
+  options: SubscriptionOptions = {},
+): () => void {
+  let seq = options.baseSeq ?? 0;
+  return runStream(
+    rpcRequest("SubscribeToTask", { id: conversationId }),
+    handlers,
+    options,
+    () => {
+      seq += 1;
+      return seq;
+    },
+    (result) => {
+      if (result.task) {
+        handlers.onSnapshot?.(result.task as ProtoStruct);
+        return;
+      }
+      const event = roomEventFromResult(result);
+      if (event) {
+        if (event.seq > 0) seq = Math.max(seq, event.seq);
+        handlers.onEvent(event);
+      }
+    },
+  );
+}
+
+export function subscribeTask(
+  taskId: string,
+  handlers: SubscriptionHandlers,
+  options: SubscriptionOptions = {},
+): () => void {
+  let seq = options.baseSeq ?? 0;
+  return runStream(
+    rpcRequest("SubscribeToTask", { id: taskId }),
+    handlers,
+    options,
+    () => {
+      seq += 1;
+      return seq;
+    },
+    (result, eventSeq) => {
+      if (result.task) {
+        for (const event of taskEventsFromSnapshot(
+          result.task as ProtoStruct,
+          seq,
+        )) {
+          seq = Math.max(seq, event.seq);
+          handlers.onEvent(event);
+        }
+        return;
+      }
+      const event = taskEventFromResult(result, eventSeq);
+      if (event) {
+        seq = Math.max(seq, event.seq);
+        handlers.onEvent(event);
+      }
+    },
+  );
 }
