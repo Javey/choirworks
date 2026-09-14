@@ -1,12 +1,14 @@
 from datetime import UTC, datetime
 
-from a2a.types import Role, TaskState
+from a2a.types import Message, Part, Role, TaskState
 
 from choirworks.a2a.mapping import (
     A2A_ROOM_URI,
     RoomStreamMapper,
     room_message_from_event,
+    room_send_options,
     room_to_task,
+    struct_value,
 )
 from choirworks.models.domain import (
     Conversation,
@@ -236,3 +238,34 @@ def test_room_stream_mapper_ignores_non_room_events():
     assert mapper.map_event(_event(EventType.CONVERSATION_CREATED, {})) == []
     assert mapper.map_event(_event(EventType.TASK_COMPLETED, {})) == []
     assert mapper.map_event(_event(EventType.NODE_STATE_CHANGED, {})) == []
+
+
+def test_room_send_options_reads_metadata():
+    message = Message(
+        message_id="m1",
+        role=Role.ROLE_USER,
+        parts=[Part(text="hi")],
+        metadata=struct_value(
+            {
+                A2A_ROOM_URI: {
+                    "mentions": ["echo", "writer"],
+                    "quote_id": "q1",
+                    "interrupt": True,
+                }
+            }
+        ),
+    )
+    assert room_send_options(message) == {
+        "mentions": ["echo", "writer"],
+        "quote_id": "q1",
+        "interrupt": True,
+    }
+
+
+def test_room_send_options_defaults_without_metadata():
+    message = Message(message_id="m1", role=Role.ROLE_USER, parts=[Part(text="hi")])
+    assert room_send_options(message) == {
+        "mentions": [],
+        "quote_id": None,
+        "interrupt": False,
+    }

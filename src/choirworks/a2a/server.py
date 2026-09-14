@@ -33,6 +33,7 @@ from choirworks.a2a.mapping import (
     A2A_ROOM_URI,
     TaskStreamMapper,
     room_message_to_a2a,
+    room_send_options,
     room_to_task,
     snapshot_to_task,
 )
@@ -217,6 +218,9 @@ class HubA2AHandler(RequestHandler):
                 return await self._a2a_task(task_id)
             context_id = snapshot.task.conversation_id or context_id
 
+        options = room_send_options(message)
+        if options["interrupt"] and not options["quote_id"]:
+            raise InvalidParamsError("interrupt requires quote_id")
         if context_id is not None:
             conversation = await projections.fetch_conversation(
                 self._app.state.db, context_id
@@ -229,12 +233,18 @@ class HubA2AHandler(RequestHandler):
             )
         try:
             result = await self._app.state.coordinator.handle_human_message(
-                context_id, text=text, mentions=[]
+                context_id,
+                text=text,
+                mentions=options["mentions"],
+                quote_id=options["quote_id"],
+                interrupt=options["interrupt"],
             )
+        except ValueError as exc:
+            raise InvalidParamsError(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - 统一映射为 A2A 内部错误
             logger.exception("handle_human_message failed")
             raise InternalError(str(exc)) from exc
-        if result.task_id is None:
+        if result.task_id is None or result.routed in {"queued", "interrupted"}:
             return room_message_to_a2a(result.message)
         return await self._a2a_task(result.task_id)
 

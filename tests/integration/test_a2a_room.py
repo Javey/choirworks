@@ -3,9 +3,17 @@ import asyncio
 import httpx
 import pytest
 from a2a.client import A2ACardResolver, ClientConfig, create_client
-from a2a.types import GetTaskRequest, TaskState
+from a2a.types import (
+    GetTaskRequest,
+    Message,
+    Part,
+    Role,
+    SendMessageRequest,
+    TaskState,
+)
+from a2a.utils.errors import InvalidParamsError
 
-from choirworks.a2a.mapping import A2A_ROOM_URI
+from choirworks.a2a.mapping import A2A_ROOM_URI, struct_value
 from choirworks.api.app import create_app
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
@@ -141,3 +149,111 @@ async def test_get_room_task_working_while_task_runs(tmp_path):
         await slow.stop()
 
     assert room.status.state is TaskState.TASK_STATE_WORKING
+
+
+def _send(
+    text: str,
+    *,
+    context_id: str | None = None,
+    room_meta: dict | None = None,
+) -> SendMessageRequest:
+    message = Message(
+        message_id="m-1",
+        role=Role.ROLE_USER,
+        parts=[Part(text=text)],
+        context_id=context_id or "",
+    )
+    if room_meta is not None:
+        message.metadata.CopyFrom(struct_value({A2A_ROOM_URI: room_meta}))
+    return SendMessageRequest(message=message)
+
+
+async def test_send_with_context_creates_task_in_room(hub_room):
+    app, http, client = hub_room
+    conversation_id = await _new_room(http)
+
+    responses = [
+        response
+        async for response in client.send_message(
+            _send("@echo 请处理", context_id=conversation_id)
+        )
+    ]
+
+    task = responses[-1].task
+    assert task.id != conversation_id
+    assert task.context_id == conversation_id
+    timeline = (
+        await http.get(f"/v1/conversations/{conversation_id}/messages")
+    ).json()["messages"]
+    assert timeline[0]["text"] == "@echo 请处理"
+
+
+async def test_send_queued_returns_message(tmp_path):
+    slow = await start_fake_agent("slow")
+    try:
+        app = create_app(_settings(tmp_path, "room_queue.db"))
+        async with app.router.lifespan_context(app):
+            http, client = await _connect(app)
+            try:
+                await http.post(
+                    "/v1/agents", json={"name": "slow", "card_url": slow.url}
+                )
+                conversation_id = await _new_room(http, "排队群")
+                posted = (
+                    await http.post(
+                        f"/v1/conversations/{conversation_id}/messages",
+                        json={"text": "@slow 开始", "mentions": ["slow"]},
+                    )
+                ).json()
+                await _wait_for_active_node(http, posted["task_id"])
+                quote_id = None
+                for _ in range(200):
+                    messages = (
+                        await http.get(
+                            f"/v1/conversations/{conversation_id}/messages"
+                        )
+                    ).json()["messages"]
+                    announcements = [
+                        message
+                        for message in messages
+                        if message["role"] == "assistant" and message["node_id"]
+                    ]
+                    if announcements:
+                        quote_id = announcements[-1]["id"]
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise AssertionError("no dispatch announcement")
+
+                responses = [
+                    response
+                    async for response in client.send_message(
+                        _send(
+                            "补充一句",
+                            context_id=conversation_id,
+                            room_meta={"quote_id": quote_id},
+                        )
+                    )
+                ]
+            finally:
+                await client.close()
+                await http.aclose()
+    finally:
+        await slow.stop()
+
+    assert responses[-1].WhichOneof("payload") == "message"
+    reply = responses[-1].message
+    assert reply.parts[0].text == "补充一句"
+    fields = reply.metadata.fields[A2A_ROOM_URI].struct_value.fields
+    assert fields["kind"].string_value == "message"
+    assert fields["quote_id"].string_value == quote_id
+    assert fields["queued_for_node_id"].string_value
+
+
+async def test_send_interrupt_requires_quote(hub_room):
+    _, _, client = hub_room
+    with pytest.raises(InvalidParamsError):
+        async for _ in client.send_message(
+            _send("打断", room_meta={"interrupt": True})
+        ):
+            pass

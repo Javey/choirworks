@@ -236,6 +236,35 @@ def room_to_task(
     )
 
 
+def room_send_options(message: Message) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "mentions": [],
+        "quote_id": None,
+        "interrupt": False,
+    }
+    field = message.metadata.fields.get(A2A_ROOM_URI)
+    if field is None or field.WhichOneof("kind") != "struct_value":
+        return options
+    fields = field.struct_value.fields
+    mentions_value = fields.get("mentions")
+    if mentions_value is not None and mentions_value.WhichOneof("kind") == "list_value":
+        options["mentions"] = [
+            item.string_value
+            for item in mentions_value.list_value.values
+            if item.WhichOneof("kind") == "string_value"
+        ]
+    quote_value = fields.get("quote_id")
+    if quote_value is not None and quote_value.WhichOneof("kind") == "string_value":
+        options["quote_id"] = quote_value.string_value
+    interrupt_value = fields.get("interrupt")
+    if (
+        interrupt_value is not None
+        and interrupt_value.WhichOneof("kind") == "bool_value"
+    ):
+        options["interrupt"] = interrupt_value.bool_value
+    return options
+
+
 _TERMINAL_NODE_VALUES = {
     NodeStatus.COMPLETED.value,
     NodeStatus.FAILED.value,
