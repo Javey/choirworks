@@ -180,6 +180,12 @@ class HubA2AHandler(RequestHandler):
                 return await self._a2a_task(task_id)
             context_id = snapshot.task.conversation_id or context_id
 
+        if context_id is not None:
+            conversation = await projections.fetch_conversation(
+                self._app.state.db, context_id
+            )
+            if conversation is None:
+                context_id = None
         if context_id is None:
             context_id = await self._app.state.coordinator.create_conversation(
                 title=text[:30]

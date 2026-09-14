@@ -101,10 +101,7 @@ class AgentRegistry:
 
     @staticmethod
     def agent_url(record: AgentRecord) -> str:
-        interfaces = record.card.get("supportedInterfaces") or []
-        if not interfaces:
-            raise ValueError(f"agent card has no supported interfaces: {record.name}")
-        return str(interfaces[0]["url"])
+        return record.card_url
 
     @staticmethod
     def _row_to_record(row) -> AgentRecord:
