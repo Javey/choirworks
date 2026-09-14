@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
 
-import aiosqlite
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
@@ -33,17 +31,6 @@ from choirworks.core.policy import PolicyEngine
 from choirworks.store.db import Database
 
 logger = logging.getLogger(__name__)
-
-_AGENT_REGISTRY_DDL = (
-    "CREATE TABLE IF NOT EXISTS agent_registry ("
-    "id TEXT PRIMARY KEY,"
-    "name TEXT UNIQUE NOT NULL,"
-    "card_url TEXT NOT NULL,"
-    "card TEXT NOT NULL,"
-    "health TEXT DEFAULT 'ok',"
-    "last_seen TEXT,"
-    "created_at TEXT DEFAULT (datetime('now')))"
-)
 
 
 async def create_app(
@@ -73,8 +60,6 @@ async def create_app(
         # Use the existing Database wrapper for agent_registry compatibility
         db = Database(db_path)
         await db.initialize()
-        await db.conn.execute(_AGENT_REGISTRY_DDL)
-        await db.conn.commit()
 
         remote = RemoteAgentClient()
         registry = AgentRegistry(db, remote)
@@ -97,7 +82,9 @@ async def create_app(
             node_timeout=resolved.scheduler.node_timeout_seconds,
             max_node_attempts=resolved.scheduler.max_node_attempts,
             retry_backoff=resolved.scheduler.retry_backoff_seconds,
+            replan_on_failure=resolved.scheduler.replan_on_failure,
         )
+        executor.set_task_store(task_store)
 
         agent_card = build_agent_card(resolved.a2a.public_url)
         request_handler = DefaultRequestHandler(
@@ -131,9 +118,15 @@ async def create_app(
             rest_routes=rest_routes,
         )
 
+        from choirworks.a2a.recovery import recover_tasks
+
+        if resolved.recovery.replay_on_startup:
+            await recover_tasks(request_handler, task_store)
+
         try:
             yield
         finally:
+            await executor.shutdown()
             await request_handler.aclose()
             await remote.close()
             await db.close()
@@ -186,7 +179,11 @@ async def create_app(
             return FileResponse(frontend_dir / "index.html")
         raise HTTPException(status_code=404, detail="frontend not built")
 
-    if frontend_dir.exists():
-        app.mount("/assets", StaticFiles(directory=frontend_dir / "assets", html=True), name="assets") if (frontend_dir / "assets").exists() else None
+    if frontend_dir.exists() and (frontend_dir / "assets").exists():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=frontend_dir / "assets", html=True),
+            name="assets",
+        )
 
     return app

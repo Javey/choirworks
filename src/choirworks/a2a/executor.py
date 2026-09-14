@@ -2,95 +2,80 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
-from a2a.helpers import new_text_message, new_task
+from a2a.helpers import new_task, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
     Artifact,
+    ListTasksRequest,
     Message,
     Part,
     Role,
-    Task,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
 from google.protobuf import struct_pb2
-from google.protobuf.json_format import ParseDict
+from google.protobuf.json_format import MessageToDict, ParseDict
+from pydantic import BaseModel
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.core.llm import LiteLLMClient
-from choirworks.core.planner import (
-    PlanDraft,
-    PlanNodeDraft,
-    PlanningFailed,
-    Planner,
-    validate_plan,
+from choirworks.a2a.state import (
+    ACTIVE_NODE_STATUSES,
+    NodeState,
+    OrchestrationState,
+    load_state,
 )
+from choirworks.core.llm import LiteLLMClient
+from choirworks.core.planner import Planner, PlanningFailed
 from choirworks.core.policy import PolicyEngine
 
 logger = logging.getLogger(__name__)
 
 A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
-TERMINAL_NODE_STATUSES = {"completed", "failed", "canceled", "invalidated"}
-WORKING_NODE_STATUSES = {"ready", "dispatched", "working"}
+DEFAULT_POLICY = "auto_llm"
+MAX_PEER_CONTEXT = 2000
 
 
-@dataclass
-class NodeState:
-    id: str
-    name: str
+class PeerChoice(BaseModel):
     agent_name: str
-    agent_url: str
-    status: str = "pending"
-    attempt: int = 0
-    a2a_task_id: str | None = None
-    output: str | None = None
-    error: str | None = None
-    deps: list[str] = field(default_factory=list)
-    input_text: str = ""
-    derived: bool = False
-    policy_override: str | None = None
+    instruction: str = ""
+    reasoning: str = ""
 
 
-@dataclass
-class PlanState:
-    id: str
-    version: int
-    rationale: str
-    nodes: dict[str, NodeState] = field(default_factory=dict)
-
-    def ready_nodes(self) -> list[NodeState]:
-        result = []
-        for node in self.nodes.values():
-            if node.status == "pending" and all(
-                self.nodes[dep].status == "completed"
-                for dep in node.deps
-                if dep in self.nodes
-            ):
-                result.append(node)
-        return result
-
-    def all_completed(self) -> bool:
-        active = [n for n in self.nodes.values() if n.status != "invalidated"]
-        return bool(active) and all(n.status == "completed" for n in active)
-
-    def has_failures(self) -> bool:
-        return any(n.status == "failed" for n in self.nodes.values())
+PEER_SYSTEM = """You coordinate a group of expert agents.
+One agent is blocked and asked for help. Choose the best registered agent to assist.
+Return only JSON matching the schema:
+- agent_name: must be one of the available agents (not the requester)
+- instruction: the exact task description for the helper
+- reasoning: one short sentence"""
 
 
 def _struct(data: dict[str, Any]) -> struct_pb2.Struct:
-    s = struct_pb2.Struct()
-    ParseDict(data, s)
-    return s
+    result = struct_pb2.Struct()
+    ParseDict(_strip_none(data), result)
+    return result
+
+
+def _strip_none(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_none(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_strip_none(item) for item in value]
+    return value
 
 
 def _status_update(
@@ -99,22 +84,44 @@ def _status_update(
     state: TaskState,
     *,
     kind: str | None = None,
+    orch_state: OrchestrationState | None = None,
+    message: Message | None = None,
     **metadata: Any,
 ) -> TaskStatusUpdateEvent:
     meta: dict[str, Any] = {}
     if kind:
         meta["kind"] = kind
     meta.update(metadata)
+    if orch_state is not None:
+        meta.update(orch_state.to_dict())
     return TaskStatusUpdateEvent(
         task_id=task_id,
         context_id=context_id,
-        status=TaskStatus(state=state),
+        status=TaskStatus(
+            state=state,
+            message=message if message is not None else None,
+        ),
         metadata=_struct(meta) if meta else None,
     )
 
 
 def _join_text(parts: Any) -> str:
     return "\n".join(p.text for p in parts if p.HasField("text"))
+
+
+def _room_options(message: Message | None) -> dict[str, Any]:
+    if message is None or not message.metadata.fields:
+        return {}
+    room = message.metadata.fields.get(A2A_ROOM_URI)
+    if room is None or not room.HasField("struct_value"):
+        return {}
+    return MessageToDict(room.struct_value, preserving_proto_field_name=True)
+
+
+def _is_resume_message(message: Message | None) -> bool:
+    if message is None or not message.metadata.fields:
+        return False
+    return "choirworks.resume" in message.metadata.fields
 
 
 _REMOTE_STATE_MAP: dict[int, str] = {
@@ -133,13 +140,12 @@ _REMOTE_STATE_MAP: dict[int, str] = {
 class ChoirWorksAgentExecutor(AgentExecutor):
     """ChoirWorks orchestration engine as an A2A AgentExecutor.
 
-    Each execute() call processes one user message:
-    1. Post the user message
-    2. Plan the DAG (if needed)
-    3. Dispatch ready nodes to remote agents
-    4. Forward remote events to the local event queue
-    5. Handle interventions / failures
-    6. Leave task in WORKING (more messages expected) or INPUT_REQUIRED
+    The A2A Task is the aggregate root. Plan/node/member/intervention state is
+    persisted as A2A event metadata merged into the Task snapshot by the SDK
+    ``TaskManager`` + ``DatabaseTaskStore``.
+
+    ``execute()`` routes each inbound message and returns quickly; node work
+    runs in background runners, so multiple agents can work and chat at once.
     """
 
     def __init__(
@@ -155,6 +161,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         max_node_attempts: int = 2,
         retry_backoff: float = 1.0,
         max_derived_nodes: int = 5,
+        replan_on_failure: bool = True,
     ):
         self._registry = registry
         self._remote = remote
@@ -166,21 +173,40 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._max_node_attempts = max_node_attempts
         self._retry_backoff = retry_backoff
         self._max_derived_nodes = max_derived_nodes
+        self._replan_on_failure = replan_on_failure
+
+        self._states: dict[str, OrchestrationState] = {}
+        self._runners: dict[str, asyncio.Task] = {}
+        self._queues: dict[str, EventQueue] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._node_tasks: dict[str, dict[asyncio.Task, NodeState]] = {}
+        self._context_ids: dict[str, str] = {}
+        self._task_store: Any | None = None
+
+    # ------------------------------------------------------------- lifecycle
+
+    def set_task_store(self, task_store: Any) -> None:
+        """Injected by the app so follow-up plans can read conversation history."""
+        self._task_store = task_store
+
+    def _lock_for(self, task_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(task_id, asyncio.Lock())
 
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        text = context.get_user_input()
-        task_id = context.task_id
-        context_id = context.context_id
-
-        if not text:
-            return
-
-        updater = TaskUpdater(event_queue, task_id, context_id)
-
-        # Emit initial Task if this is a new task
+        text = (context.get_user_input() or "").strip()
+        task_id = context.task_id or ""
+        context_id = context.context_id or ""
         existing = context.current_task
+        room = _room_options(context.message)
+        mentions = list(room.get("mentions") or [])
+        for name in re.findall(r"@([A-Za-z0-9_-]+)", text):
+            if name not in mentions:
+                mentions.append(name)
+        if mentions:
+            room["mentions"] = mentions
+
         if existing is None:
             initial_task = new_task(
                 task_id=task_id,
@@ -190,259 +216,644 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
             await event_queue.enqueue_event(initial_task)
 
-        # Start work
-        await updater.start_work()
+        updater = TaskUpdater(event_queue, task_id, context_id)
+        self._queues[task_id] = event_queue
+        self._context_ids[task_id] = context_id
 
-        # Resolve members from mentions
-        mentions = self._extract_mentions(text)
-        await self._join_members(event_queue, task_id, context_id, mentions)
+        async with self._lock_for(task_id):
+            state = self._states.get(task_id)
+            if state is None:
+                state = load_state(existing)
+                if state is not None:
+                    self._states[task_id] = state
 
-        # Plan
-        plan = await self._create_plan(text, task_id, context_id, event_queue)
-        if plan is None:
-            fail_msg = new_text_message(
-                "Planning failed", role=Role.ROLE_AGENT,
-                task_id=task_id, context_id=context_id,
+            if state is None:
+                if not text:
+                    return
+                state = OrchestrationState(plan_id=self._new_plan_id())
+                self._states[task_id] = state
+                await updater.start_work()
+                await self._plan_and_launch(
+                    state, text, task_id, context_id, event_queue, room=room
+                )
+                return
+
+            if state.pending_interventions():
+                await self._answer_intervention(
+                    state, text, task_id, context_id, event_queue
+                )
+                return
+
+            if _is_resume_message(context.message):
+                await self._resume(state, task_id, context_id, event_queue)
+                return
+
+            if state.has_pending_work():
+                await self._route_message(
+                    state, text, task_id, context_id, event_queue, room
+                )
+                return
+
+            # Everything settled: treat the message as a follow-up request.
+            if not text:
+                return
+            await updater.start_work()
+            await self._plan_and_launch(
+                state, text, task_id, context_id, event_queue, room=room, follow_up=True
             )
-            await updater.failed(fail_msg)
-            return
-
-        # Dispatch + schedule loop
-        await self._schedule_loop(plan, task_id, context_id, event_queue, updater)
-
-        # Finalize
-        if plan.all_completed():
-            await self._announce_completion(plan, task_id, context_id, event_queue)
-            await updater.complete()
-        else:
-            await updater.requires_input()
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        task_id = context.task_id
+        task_id = context.task_id or ""
         context_id = context.context_id or ""
-        # Cancel remote tasks for active nodes
-        # (In a full implementation, we'd track active nodes and cancel them)
-        await event_queue.enqueue_event(
-            _status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED,
-                          kind="task.canceled")
-        )
+        async with self._lock_for(task_id):
+            state = self._states.get(task_id)
+            runner = self._runners.pop(task_id, None)
+            if runner is not None:
+                runner.cancel()
+            if state is not None:
+                for node in list(state.nodes.values()):
+                    if node.status in ACTIVE_NODE_STATUSES | {"ready"}:
+                        node.status = "canceled"
+                # Emit the terminal event first: the SDK closes the agent event
+                # queue as soon as the cancelled producer unwinds.
+                await self._emit(
+                    event_queue,
+                    state,
+                    task_id,
+                    context_id,
+                    "task.canceled",
+                    TaskState.TASK_STATE_CANCELED,
+                )
+                for node in list(state.nodes.values()):
+                    if node.status == "canceled" and node.a2a_task_id:
+                        await self._remote.cancel_task(
+                            node.agent_url, node.a2a_task_id
+                        )
+            else:
+                await event_queue.enqueue_event(
+                    _status_update(
+                        task_id,
+                        context_id,
+                        TaskState.TASK_STATE_CANCELED,
+                        kind="task.canceled",
+                    )
+                )
+        self._states.pop(task_id, None)
+        self._queues.pop(task_id, None)
 
-    async def _create_plan(
-        self, text: str, task_id: str, context_id: str, event_queue: EventQueue
-    ) -> PlanState | None:
+    async def shutdown(self) -> None:
+        for runner in list(self._runners.values()):
+            runner.cancel()
+        for runner in list(self._runners.values()):
+            try:
+                await runner
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._runners.clear()
+
+    async def _resume(
+        self,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+    ) -> None:
+        """Re-attach to remote work after a process restart."""
+        for node in state.nodes.values():
+            if node.status in ACTIVE_NODE_STATUSES:
+                node.status = "resume" if node.a2a_task_id else "pending"
+        await self._persist(event_queue, state, task_id, context_id)
+        self._start_runner(task_id)
+
+    # ---------------------------------------------------------------- plan
+
+    def _new_plan_id(self) -> str:
+        return f"plan-{uuid.uuid4().hex[:8]}"
+
+    async def _plan_and_launch(
+        self,
+        state: OrchestrationState,
+        text: str,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+        *,
+        room: dict[str, Any] | None = None,
+        follow_up: bool = False,
+    ) -> None:
+        context_brief = await self._context_brief(context_id, exclude_task_id=task_id)
         try:
-            draft = await self._planner.plan(text)
+            draft, reasoning = await self._planner.plan_with_reasoning(
+                text, context=context_brief or None
+            )
         except PlanningFailed as exc:
-            logger.warning("Planning failed: %s", exc)
-            return None
+            logger.warning("Planning failed for task %s: %s", task_id, exc)
+            message = new_text_message(
+                f"规划失败：{exc}", role=Role.ROLE_AGENT,
+                task_id=task_id, context_id=context_id,
+            )
+            await self._emit(
+                event_queue, state, task_id, context_id,
+                "plan.failed", TaskState.TASK_STATE_FAILED, message=message,
+            )
+            return
 
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
+        if follow_up:
+            state.plan_version += 1
+            # Keep terminal nodes for history; start a fresh node set for the
+            # follow-up so deps never point at removed nodes.
+            state.nodes = {}
+            state.queue = {}
+        state.plan_id = self._new_plan_id()
+        state.rationale = draft.rationale
 
-        plan_id = f"plan-{uuid.uuid4().hex[:8]}"
-        nodes: dict[str, NodeState] = {}
         for node_draft in draft.nodes:
-            url = agent_urls.get(node_draft.agent_name, "")
-            nodes[node_draft.id] = NodeState(
+            node = NodeState(
                 id=node_draft.id,
                 name=node_draft.name,
                 agent_name=node_draft.agent_name,
-                agent_url=url,
+                agent_url=agent_urls.get(node_draft.agent_name, ""),
                 deps=list(node_draft.deps),
                 input_text=str(node_draft.input.get("text", "")),
-                policy_override=node_draft.policy_override,
+                policy_override=(
+                    node_draft.policy_override
+                    or ("human" if node_draft.requires_approval else None)
+                ),
             )
+            state.nodes[node.id] = node
 
-        plan = PlanState(
-            id=plan_id,
-            version=1,
-            rationale=draft.rationale,
-            nodes=nodes,
-        )
-
-        # Emit plan created event
-        await event_queue.enqueue_event(
-            _status_update(
-                task_id, context_id, TaskState.TASK_STATE_WORKING,
-                kind="plan.created",
-                plan_id=plan_id,
-                plan_version=plan.version,
-                rationale=plan.rationale,
-                nodes=[
-                    {
-                        "id": n.id,
-                        "name": n.name,
-                        "agent_name": n.agent_name,
-                        "deps": n.deps,
+        if reasoning:
+            reasoning_msg = new_text_message(
+                reasoning, role=Role.ROLE_AGENT,
+                task_id=task_id, context_id=context_id,
+            )
+            ParseDict(
+                {
+                    A2A_ROOM_URI: {
+                        "sender": "assistant",
+                        "role": "assistant",
+                        "kind": "assistant.reasoning",
                     }
-                    for n in plan.nodes.values()
-                ],
+                },
+                reasoning_msg.metadata,
             )
+            await self._emit(
+                event_queue, state, task_id, context_id,
+                "assistant.reasoning", TaskState.TASK_STATE_WORKING,
+                message=reasoning_msg,
+            )
+
+        await self._emit(
+            event_queue, state, task_id, context_id,
+            "plan.created", TaskState.TASK_STATE_WORKING,
+            plan_id=state.plan_id,
+            plan_version=state.plan_version,
+            rationale=state.rationale,
+            nodes=[
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "agent_name": n.agent_name,
+                    "deps": n.deps,
+                }
+                for n in state.nodes.values()
+            ],
+        )
+        plan_text = "任务已拆解：\n" + "\n".join(
+            f"- @{n.agent_name or n.id} 负责 {n.name}" for n in state.nodes.values()
+        )
+        await self._emit_room_message(
+            event_queue, state, task_id, context_id, "plan.announced", plan_text
+        )
+        await self._join_members(
+            state,
+            [n.agent_name for n in state.nodes.values() if n.agent_name],
+            "plan",
+            task_id,
+            context_id,
+            event_queue,
+        )
+        mention_targets = [
+            name
+            for name in (room or {}).get("mentions", [])
+            if name in agent_urls
+        ]
+        if mention_targets:
+            await self._join_members(
+                state, mention_targets, "human_mention", task_id, context_id, event_queue
+            )
+        await self._persist(event_queue, state, task_id, context_id)
+        self._start_runner(task_id)
+
+    # --------------------------------------------------------------- runner
+
+    def _start_runner(self, task_id: str) -> None:
+        existing = self._runners.get(task_id)
+        if existing is not None and not existing.done():
+            return
+        state = self._states.get(task_id)
+        if state is None:
+            return
+        self._runners[task_id] = asyncio.create_task(
+            self._run_plan(task_id), name=f"choirworks-runner:{task_id}"
         )
 
-        # Join plan members
-        plan_agents = list({
-            n.agent_name for n in plan.nodes.values() if n.agent_name
-        })
-        await self._join_members(event_queue, task_id, context_id, plan_agents)
+    async def _run_plan(self, task_id: str) -> None:
+        state = self._states[task_id]
+        try:
+            while True:
+                async with self._lock_for(task_id):
+                    state = self._states.get(task_id)
+                    if state is None:
+                        return
+                    queue = self._queues[task_id]
+                    context_id = self._context_ids.get(task_id, "")
 
-        return plan
+                    for node in list(state.failed_nodes()):
+                        if node.attempt < self._max_node_attempts:
+                            node.status = "pending"
+                            node.error = None
+                            await self._emit(
+                                queue, state, task_id, context_id,
+                                "node.retry_scheduled",
+                                node_id=node.id,
+                                attempt=node.attempt,
+                            )
 
-    async def _schedule_loop(
-        self,
-        plan: PlanState,
-        task_id: str,
-        context_id: str,
-        event_queue: EventQueue,
-        updater: TaskUpdater,
-    ) -> None:
-        pending_tasks: set[asyncio.Task] = set()
+                    ready = state.ready_nodes()
+                    slots = max(0, self._max_parallel - self._pending_count(task_id))
+                    for node in ready[:slots]:
+                        mode = (
+                            "resume"
+                            if node.status == "resume"
+                            else ("continue" if node.status == "ready" else "dispatch")
+                        )
+                        if mode != "resume":
+                            node.status = "dispatched"
+                        node_task = asyncio.create_task(
+                            self._execute_node(
+                                node, state, task_id, context_id, mode=mode
+                            ),
+                            name=f"choirworks-node:{task_id}:{node.id}",
+                        )
+                        self._node_tasks.setdefault(task_id, {})[node_task] = node
 
-        for _ in range(100):
-            ready = plan.ready_nodes()
-            if ready:
-                slots = self._max_parallel - len(pending_tasks)
-                for node in ready[:max(0, slots)]:
-                    node.status = "dispatched"
-                    task = asyncio.create_task(
-                        self._dispatch_node(node, plan, task_id, context_id, event_queue)
+                pending = self._node_tasks.get(task_id, {})
+                if pending:
+                    done, _ = await asyncio.wait(
+                        set(pending), return_when=asyncio.FIRST_COMPLETED
                     )
-                    pending_tasks.add(task)
-                    task.add_done_callback(pending_tasks.discard)
-
-            if not pending_tasks:
-                if plan.all_completed():
-                    return
-                if plan.has_failures():
-                    await self._handle_failures(plan, task_id, context_id, event_queue)
+                    for finished in done:
+                        node = pending.pop(finished)
+                        exception = finished.exception()
+                        if exception is not None:
+                            node.status = "failed"
+                            node.error = str(exception)
+                            await self._emit(
+                                queue, state, task_id, context_id,
+                                "node.failed", node_id=node.id, error=node.error,
+                            )
+                    if self._retry_backoff > 0 and any(
+                        n.status == "failed" and n.attempt < self._max_node_attempts
+                        for n in state.nodes.values()
+                    ):
+                        await asyncio.sleep(self._retry_backoff)
                     continue
-                if any(n.status == "input_required" for n in plan.nodes.values()):
+
+                async with self._lock_for(task_id):
+                    state = self._states.get(task_id)
+                    if state is None:
+                        return
+                    queue = self._queues[task_id]
+                    if any(
+                        n.status == "failed" and n.attempt < self._max_node_attempts
+                        for n in state.nodes.values()
+                    ):
+                        continue
+                    if state.input_required_nodes():
+                        progress = await self._settle_input(
+                            state, task_id, context_id, queue
+                        )
+                        if progress:
+                            continue
+                        await self._emit(
+                            queue, state, task_id, context_id,
+                            "task.requires_input",
+                            TaskState.TASK_STATE_INPUT_REQUIRED,
+                        )
+                        return
+                    if state.all_completed():
+                        await self._emit(
+                            queue, state, task_id, context_id,
+                            "task.completed", TaskState.TASK_STATE_COMPLETED,
+                        )
+                        self._states.pop(task_id, None)
+                        return
+                    if state.has_failures():
+                        recovered = False
+                        if self._replan_on_failure:
+                            recovered = await self._replan(
+                                state, task_id, context_id, queue
+                            )
+                        if recovered:
+                            continue
+                        failed = new_text_message(
+                            "任务失败", role=Role.ROLE_AGENT,
+                            task_id=task_id, context_id=context_id,
+                        )
+                        await self._emit(
+                            queue, state, task_id, context_id,
+                            "task.failed", TaskState.TASK_STATE_FAILED,
+                            message=failed,
+                        )
+                        self._states.pop(task_id, None)
+                        return
+                    if state.has_pending_work():
+                        schedulable = bool(state.ready_nodes()) or (
+                            self._pending_count(task_id) > 0
+                        )
+                        if schedulable:
+                            await asyncio.sleep(0)
+                            continue
+                        logger.warning(
+                            "Runner stalled for task %s: %s",
+                            task_id,
+                            {node.id: node.status for node in state.nodes.values()},
+                        )
+                    else:
+                        logger.warning("Runner stalled for task %s", task_id)
+                    failed = new_text_message(
+                        "任务停滞", role=Role.ROLE_AGENT,
+                        task_id=task_id, context_id=context_id,
+                    )
+                    await self._emit(
+                        queue, state, task_id, context_id,
+                        "task.failed", TaskState.TASK_STATE_FAILED,
+                        message=failed,
+                    )
+                    self._states.pop(task_id, None)
                     return
-                logger.warning("Schedule loop stalled for task %s", task_id)
-                return
-
-            done, pending_tasks = await asyncio.wait(
-                pending_tasks, return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            if any(n.status == "input_required" for n in plan.nodes.values()):
-                await self._process_interventions(
-                    plan, task_id, context_id, event_queue
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never let the runner die silently
+            logger.exception("Runner failed for task %s", task_id)
+            state = self._states.get(task_id)
+            queue = self._queues.get(task_id)
+            if state is not None and queue is not None:
+                failed = new_text_message(
+                    f"任务失败：{exc}", role=Role.ROLE_AGENT,
+                    task_id=task_id, context_id=self._context_ids.get(task_id, ""),
                 )
+                try:
+                    await self._emit(
+                        queue, state, task_id, self._context_ids.get(task_id, ""),
+                        "task.failed", TaskState.TASK_STATE_FAILED,
+                        message=failed,
+                    )
+                except Exception:  # noqa: BLE001 - queue may already be closed
+                    logger.exception("Failed to emit task failure for %s", task_id)
+                self._states.pop(task_id, None)
+        finally:
+            self._runners.pop(task_id, None)
+            for node_task in list(self._node_tasks.pop(task_id, {})):
+                node_task.cancel()
 
-    async def _dispatch_node(
+    def _pending_count(self, task_id: str) -> int:
+        return len(self._node_tasks.get(task_id, {}))
+
+    async def _execute_node(
         self,
         node: NodeState,
-        plan: PlanState,
+        state: OrchestrationState,
         task_id: str,
         context_id: str,
-        event_queue: EventQueue,
+        *,
+        mode: str = "dispatch",
     ) -> None:
-        node.attempt += 1
-
-        # Emit dispatch intent
-        await event_queue.enqueue_event(
-            _status_update(
-                task_id, context_id, TaskState.TASK_STATE_WORKING,
-                kind="node.dispatch_intent",
+        queue = self._queues[task_id]
+        continuation = mode == "continue"
+        if mode != "resume":
+            node.attempt += 1
+        if mode == "dispatch":
+            await self._emit(
+                queue, state, task_id, context_id,
+                "node.dispatch_intent",
                 node_id=node.id,
                 attempt=node.attempt,
             )
-        )
-
-        # Dispatch to remote agent
-        artifacts: list[dict[str, Any]] = []
+        elif mode == "resume":
+            await self._emit(
+                queue, state, task_id, context_id,
+                "node.resumed",
+                node_id=node.id,
+                a2a_task_id=node.a2a_task_id,
+            )
         current = "working"
         try:
             async with asyncio.timeout(self._node_timeout):
-                current = await self._consume_remote(
-                    node, task_id, context_id, event_queue, artifacts
-                )
+                if mode == "resume":
+                    current = await self._resume_remote(
+                        node, state, task_id, context_id, queue
+                    )
+                else:
+                    current = await self._stream_remote(
+                        node,
+                        node.input_text,
+                        state,
+                        task_id,
+                        context_id,
+                        queue,
+                        continuation=continuation,
+                    )
         except TimeoutError:
             node.error = f"node timed out after {self._node_timeout}s"
             node.status = "failed"
-        except Exception as exc:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - remote agent failures are node failures
             node.error = str(exc)
             node.status = "failed"
 
-        # Handle stream end
         if current == "completed":
             node.status = "completed"
-            node.output = " ".join(
-                a.get("text", "") for a in artifacts if a.get("text")
-            ).strip() or None
-            await event_queue.enqueue_event(
-                _status_update(
-                    task_id, context_id, TaskState.TASK_STATE_WORKING,
-                    kind="node.completed",
-                    node_id=node.id,
-                    output_summary=(node.output or "")[:200],
-                )
+            await self._emit(
+                queue, state, task_id, context_id,
+                "node.completed",
+                node_id=node.id,
+                agent_name=node.agent_name,
+                output_summary=(node.output or "")[:200],
             )
+            await self._arbitrate_mentions(state, node, task_id, context_id, queue)
+            await self._deliver_queued(state, node, task_id, context_id, queue)
         elif current == "input_required":
             node.status = "input_required"
-            await event_queue.enqueue_event(
-                _status_update(
-                    task_id, context_id, TaskState.TASK_STATE_INPUT_REQUIRED,
-                    kind="node.input_required",
-                    node_id=node.id,
-                    agent_name=node.agent_name,
-                )
+            await self._emit(
+                queue, state, task_id, context_id,
+                "node.input_required",
+                TaskState.TASK_STATE_INPUT_REQUIRED,
+                node_id=node.id,
+                agent_name=node.agent_name,
+                question=node.question or "",
             )
-        elif node.status == "failed":
-            await event_queue.enqueue_event(
-                _status_update(
-                    task_id, context_id, TaskState.TASK_STATE_WORKING,
-                    kind="node.failed",
-                    node_id=node.id,
-                    error=node.error or "unknown error",
-                )
+        else:
+            node.status = "failed"
+            logger.warning(
+                "Node %s (%s) failed: %s", node.id, node.agent_name, node.error
+            )
+            await self._emit(
+                queue, state, task_id, context_id,
+                "node.failed",
+                node_id=node.id,
+                error=node.error or "unknown error",
             )
 
-    async def _consume_remote(
+    async def _stream_remote(
         self,
         node: NodeState,
+        text: str,
+        state: OrchestrationState,
         task_id: str,
         context_id: str,
-        event_queue: EventQueue,
-        artifacts: list[dict[str, Any]],
+        queue: EventQueue,
+        *,
+        continuation: bool,
     ) -> str:
-        text = node.input_text or str(node.id)
-        current = "dispatched"
-
-        async for chunk in self._remote.send_text(
-            node.agent_url, text, context_id=context_id,
+        remote_task_id = node.a2a_task_id if continuation else None
+        chunks = self._remote.send_text(
+            node.agent_url,
+            text,
+            task_id=remote_task_id,
+            context_id=context_id,
             message_id=f"{task_id}:{node.id}:{node.attempt}",
-        ):
+        )
+        current = await self._consume_chunks(
+            node, state, task_id, context_id, queue, chunks
+        )
+        return await self._ensure_terminal(
+            node, state, task_id, context_id, queue, current
+        )
+
+    async def _resume_remote(
+        self,
+        node: NodeState,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> str:
+        if not node.a2a_task_id:
+            return "failed"
+        current = "working"
+        try:
+            chunks = self._remote.subscribe_task(node.agent_url, node.a2a_task_id)
+            current = await self._consume_chunks(
+                node, state, task_id, context_id, queue, chunks
+            )
+        except Exception as exc:  # noqa: BLE001 - task may already be terminal
+            logger.debug("Resume subscribe failed for %s: %s", node.id, exc)
+        return await self._ensure_terminal(
+            node, state, task_id, context_id, queue, current
+        )
+
+    async def _ensure_terminal(
+        self,
+        node: NodeState,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+        current: str,
+    ) -> str:
+        """Follow a remote task until it settles.
+
+        A ChoirWorks peer returns control from ``execute()`` as soon as work is
+        dispatched, so the send stream may end while the remote task is still
+        running. In that case we poll the snapshot and subscribe to its updates.
+        """
+        settled = {"completed", "failed", "canceled", "input_required"}
+        while current not in settled:
+            if not node.a2a_task_id:
+                return current
+            task = await self._remote.get_task(node.agent_url, node.a2a_task_id)
+            if task is not None:
+                mapped = _REMOTE_STATE_MAP.get(task.status.state, current)
+                if task.artifacts and mapped == "completed":
+                    text = " ".join(
+                        _join_text(artifact.parts)
+                        for artifact in task.artifacts
+                        if _join_text(artifact.parts)
+                    ).strip()
+                    if text:
+                        node.output = text
+                if (
+                    mapped == "input_required"
+                    and task.status.HasField("message")
+                ):
+                    node.question = _join_text(task.status.message.parts)
+                current = mapped
+                if current in settled:
+                    return current
+            try:
+                chunks = self._remote.subscribe_task(
+                    node.agent_url, node.a2a_task_id
+                )
+                current = await self._consume_chunks(
+                    node, state, task_id, context_id, queue, chunks
+                )
+            except Exception as exc:  # noqa: BLE001 - retry via snapshot
+                logger.debug("Follow subscribe failed for %s: %s", node.id, exc)
+                await asyncio.sleep(0.2)
+        return current
+
+    async def _consume_chunks(
+        self,
+        node: NodeState,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+        chunks: Any,
+    ) -> str:
+        artifacts: list[dict[str, Any]] = []
+        current = "working"
+        async for chunk in chunks:
             if chunk.HasField("task"):
-                node.a2a_task_id = chunk.task.id
-                node.status = "dispatched"
-                current = "dispatched"
-                await event_queue.enqueue_event(
-                    _status_update(
-                        task_id, context_id, TaskState.TASK_STATE_WORKING,
-                        kind="node.dispatched",
-                        node_id=node.id,
-                        a2a_task_id=chunk.task.id,
-                    )
+                task = chunk.task
+                node.a2a_task_id = task.id or node.a2a_task_id
+                mapped = _REMOTE_STATE_MAP.get(task.status.state)
+                if mapped:
+                    current = mapped
+                if task.artifacts:
+                    artifacts[:] = [
+                        {
+                            "id": artifact.artifact_id,
+                            "name": artifact.name,
+                            "text": _join_text(artifact.parts),
+                        }
+                        for artifact in task.artifacts
+                    ]
+                node.status = "dispatched" if current == "dispatched" else node.status
+                await self._emit(
+                    queue, state, task_id, context_id,
+                    "node.dispatched",
+                    node_id=node.id,
+                    a2a_task_id=node.a2a_task_id,
                 )
             elif chunk.HasField("status_update"):
                 state = chunk.status_update.status.state
                 mapped = _REMOTE_STATE_MAP.get(state)
                 if mapped and mapped != current:
                     current = mapped
-                    if mapped == "input_required" and chunk.status_update.status.HasField("message"):
-                        question = _join_text(chunk.status_update.status.message.parts)
-                        await event_queue.enqueue_event(
-                            _status_update(
-                                task_id, context_id, TaskState.TASK_STATE_INPUT_REQUIRED,
-                                kind="intervention.question",
-                                node_id=node.id,
-                                agent_name=node.agent_name,
-                                question=question,
-                            )
+                    if (
+                        mapped == "input_required"
+                        and chunk.status_update.status.HasField("message")
+                    ):
+                        node.question = _join_text(
+                            chunk.status_update.status.message.parts
                         )
             elif chunk.HasField("artifact_update"):
                 update = chunk.artifact_update
@@ -464,158 +875,701 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         artifacts[artifacts.index(entry)] = merged
                     else:
                         artifacts.append(merged)
-
-                # Forward artifact chunk (partial if not last_chunk)
                 art = Artifact(
                     artifact_id=f"{node.id}:{update.artifact.artifact_id}",
                     name=update.artifact.name or node.name,
                     parts=[Part(text=piece)],
                 )
-                await event_queue.enqueue_event(
+                await queue.enqueue_event(
                     TaskArtifactUpdateEvent(
                         task_id=task_id,
                         context_id=context_id,
                         artifact=art,
                         append=append,
                         last_chunk=bool(update.last_chunk),
-                        metadata=_struct({
-                            "node_id": node.id,
-                            "agent_name": node.agent_name,
-                        }),
+                        metadata=_struct(
+                            {
+                                "kind": "node.artifact",
+                                "node_id": node.id,
+                                "agent_name": node.agent_name,
+                            }
+                        ),
                     )
                 )
             elif chunk.HasField("message"):
                 msg_text = _join_text(chunk.message.parts)
                 artifacts.append({"id": "message", "name": "message", "text": msg_text})
-                # Post agent message via status_update (not bare Message, which is
-                # disallowed in task mode)
                 agent_msg = new_text_message(
                     msg_text, role=Role.ROLE_AGENT,
                     task_id=task_id, context_id=context_id,
                 )
-                ParseDict({A2A_ROOM_URI: {
-                    "sender": node.agent_name,
-                    "node_id": node.id,
-                    "role": "agent",
-                }}, agent_msg.metadata)
-                await event_queue.enqueue_event(
-                    TaskStatusUpdateEvent(
-                        task_id=task_id,
-                        context_id=context_id,
-                        status=TaskStatus(
-                            state=TaskState.TASK_STATE_WORKING,
-                            message=agent_msg,
-                        ),
-                        metadata=_struct({"kind": "agent.message", "node_id": node.id}),
+                ParseDict(
+                    {
+                        A2A_ROOM_URI: {
+                            "sender": node.agent_name,
+                            "node_id": node.id,
+                            "role": "agent",
+                        }
+                    },
+                    agent_msg.metadata,
+                )
+                await queue.enqueue_event(
+                    _status_update(
+                        task_id,
+                        context_id,
+                        TaskState.TASK_STATE_WORKING,
+                        kind="agent.message",
+                        orch_state=state,
+                        message=agent_msg,
+                        node_id=node.id,
                     )
                 )
 
+        node.output = " ".join(
+            artifact.get("text", "") for artifact in artifacts if artifact.get("text")
+        ).strip() or None
         return current
 
-    async def _handle_failures(
-        self, plan: PlanState, task_id: str, context_id: str, event_queue: EventQueue
-    ) -> None:
-        for node in plan.nodes.values():
-            if node.status != "failed":
-                continue
-            if node.attempt < self._max_node_attempts:
-                # Retry
-                node.status = "pending"
-                node.error = None
-                await event_queue.enqueue_event(
-                    _status_update(
-                        task_id, context_id, TaskState.TASK_STATE_WORKING,
-                        kind="node.retry_scheduled",
-                        node_id=node.id,
-                        attempt=node.attempt + 1,
-                    )
-                )
-            else:
-                logger.warning(
-                    "Node %s exhausted retries (%d attempts)", node.id, node.attempt
-                )
+    # -------------------------------------------------------- interventions
 
-    async def _process_interventions(
-        self, plan: PlanState, task_id: str, context_id: str, event_queue: EventQueue
-    ) -> None:
-        for node in plan.nodes.values():
-            if node.status != "input_required":
+    async def _settle_input(
+        self,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> bool:
+        progress = False
+        for node in list(state.input_required_nodes()):
+            intervention = state.pending_intervention_for(node.id)
+            if intervention is not None:
                 continue
+            helpers = [
+                n
+                for n in state.nodes.values()
+                if n.derived
+                and n.assist_requested_by == node.id
+                and n.status == "completed"
+            ]
+            if helpers:
+                helper = helpers[0]
+                intervention = state.pending_intervention_for(node.id)
+                if intervention is None:
+                    intervention = state.add_intervention(
+                        node.id, node.question or "需要协助"
+                    )
+                intervention.status = "resolved"
+                intervention.answer = helper.output
+                intervention.responder = helper.id
+                node.input_text = helper.output or "(协助完成，无输出)"
+                node.status = "ready"
+                node.question = None
+                await self._emit(
+                    queue, state, task_id, context_id,
+                    "intervention.resolved",
+                    intervention_id=intervention.id,
+                    node_id=node.id,
+                    responder=helper.id,
+                )
+                progress = True
+                continue
+            active_helpers = [
+                n
+                for n in state.nodes.values()
+                if n.derived
+                and n.assist_requested_by == node.id
+                and n.status in ACTIVE_NODE_STATUSES | {"pending", "ready"}
+            ]
+            if active_helpers:
+                continue
+
             policy = self._policy.resolve(
                 node.policy_override, node.agent_name, None, None
             )
-            if policy == "human":
-                # Leave as input_required - wait for human response
-                continue
             if policy == "auto_llm":
-                # Try to auto-answer
-                question = node.output or ""
+                question = node.question or node.output or ""
                 try:
                     answer = await self._llm.text(
-                        system="You are helping resolve a question during task execution.",
+                        system=(
+                            "You are the orchestrator of a multi-agent group. "
+                            "Answer the blocked agent's question concisely and directly."
+                        ),
                         user=question,
                     )
-                    # Re-dispatch with the answer
-                    node.status = "pending"
-                    node.input_text = answer
-                except Exception:
-                    logger.warning("Auto-LLM intervention failed for node %s", node.id)
-            # peer_agent: would dispatch to another agent (simplified)
+                except Exception:  # noqa: BLE001 - fall back to asking the human
+                    logger.exception("auto_llm intervention failed for %s", node.id)
+                    await self._request_human(state, node, task_id, context_id, queue)
+                    continue
+                intervention = state.add_intervention(
+                    node.id, node.question or "需要确认"
+                )
+                intervention.status = "resolved"
+                intervention.answer = answer
+                intervention.responder = "auto_llm"
+                node.input_text = answer
+                node.status = "ready"
+                node.question = None
+                await self._emit(
+                    queue, state, task_id, context_id,
+                    "intervention.resolved",
+                    intervention_id=intervention.id,
+                    node_id=node.id,
+                    responder="auto_llm",
+                )
+                progress = True
+            elif policy == "peer_agent":
+                if await self._spawn_peer(state, node, task_id, context_id, queue):
+                    progress = True
+                else:
+                    await self._request_human(
+                        state, node, task_id, context_id, queue
+                    )
+            else:
+                await self._request_human(state, node, task_id, context_id, queue)
+        return progress
+
+    async def _request_human(
+        self,
+        state: OrchestrationState,
+        node: NodeState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> None:
+        intervention = state.add_intervention(node.id, node.question or "需要确认")
+        question_msg = new_text_message(
+            f"@{node.agent_name} 需要确认：{intervention.question}",
+            role=Role.ROLE_AGENT,
+            task_id=task_id,
+            context_id=context_id,
+        )
+        question_msg.message_id = intervention.id
+        ParseDict(
+            {
+                A2A_ROOM_URI: {
+                    "sender": "assistant",
+                    "role": "assistant",
+                    "kind": "intervention.question",
+                }
+            },
+            question_msg.metadata,
+        )
+        await self._emit(
+            queue, state, task_id, context_id,
+            "intervention.requested",
+            TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=question_msg,
+            intervention_id=intervention.id,
+            node_id=node.id,
+            agent_name=node.agent_name,
+            question=intervention.question,
+        )
+
+    async def _spawn_peer(
+        self,
+        state: OrchestrationState,
+        node: NodeState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> bool:
+        if state.derived_count >= self._max_derived_nodes:
+            return False
+        agents = await self._registry.list()
+        candidates = [agent for agent in agents if agent.name != node.agent_name]
+        if not candidates:
+            return False
+        choice = await self._choose_peer(node, candidates)
+        if choice is None:
+            return False
+        agent = next(
+            (item for item in candidates if item.name == choice.agent_name), None
+        )
+        if agent is None:
+            return False
+        state.derived_count += 1
+        helper_id = f"{node.id}-h{state.derived_count}"
+        helper = NodeState(
+            id=helper_id,
+            name=f"协助 · {node.name}",
+            agent_name=agent.name,
+            agent_url=agent.card_url,
+            deps=[],
+            input_text=choice.instruction
+            or f"请协助回答以下问题：\n{node.question or node.input_text}",
+            derived=True,
+            assist_requested_by=node.id,
+        )
+        state.nodes[helper_id] = helper
+        await self._join_members(
+            state, [agent.name], "peer_assist", task_id, context_id, queue
+        )
+        await self._emit_room_message(
+            queue,
+            state,
+            task_id,
+            context_id,
+            "assist.dispatched",
+            f"@{node.agent_name} 请求 @{agent.name} 协助，已加入工作",
+        )
+        await self._persist(queue, state, task_id, context_id)
+        return True
+
+    async def _choose_peer(
+        self, node: NodeState, candidates: list[Any]
+    ) -> PeerChoice | None:
+        capabilities = "\n".join(
+            f"- {agent.name}: {agent.card.get('description', '')}"
+            for agent in candidates
+        )
+        user = (
+            f"Requester: {node.agent_name}\n"
+            f"Question / blocked work:\n{node.question or node.input_text}\n\n"
+            f"Available agents:\n{capabilities}"
+        )
+        try:
+            choice = await self._llm.structured(
+                system=PEER_SYSTEM, user=user, schema=PeerChoice
+            )
+        except Exception:  # noqa: BLE001 - fall back to first candidate
+            return PeerChoice(agent_name=candidates[0].name)
+        names = {agent.name for agent in candidates}
+        if choice.agent_name not in names:
+            return PeerChoice(agent_name=candidates[0].name)
+        return choice
+
+    async def _answer_intervention(
+        self,
+        state: OrchestrationState,
+        text: str,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+    ) -> None:
+        pending = state.pending_interventions()
+        if not pending or not text:
+            return
+        intervention = pending[0]
+        intervention.status = "resolved"
+        intervention.answer = text
+        intervention.responder = "human"
+        node = state.nodes.get(intervention.node_id)
+        if node is not None:
+            node.input_text = text
+            node.question = None
+            node.status = "ready"
+        await self._emit(
+            event_queue, state, task_id, context_id,
+            "intervention.resolved",
+            node_id=intervention.node_id,
+            intervention_id=intervention.id,
+            responder="human",
+        )
+        self._start_runner(task_id)
+
+    # -------------------------------------------------------------- routing
+
+    async def _route_message(
+        self,
+        state: OrchestrationState,
+        text: str,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+        room: dict[str, Any],
+    ) -> None:
+        if not text:
+            return
+        active = state.active_nodes()
+        quote_id = room.get("quote_id")
+        interrupt = bool(room.get("interrupt"))
+
+        if quote_id and not interrupt:
+            quoted_node = next(
+                (
+                    node
+                    for node in state.nodes.values()
+                    if node.id == quote_id or f"{task_id}:{node.id}" == quote_id
+                ),
+                None,
+            )
+            if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
+                queued = state.enqueue(
+                    quoted_node.id, text, sender="user", quote_id=str(quote_id)
+                )
+                await self._emit_room_message(
+                    event_queue,
+                    state,
+                    task_id,
+                    context_id,
+                    "message.queued",
+                    f"已排队，将在 @{quoted_node.agent_name} 当前工作结束后投递",
+                    queued_message_id=queued.id,
+                    node_id=quoted_node.id,
+                )
+                return
+            if quoted_node is not None and quoted_node.status == "completed":
+                await self._spawn_followup_node(
+                    state, text, quoted_node, task_id, context_id, event_queue
+                )
+                return
+
+        if interrupt and active:
+            node = active[0]
+            if node.a2a_task_id:
+                await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
+            node.status = "canceled"
+            for blocked in state.blocked_nodes():
+                blocked.status = "invalidated"
+            await self._emit(
+                event_queue, state, task_id, context_id,
+                "node.canceled",
+                node_id=node.id,
+                agent_name=node.agent_name,
+            )
+            await self._emit_room_message(
+                event_queue,
+                state,
+                task_id,
+                context_id,
+                "task.interrupted",
+                f"已打断 @{node.agent_name} 的当前工作，转入新任务",
+            )
+            await self._spawn_followup_node(
+                state, text, node, task_id, context_id, event_queue, deps=[]
+            )
+            return
+
+        target = active[0] if active else next(
+            (n for n in state.nodes.values() if n.status in {"pending", "ready"}),
+            None,
+        )
+        if target is not None:
+            queued = state.enqueue(
+                target.id,
+                text,
+                sender="user",
+                quote_id=str(quote_id) if quote_id else None,
+            )
+            await self._emit_room_message(
+                event_queue,
+                state,
+                task_id,
+                context_id,
+                "message.queued",
+                f"已排队，将在 @{target.agent_name} 当前工作结束后投递",
+                queued_message_id=queued.id,
+                node_id=target.id,
+            )
+            return
+
+        # No plan left to attach to: start a follow-up plan in place.
+        await self._plan_and_launch(
+            state, text, task_id, context_id, event_queue, follow_up=True
+        )
+
+    async def _spawn_followup_node(
+        self,
+        state: OrchestrationState,
+        text: str,
+        anchor: NodeState,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+        *,
+        deps: list[str] | None = None,
+    ) -> None:
+        if state.derived_count >= self._max_derived_nodes:
+            return
+        state.derived_count += 1
+        node_id = f"{anchor.id}-f{state.derived_count}"
+        input_text = text
+        if anchor.output:
+            input_text = (
+                f"引用 @{anchor.agent_name} 此前产出：\n{anchor.output[:MAX_PEER_CONTEXT]}\n\n"
+                f"新要求：{text}"
+            )
+        followup = NodeState(
+            id=node_id,
+            name=f"继续 · {anchor.name}",
+            agent_name=anchor.agent_name,
+            agent_url=anchor.agent_url,
+            deps=list(deps if deps is not None else [anchor.id]),
+            input_text=input_text,
+            derived=True,
+        )
+        state.nodes[node_id] = followup
+        await self._emit_room_message(
+            event_queue,
+            state,
+            task_id,
+            context_id,
+            "followup.dispatched",
+            f"已创建 @{anchor.agent_name} 的接续任务",
+        )
+        await self._persist(event_queue, state, task_id, context_id)
+        self._start_runner(task_id)
+
+    async def _deliver_queued(
+        self,
+        state: OrchestrationState,
+        node: NodeState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> None:
+        messages = state.take_queued(node.id)
+        if not messages:
+            return
+        text = "\n\n".join(message.text for message in messages)
+        for message in messages:
+            await self._emit(
+                queue, state, task_id, context_id,
+                "message.delivered",
+                node_id=node.id,
+                message_id=message.id,
+            )
+        await self._spawn_followup_node(
+            state, text, node, task_id, context_id, queue, deps=[node.id]
+        )
+        await self._emit_room_message(
+            queue,
+            state,
+            task_id,
+            context_id,
+            "message.delivered",
+            f"排队消息已投递给 @{node.agent_name}",
+            node_id=node.id,
+        )
+
+    async def _arbitrate_mentions(
+        self,
+        state: OrchestrationState,
+        node: NodeState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> None:
+        if not node.output:
+            return
+        agents = await self._registry.list()
+        known = {agent.name: agent for agent in agents}
+        for name in dict.fromkeys(re.findall(r"@([A-Za-z0-9_-]+)", node.output)):
+            if name == node.agent_name or name not in known:
+                continue
+            if state.assist_nodes_for(name, node.id):
+                continue
+            if state.derived_count >= self._max_derived_nodes:
+                return
+            state.derived_count += 1
+            helper_id = f"{node.id}-a{state.derived_count}"
+            helper = NodeState(
+                id=helper_id,
+                name=f"协助 · {node.name}",
+                agent_name=name,
+                agent_url=known[name].card_url,
+                deps=[],
+                input_text=(
+                    f"@{node.agent_name} 在协作中请求你的协助。\n"
+                    f"参考上下文：\n{(node.output or '')[:MAX_PEER_CONTEXT]}\n\n"
+                    f"请提供你的专业协助。"
+                ),
+                derived=True,
+                assist_requested_by=node.id,
+                source_message_id=node.id,
+            )
+            state.nodes[helper_id] = helper
+            await self._join_members(
+                state, [name], "agent_mention", task_id, context_id, queue
+            )
+            await self._emit_room_message(
+                queue,
+                state,
+                task_id,
+                context_id,
+                "mention.arbitrated",
+                f"@{node.agent_name} 请求 @{name} 协助，已加入工作",
+            )
+            await self._persist(queue, state, task_id, context_id)
+            self._start_runner(task_id)
+
+    # ---------------------------------------------------------------- retry
+
+    async def _replan(
+        self,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
+    ) -> bool:
+        outputs = "\n".join(
+            f"- @{node.agent_name}: {(node.output or '')[:400]}"
+            for node in state.nodes.values()
+            if node.status == "completed"
+        )
+        errors = ", ".join(
+            node.error or node.id for node in state.nodes.values() if node.status == "failed"
+        )
+        try:
+            draft = await self._planner.plan(
+                state.rationale or "继续完成任务",
+                reason=f"nodes failed: {errors}",
+                context=outputs or None,
+            )
+        except PlanningFailed:
+            return False
+        agents = await self._registry.list()
+        agent_urls = {agent.name: agent.card_url for agent in agents}
+        state.plan_version += 1
+        state.plan_id = self._new_plan_id()
+        state.nodes = {}
+        state.queue = {}
+        for node_draft in draft.nodes:
+            state.nodes[node_draft.id] = NodeState(
+                id=node_draft.id,
+                name=node_draft.name,
+                agent_name=node_draft.agent_name,
+                agent_url=agent_urls.get(node_draft.agent_name, ""),
+                deps=list(node_draft.deps),
+                input_text=str(node_draft.input.get("text", "")),
+            )
+        await self._emit(
+            queue, state, task_id, context_id,
+            "plan.created",
+            TaskState.TASK_STATE_WORKING,
+            plan_id=state.plan_id,
+            plan_version=state.plan_version,
+            rationale=draft.rationale,
+            nodes=[
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "agent_name": n.agent_name,
+                    "deps": n.deps,
+                }
+                for n in state.nodes.values()
+            ],
+        )
+        await self._join_members(
+            state,
+            [n.agent_name for n in state.nodes.values() if n.agent_name],
+            "plan",
+            task_id,
+            context_id,
+            queue,
+        )
+        return True
+
+    # ------------------------------------------------------------ emitting
+
+    async def _emit(
+        self,
+        queue: EventQueue,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        kind: str,
+        state_name: TaskState = TaskState.TASK_STATE_WORKING,
+        *,
+        message: Message | None = None,
+        **metadata: Any,
+    ) -> None:
+        await queue.enqueue_event(
+            _status_update(
+                task_id,
+                context_id,
+                state_name,
+                kind=kind,
+                orch_state=state,
+                message=message,
+                **metadata,
+            )
+        )
+
+    async def _persist(
+        self,
+        queue: EventQueue,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+    ) -> None:
+        await self._emit(queue, state, task_id, context_id, "state.updated")
+
+    async def _emit_room_message(
+        self,
+        queue: EventQueue,
+        state: OrchestrationState,
+        task_id: str,
+        context_id: str,
+        kind: str,
+        text: str,
+        *,
+        node_id: str | None = None,
+        queued_message_id: str | None = None,
+    ) -> None:
+        message = new_text_message(
+            text, role=Role.ROLE_AGENT, task_id=task_id, context_id=context_id
+        )
+        room: dict[str, Any] = {"sender": "assistant", "role": "assistant"}
+        if node_id:
+            room["node_id"] = node_id
+        ParseDict({A2A_ROOM_URI: room}, message.metadata)
+        await self._emit(
+            queue,
+            state,
+            task_id,
+            context_id,
+            kind,
+            message=message,
+            node_id=node_id,
+            queued_message_id=queued_message_id,
+        )
 
     async def _join_members(
-        self, event_queue: EventQueue, task_id: str, context_id: str,
+        self,
+        state: OrchestrationState,
         names: list[str],
+        reason: str,
+        task_id: str,
+        context_id: str,
+        queue: EventQueue,
     ) -> None:
         records = await self._registry.list()
-        known = {r.name: r for r in records}
-        for name in names:
-            if name not in known:
+        known = {record.name: record for record in records}
+        for name in dict.fromkeys(names):
+            record = known.get(name)
+            if record is None:
                 continue
-            record = known[name]
-            await event_queue.enqueue_event(
-                _status_update(
-                    task_id, context_id, TaskState.TASK_STATE_WORKING,
-                    kind="room.participant_joined",
-                    agent_name=name,
-                    agent_url=record.card_url,
-                    reason="human_mention",
-                )
+            if not state.add_member(name, record.card_url, reason):
+                continue
+            await self._emit(
+                queue, state, task_id, context_id,
+                "room.participant_joined",
+                agent_name=name,
+                agent_url=record.card_url,
+                reason=reason,
             )
 
-    def _extract_mentions(self, text: str) -> list[str]:
-        import re
-        records = asyncio.get_event_loop()
-        # Simple regex extraction - will be validated against registry
-        return re.findall(r"@([A-Za-z0-9_-]+)", text)
-
-    async def _announce_completion(
-        self, plan: PlanState, task_id: str, context_id: str, event_queue: EventQueue
-    ) -> None:
-        summaries = []
-        for node in plan.nodes.values():
-            if node.status == "completed":
-                summary = node.output or "(no output)"
-                summaries.append(f"- {node.agent_name or node.name}: {summary[:80]}")
-        if summaries:
-            completion_msg = new_text_message(
-                "任务完成：\n" + "\n".join(summaries),
-                role=Role.ROLE_AGENT,
-                task_id=task_id,
-                context_id=context_id,
-            )
-            ParseDict({A2A_ROOM_URI: {
-                "sender": "assistant",
-                "role": "assistant",
-                "kind": "task_completion",
-            }}, completion_msg.metadata)
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_WORKING,
-                        message=completion_msg,
-                    ),
-                    metadata=_struct({"kind": "task.completion_summary"}),
-                )
-            )
+    async def _context_brief(
+        self, context_id: str, exclude_task_id: str
+    ) -> str:
+        if not context_id or self._task_store is None:
+            return ""
+        try:
+            params = ListTasksRequest(context_id=context_id, page_size=50)
+            page = await self._task_store.list(params, ServerCallContext())
+        except Exception:  # noqa: BLE001 - context is best effort
+            return ""
+        lines: list[str] = []
+        for task in page.tasks:
+            if task.id == exclude_task_id:
+                continue
+            state = load_state(task)
+            if state is None:
+                continue
+            for node in state.nodes.values():
+                if node.status == "completed" and node.output:
+                    lines.append(
+                        f"- [{task.id}] @{node.agent_name}: {node.output[:400]}"
+                    )
+        return "\n".join(lines[-20:])

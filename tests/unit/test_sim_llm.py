@@ -1,9 +1,7 @@
 from datetime import UTC, datetime
 
-import pytest
-
+from choirworks.a2a.executor import PeerChoice
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.orchestrator import PeerChoice
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
 from choirworks.models.domain import AgentRecord
@@ -132,3 +130,12 @@ async def test_raw_response_has_reasoning_content():
     content = raw.choices[0].message.content
     assert "收到请求" in content
     assert "计划" in content
+
+
+async def test_structured_with_raw_returns_reasoning():
+    client = make_client()
+    _draft, reasoning = await client.structured_with_raw(
+        system="plan", user=prompt("帮我调研"), schema=PlanDraft
+    )
+    assert "收到请求" in reasoning
+    assert "计划" in reasoning

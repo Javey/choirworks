@@ -1,10 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
 
-import httpx
 import pytest
-from a2a.client import A2ACardResolver, ClientConfig, create_client
 from a2a.types import (
+    CancelTaskRequest,
     GetTaskRequest,
     Message,
     Part,
@@ -14,217 +12,153 @@ from a2a.types import (
 )
 from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
 
-from choirworks.api.app import create_app
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
-from tests.support.fakes import FakeLLM
+from tests.support.sdk import (
+    sdk_hub,
+    task_metadata,
+    task_nodes,
+    wait_for_task,
+)
 
 
-def _plan(agent_name: str) -> PlanDraft:
+def _plan(agent_name: str, text: str = "问题") -> PlanDraft:
     return PlanDraft(
         rationale="single",
         nodes=[
             PlanNodeDraft(
-                id="n1",
-                name=agent_name,
-                agent_name=agent_name,
-                input={"text": "问题"},
+                id="n1", name=agent_name, agent_name=agent_name, input={"text": text}
             )
         ],
     )
 
 
 def _message(
-    text: str, *, task_id: str | None = None, context_id: str | None = None
+    text: str, *, task_id: str = "", context_id: str = ""
 ) -> SendMessageRequest:
     return SendMessageRequest(
         message=Message(
-            message_id="m-1",
+            message_id=f"m-{text[:6]}",
             role=Role.ROLE_USER,
             parts=[Part(text=text)],
-            task_id=task_id or "",
-            context_id=context_id or "",
+            task_id=task_id,
+            context_id=context_id,
         )
     )
 
 
-@asynccontextmanager
-async def _hub(tmp_path, db_name, agent_name, agent_url, plans):
+async def _send_once(client, request) -> str:
+    task_id = ""
+    async for response in client.send_message(request):
+        if response.WhichOneof("payload") == "task":
+            task_id = response.task.id
+    return task_id
+
+
+async def test_send_creates_task_with_plan(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "send.db", plans=[_plan("echo")] * 2
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        task_id = await _send_once(client, _message("请评估这个问题"))
+        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
+        assert task.id == task_id
+        assert task.context_id
+        assert task_nodes(task)["n1"]["output"] == "echo:问题"
+
+
+async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "send.db", plans=[_plan("echo")] * 4
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        first_id = await _send_once(client, _message("第一个任务"))
+        first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
+        second_id = await _send_once(
+            client, _message("第二个任务", context_id=first.context_id)
+        )
+        second = await wait_for_task(
+            client, second_id, {TaskState.TASK_STATE_COMPLETED}
+        )
+        assert second.id != first.id
+        assert second.context_id == first.context_id
+
+
+async def test_send_answers_pending_intervention(tmp_path, ask_agent):
     settings = Settings(
-        store={"db_path": tmp_path / db_name},
+        store={"db_path": tmp_path / "send.db"},
         a2a={"public_url": "http://test"},
-        scheduler={"retry_backoff_seconds": 0.0},
         policies={"default": "human", "timeout_seconds": 30},
+        scheduler={"retry_backoff_seconds": 0.0},
     )
-    app = create_app(settings, llm=FakeLLM(structured_results=list(plans)))
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as http:
-            await http.post(
-                "/v1/agents", json={"name": agent_name, "card_url": agent_url}
-            )
-            card = await A2ACardResolver(
-                httpx_client=http, base_url="http://test"
-            ).get_agent_card()
-            client = await create_client(
-                agent=card,
-                client_config=ClientConfig(streaming=False, httpx_client=http),
-            )
-            yield app, http, client
-            await client.close()
+    async with sdk_hub(
+        tmp_path,
+        "send.db",
+        settings=settings,
+        plans=[_plan("ask", "请评估")] * 4,
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
+        task_id = await _send_once(client, _message("请评估"))
+        pending = await wait_for_task(
+            client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED}
+        )
+        interventions = task_metadata(pending).get("interventions", [])
+        assert any(item.get("status") == "pending" for item in interventions)
+        resumed_id = await _send_once(
+            client, _message("这是答复", task_id=task_id, context_id=pending.context_id)
+        )
+        assert resumed_id == task_id
+        resumed = await wait_for_task(
+            client, task_id, {TaskState.TASK_STATE_COMPLETED}
+        )
+        assert "这是答复" in task_nodes(resumed)["n1"]["output"]
+        history_text = " ".join(
+            part.text for msg in resumed.history for part in msg.parts if part.HasField("text")
+        )
+        assert "这是答复" in history_text
 
 
-@pytest.fixture
-async def hub_echo(tmp_path, echo_agent):
-    async with _hub(
-        tmp_path, "echo.db", "echo", echo_agent.url, [_plan("echo")] * 4
-    ) as value:
-        yield value
-
-
-@pytest.fixture
-async def hub_ask(tmp_path, ask_agent):
-    async with _hub(
-        tmp_path, "ask.db", "ask", ask_agent.url, [_plan("ask")] * 2
-    ) as value:
-        yield value
-
-
-async def _send(client, request: SendMessageRequest):
-    responses = [response async for response in client.send_message(request)]
-    assert responses
-    last = responses[-1]
-    if last.WhichOneof("payload") == "task":
-        return last.task
-    return last.message
-
-
-async def test_send_creates_task_and_conversation(hub_echo):
-    _, http, client = hub_echo
-    task = await _send(client, _message("请评估这个问题"))
-    assert task.id
-    assert task.context_id
-    timeline = (
-        await http.get(f"/v1/conversations/{task.context_id}/messages")
-    ).json()
-    assert timeline["messages"][0]["role"] == "user"
-
-
-async def test_send_with_context_reuses_conversation(hub_echo):
-    _, _, client = hub_echo
-    first = await _send(client, _message("第一个任务"))
-    second = await _send(client, _message("第二个任务", context_id=first.context_id))
-    assert second.context_id == first.context_id
-    assert second.id != first.id
-
-
-async def test_send_terminal_task_creates_followup(hub_echo):
-    app, http, client = hub_echo
-    first = await _send(client, _message("第一个任务"))
-    for _ in range(200):
-        status = (await http.get(f"/v1/tasks/{first.id}")).json()["task"]["status"]
-        if status in {"completed", "failed", "canceled"}:
-            break
-        await asyncio.sleep(0.05)
-    else:
-        raise AssertionError("first task never reached terminal state")
-    second = await _send(client, _message("继续", task_id=first.id))
-    assert second.id != first.id
-    assert second.context_id == first.context_id
-
-
-async def test_send_answers_pending_intervention(hub_ask):
-    app, http, client = hub_ask
-    first = await _send(client, _message("请评估"))
-    for _ in range(200):
-        task = await client.get_task(GetTaskRequest(id=first.id))
-        if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            break
-        await asyncio.sleep(0.05)
-    else:
-        raise AssertionError("task never reached input-required")
-    resumed = await _send(client, _message("这是答复", task_id=first.id))
-    assert resumed.id == first.id
-    assert resumed.status.state != TaskState.TASK_STATE_INPUT_REQUIRED
-    timeline = (
-        await http.get(f"/v1/conversations/{first.context_id}/messages")
-    ).json()
-    assert any(
-        message["text"] == "这是答复" and message["role"] == "user"
-        for message in timeline["messages"]
-    )
-
-
-async def test_send_running_task_stays_same(tmp_path):
+async def test_send_to_running_task_queues_message(tmp_path):
     slow = await start_fake_agent("slow")
     try:
-        async with _hub(tmp_path, "slow.db", "slow", slow.url, []) as (
-            _app,
-            http,
-            client,
-        ):
-            first = await _send(client, _message("@slow 开始"))
+        async with sdk_hub(
+            tmp_path, "send.db", plans=[_plan("slow")] * 2
+        ) as (_app, http, client):
+            await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
+            task_id = await _send_once(client, _message("开始"))
             for _ in range(200):
-                nodes = (await http.get(f"/v1/tasks/{first.id}")).json()["nodes"]
-                if any(
-                    node["status"] in {"dispatched", "working"} for node in nodes
-                ):
+                task = await client.get_task(GetTaskRequest(id=task_id))
+                if task_nodes(task)["n1"]["status"] in {"dispatched", "working"}:
                     break
                 await asyncio.sleep(0.05)
-            else:
-                raise AssertionError("no active node appeared")
-            second = await _send(client, _message("补充说明", task_id=first.id))
-            assert second.id == first.id
-            timeline = (
-                await http.get(f"/v1/conversations/{first.context_id}/messages")
-            ).json()
-            queued = [
-                message
-                for message in timeline["messages"]
-                if message["text"] == "补充说明"
-            ]
-            assert queued
-            assert queued[0]["queued_for_node_id"]
+            second_id = await _send_once(
+                client, _message("补充说明", task_id=task_id, context_id=task.context_id)
+            )
+            assert second_id == task_id
+            task = await client.get_task(GetTaskRequest(id=task_id))
+            queue = task_metadata(task).get("queue", {})
+            assert "补充说明" in queue["n1"][0]["text"]
+            await client.cancel_task(CancelTaskRequest(id=task_id))
     finally:
         await slow.stop()
 
 
-async def test_send_pending_task_without_active_node_is_room_only(hub_echo):
-    app, http, client = hub_echo
-    task_id = await app.state.task_service.create_pending_task("等待中任务")
-    snapshot = await app.state.task_service.get_snapshot(task_id)
-    conversation_id = snapshot.task.conversation_id
-
-    reply = await _send(client, _message("补充说明", task_id=task_id))
-
-    assert reply.id == task_id
-    timeline = (
-        await http.get(f"/v1/conversations/{conversation_id}/messages")
-    ).json()
-    queued = [
-        message
-        for message in timeline["messages"]
-        if message["text"] == "补充说明"
-    ]
-    assert queued
-    assert queued[0]["queued_for_node_id"] is None
+async def test_send_empty_text_raises(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "send.db", plans=[_plan("echo")] * 2
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        with pytest.raises(InvalidParamsError):
+            await _send_once(
+                client,
+                SendMessageRequest(
+                    message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[])
+                ),
+            )
 
 
-async def test_send_empty_text_raises(hub_echo):
-    _, _, client = hub_echo
-    with pytest.raises(InvalidParamsError):
-        await _send(
-            client,
-            SendMessageRequest(
-                message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[])
-            ),
-        )
-
-
-async def test_send_unknown_task_raises(hub_echo):
-    _, _, client = hub_echo
-    with pytest.raises(TaskNotFoundError):
-        await _send(client, _message("继续", task_id="missing"))
+async def test_send_unknown_task_raises(tmp_path):
+    async with sdk_hub(tmp_path, "send.db") as (_app, _http, client):
+        with pytest.raises(TaskNotFoundError):
+            await _send_once(client, _message("继续", task_id="missing"))

@@ -1,14 +1,18 @@
-import asyncio
-
-import httpx
-import pytest
-from a2a.client import A2ACardResolver, ClientConfig, create_client
-from a2a.types import Message, Part, Role, SendMessageRequest
+from a2a.server.context import ServerCallContext
+from a2a.types import (
+    ListTasksRequest,
+    Message,
+    Part,
+    Role,
+    SendMessageRequest,
+    TaskState,
+)
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
 from tests.support.hubs import start_hub
+from tests.support.sdk import sdk_hub, wait_for_task
 
 
 def _settings(port: int, db: str) -> Settings:
@@ -19,90 +23,60 @@ def _settings(port: int, db: str) -> Settings:
     )
 
 
-def _inner_plan() -> PlanDraft:
+def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
-        rationale="inner",
+        rationale="nested",
         nodes=[
             PlanNodeDraft(
-                id="n1", name="echo", agent_name="echo", input={"text": "hi"}
+                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
             )
         ],
     )
 
 
-async def _connect(base_url: str):
-    http = httpx.AsyncClient(base_url=base_url, timeout=10.0)
-    card = await A2ACardResolver(httpx_client=http, base_url=base_url).get_agent_card()
-    client = await create_client(
-        agent=card, client_config=ClientConfig(streaming=False, httpx_client=http)
-    )
-    return http, client
-
-
-@pytest.fixture
-async def hubs(tmp_path, echo_agent):
+async def test_outer_dispatches_task_to_inner_instance(tmp_path, echo_agent):
     async with start_hub(
         lambda port: _settings(port, str(tmp_path / "inner.db")),
-        llm=FakeLLM(structured_results=[_inner_plan()]),
+        llm=FakeLLM(structured_results=[_plan("echo")]),
     ) as (inner_app, inner_url):
         await inner_app.state.registry.register("echo", echo_agent.url)
-        async with start_hub(
-            lambda port: _settings(port, str(tmp_path / "outer.db"))
-        ) as (outer_app, outer_url):
-            http, client = await _connect(outer_url)
-            try:
-                resp = await http.post(
-                    "/v1/agents", json={"name": "inner", "card_url": inner_url}
-                )
-                assert resp.status_code == 201, resp.text
-                yield outer_app, http, client, inner_app, inner_url
-            finally:
-                await client.close()
-                await http.aclose()
-
-
-async def test_outer_dispatches_task_to_inner_instance(hubs):
-    _outer_app, http, client, inner_app, _inner_url = hubs
-    responses = [
-        response
-        async for response in client.send_message(
-            SendMessageRequest(
-                message=Message(
-                    message_id="m-1",
-                    role=Role.ROLE_USER,
-                    parts=[Part(text="@inner 请处理这个请求")],
-                )
+        async with sdk_hub(
+            tmp_path,
+            "outer.db",
+            plans=[_plan("inner")],
+            settings=Settings(
+                store={"db_path": tmp_path / "outer.db"},
+                a2a={"public_url": "http://test"},
+                scheduler={"retry_backoff_seconds": 0.0},
+            ),
+        ) as (_outer_app, http, client):
+            resp = await http.post(
+                "/v1/agents", json={"name": "inner", "card_url": inner_url}
             )
-        )
-    ]
-    assert responses[-1].WhichOneof("payload") == "task"
-    outer_task = responses[-1].task
-    assert outer_task.context_id
-
-    snapshot = None
-    for _ in range(400):
-        snapshot = (await http.get(f"/v1/tasks/{outer_task.id}")).json()
-        if snapshot["task"]["status"] in {"completed", "failed"}:
-            break
-        await asyncio.sleep(0.05)
-    assert snapshot["task"]["status"] == "completed", snapshot
-    artifacts = [
-        node["output"]["artifacts"]
-        for node in snapshot["nodes"]
-        if node.get("output")
-    ]
-    assert artifacts
-    assert artifacts[0][0]["text"]
-
-    cursor = await inner_app.state.db.conn.execute(
-        "SELECT COUNT(*) FROM orchestration_tasks"
-    )
-    assert (await cursor.fetchone())[0] == 1
-
-    timeline = (
-        await http.get(f"/v1/conversations/{outer_task.context_id}/messages")
-    ).json()
-    senders = {message["sender"] for message in timeline["messages"]}
-    assert "inner" in senders or any(
-        message["role"] == "agent" for message in timeline["messages"]
-    )
+            assert resp.status_code == 201, resp.text
+            task_id = ""
+            async for response in client.send_message(
+                SendMessageRequest(
+                    message=Message(
+                        message_id="m-1",
+                        role=Role.ROLE_USER,
+                        parts=[Part(text="请内层实例处理这个请求")],
+                    )
+                )
+            ):
+                if response.WhichOneof("payload") == "task":
+                    task_id = response.task.id
+            outer_task = await wait_for_task(
+                client, task_id, {TaskState.TASK_STATE_COMPLETED}
+            )
+            artifact_text = " ".join(
+                part.text
+                for artifact in outer_task.artifacts
+                for part in artifact.parts
+                if part.HasField("text")
+            )
+            assert "echo:hi" in artifact_text
+            inner_tasks = await inner_app.state.task_store.list(
+                ListTasksRequest(), ServerCallContext()
+            )
+            assert len(inner_tasks.tasks) == 1

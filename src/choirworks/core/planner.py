@@ -131,6 +131,18 @@ class Planner:
         reason: str | None = None,
         context: str | None = None,
     ) -> PlanDraft:
+        draft, _ = await self.plan_with_reasoning(
+            request, reason=reason, context=context
+        )
+        return draft
+
+    async def plan_with_reasoning(
+        self,
+        request: str,
+        *,
+        reason: str | None = None,
+        context: str | None = None,
+    ) -> tuple[PlanDraft, str]:
         agents = await self._registry.list()
         if not agents:
             raise PlanningFailed("no agents registered; register at least one A2A agent first")
@@ -143,18 +155,27 @@ class Planner:
 
         last_error: Exception | None = None
         for _ in range(self._max_retries + 1):
-            draft = await self._llm.structured(
-                system=SYSTEM_PROMPT, user=user, schema=PlanDraft
-            )
+            draft, reasoning = await self._structured(user)
             try:
                 validate_plan(draft, agents, self._max_nodes)
-                return draft
+                return draft, reasoning
             except PlanValidationError as exc:
                 last_error = exc
                 user += f"\n\nPrevious plan was invalid: {exc}. Return a corrected plan."
         raise PlanningFailed(
             f"planner failed after {self._max_retries + 1} attempts: {last_error}"
         )
+
+    async def _structured(self, user: str) -> tuple[PlanDraft, str]:
+        raw_method = getattr(self._llm, "structured_with_raw", None)
+        if raw_method is not None:
+            return await raw_method(
+                system=SYSTEM_PROMPT, user=user, schema=PlanDraft
+            )
+        draft = await self._llm.structured(
+            system=SYSTEM_PROMPT, user=user, schema=PlanDraft
+        )
+        return draft, ""
 
     @staticmethod
     def _capabilities_text(agents: Sequence[AgentRecord]) -> str:

@@ -9,7 +9,6 @@ class PolicyEngine:
     def __init__(self, config: PolicyConfig):
         self._config = config
         self._validate(config.default)
-        self._validate(config.on_timeout, allowed=("escalate", "auto", "fail"))
         for override in config.overrides:
             self._validate(override.policy)
             if override.agent_name is None and override.skill_id is None:

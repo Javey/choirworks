@@ -1,5 +1,10 @@
 # ChoirWorks Room Extension v1
 
+> **状态：已废弃（历史文档）。** 该扩展最初用于旧版事件溯源栈的「合成 Room Task」
+> 语义，相关实现（`a2a/server.py`、房间 REST/SSE）已随 A2A SDK 迁移删除。
+> 当前实现仅在消息 metadata 中沿用 `room/v1` URI 承载 `mentions` / `quote_id` /
+> `interrupt` 等群聊字段；会话语义见 `docs/product.md`。
+
 - **URI:** `https://github.com/Javey/choirworks/extensions/room/v1`
 - **状态:** 阶段 1（无鉴权、无分页）
 

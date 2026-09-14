@@ -1,5 +1,3 @@
-import asyncio
-
 import httpx
 import pytest
 from a2a.client import A2ACardResolver, ClientConfig, create_client
@@ -11,12 +9,12 @@ from a2a.types import (
     SubscribeToTaskRequest,
     TaskState,
 )
+from a2a.utils.errors import InvalidParamsError
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
-from tests.support.fakes import FakeLLM
-from tests.support.hubs import start_hub
+from tests.support.sdk import sdk_hub, wait_for_task
 
 
 def _settings(port: int, db: str) -> Settings:
@@ -35,6 +33,17 @@ def _send(text: str) -> SendMessageRequest:
     )
 
 
+def _plan(agent_name: str) -> PlanDraft:
+    return PlanDraft(
+        rationale="single",
+        nodes=[
+            PlanNodeDraft(
+                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
+            )
+        ],
+    )
+
+
 async def _connect(base_url: str):
     http = httpx.AsyncClient(base_url=base_url, timeout=10.0)
     card = await A2ACardResolver(httpx_client=http, base_url=base_url).get_agent_card()
@@ -44,90 +53,51 @@ async def _connect(base_url: str):
     return http, client
 
 
-@pytest.fixture
-async def hub(tmp_path):
-    plan = PlanDraft(
-        rationale="single",
-        nodes=[
-            PlanNodeDraft(
-                id="n1", name="echo", agent_name="echo", input={"text": "hi"}
-            )
-        ],
-    )
-    agent = await start_fake_agent("delay")
-    try:
-        async with start_hub(
-            lambda port: _settings(port, str(tmp_path / "stream.db")),
-            llm=FakeLLM(structured_results=[plan]),
-        ) as (app, base_url):
-            await app.state.registry.register("echo", agent.url)
-            yield app, base_url
-    finally:
-        await agent.stop()
-
-
-async def test_streaming_send_emits_task_updates_and_artifacts(hub):
-    _, base_url = hub
-    http, client = await _connect(base_url)
-    try:
+async def test_streaming_send_dispatches_task_and_plan(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         responses = [r async for r in client.send_message(_send("分析 X"))]
-    finally:
-        await client.close()
-        await http.aclose()
-    assert responses[0].WhichOneof("payload") == "task"
-    kinds = [r.WhichOneof("payload") for r in responses]
-    assert kinds[0] == "task"
-    assert "artifact_update" in kinds
-    assert "status_update" in kinds
-    artifacts = [
-        r.artifact_update
-        for r in responses
-        if r.WhichOneof("payload") == "artifact_update"
-    ]
-    assert any(":n1:" in a.artifact.artifact_id for a in artifacts)
-    assert any(a.append for a in artifacts)
-    terminal = [
-        r
-        for r in responses
-        if r.WhichOneof("payload") == "status_update"
-        and r.status_update.status.state
-        in {
-            TaskState.TASK_STATE_COMPLETED,
-            TaskState.TASK_STATE_FAILED,
-            TaskState.TASK_STATE_CANCELED,
-        }
-    ]
-    assert terminal
-
-
-async def test_subscribe_replays_snapshot_then_live(hub):
-    app, base_url = hub
-    http, client = await _connect(base_url)
-    try:
-        created = (
-            await http.post(
-                "/v1/tasks",
-                json={"request": "hi", "target": {"agent_name": "echo", "name": "echo"}},
-            )
-        ).json()
-        dispatch = asyncio.create_task(
-            http.post(
-                f"/v1/tasks/{created['task_id']}"
-                f"/nodes/{created['node_ids'][0]}/dispatch"
-            )
-        )
-        responses = [
-            r async for r in client.subscribe(
-                SubscribeToTaskRequest(id=created["task_id"])
-            )
+        assert responses[0].WhichOneof("payload") == "task"
+        kinds = [
+            r.status_update.metadata.fields["kind"].string_value
+            for r in responses
+            if r.WhichOneof("payload") == "status_update"
+            and "kind" in r.status_update.metadata.fields
         ]
-        await dispatch
+        assert "plan.created" in kinds
+
+
+async def test_subscribe_replays_snapshot_then_live(tmp_path):
+    delay = await start_fake_agent("delay", chunk_size=3)
+    try:
+        async with sdk_hub(
+            tmp_path, "stream.db", plans=[_plan("delay")] * 2, streaming=True
+        ) as (_app, http, client):
+            await http.post("/v1/agents", json={"name": "delay", "card_url": delay.url})
+            task_id = ""
+            async for response in client.send_message(_send("hi")):
+                if response.WhichOneof("payload") == "task":
+                    task_id = response.task.id
+            events = [
+                event
+                async for event in client.subscribe(
+                    SubscribeToTaskRequest(id=task_id)
+                )
+            ]
     finally:
-        await client.close()
-        await http.aclose()
-    assert responses[0].WhichOneof("payload") == "task"
-    assert responses[0].task.id == created["task_id"]
-    last = responses[-1]
+        await delay.stop()
+    assert events[0].WhichOneof("payload") == "task"
+    assert events[0].task.id == task_id
+    live_kinds = [
+        event.status_update.metadata.fields["kind"].string_value
+        for event in events
+        if event.WhichOneof("payload") == "status_update"
+        and "kind" in event.status_update.metadata.fields
+    ]
+    assert any(kind.startswith("node.") for kind in live_kinds)
+    last = events[-1]
     if last.WhichOneof("payload") == "status_update":
         assert last.status_update.status.state in {
             TaskState.TASK_STATE_COMPLETED,
@@ -142,35 +112,18 @@ async def test_subscribe_replays_snapshot_then_live(hub):
         }
 
 
-async def test_subscribe_completed_task_returns_snapshot_only(hub):
-    app, base_url = hub
-    http, client = await _connect(base_url)
-    try:
-        created = (
-            await http.post(
-                "/v1/tasks",
-                json={"request": "hi", "target": {"agent_name": "echo", "name": "echo"}},
-            )
-        ).json()
-        await http.post(
-            f"/v1/tasks/{created['task_id']}"
-            f"/nodes/{created['node_ids'][0]}/dispatch"
-        )
-        for _ in range(200):
-            status = (
-                await http.get(f"/v1/tasks/{created['task_id']}")
-            ).json()["task"]["status"]
-            if status == "completed":
-                break
-            await asyncio.sleep(0.05)
-        responses = [
-            r async for r in client.subscribe(
-                SubscribeToTaskRequest(id=created["task_id"])
-            )
-        ]
-    finally:
-        await client.close()
-        await http.aclose()
-    assert len(responses) == 1
-    assert responses[0].WhichOneof("payload") == "task"
-    assert responses[0].task.status.state is TaskState.TASK_STATE_COMPLETED
+async def test_subscribe_completed_task_raises(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True
+    ) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        task_id = ""
+        async for response in client.send_message(_send("hi")):
+            if response.WhichOneof("payload") == "task":
+                task_id = response.task.id
+        await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
+        with pytest.raises(InvalidParamsError):
+            async for _event in client.subscribe(
+                SubscribeToTaskRequest(id=task_id)
+            ):
+                pass

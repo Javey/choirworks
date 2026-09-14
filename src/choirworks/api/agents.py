@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from choirworks.a2a.registry import DuplicateAgentName
-from choirworks.api.schemas import RegisterAgentIn
 from choirworks.models.domain import AgentRecord
 
 router = APIRouter(tags=["agents"])
+
+
+class RegisterAgentIn(BaseModel):
+    name: str
+    card_url: str = Field(..., description="A2A agent base URL")
 
 
 @router.post("/agents", status_code=201, response_model=AgentRecord)

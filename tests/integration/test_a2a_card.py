@@ -1,6 +1,6 @@
 import httpx
 
-from choirworks.a2a.mapping import A2A_ROOM_URI
+from choirworks.a2a.card import A2A_ROOM_URI
 from choirworks.api.app import create_app
 from choirworks.config import Settings
 
@@ -10,7 +10,7 @@ async def test_agent_card_served(tmp_path):
         store={"db_path": tmp_path / "card.db"},
         a2a={"public_url": "http://127.0.0.1:9999"},
     )
-    app = create_app(settings)
+    app = await create_app(settings)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -21,8 +21,12 @@ async def test_agent_card_served(tmp_path):
     card = resp.json()
     assert card["name"] == "ChoirWorks"
     assert card["capabilities"]["streaming"] is True
-    assert card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
-    assert card["supportedInterfaces"][0]["url"] == "http://127.0.0.1:9999/v1/a2a"
+    interfaces = {
+        item["protocolBinding"]: item["url"]
+        for item in card["supportedInterfaces"]
+    }
+    assert interfaces["JSONRPC"] == "http://127.0.0.1:9999/v1/a2a"
+    assert interfaces["HTTP+JSON"] == "http://127.0.0.1:9999/v1"
     extensions = card["capabilities"]["extensions"]
     assert extensions[0]["uri"] == A2A_ROOM_URI
     assert extensions[0].get("required", False) is False

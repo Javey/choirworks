@@ -4,7 +4,6 @@ server:
 
 llm:
   planner_model: openai/gpt-4.1
-  assist_model: openai/gpt-4.1-mini
   timeout_seconds: 60
   max_plan_retries: 2
 
@@ -18,8 +17,6 @@ scheduler:
 
 policies:
   default: auto_llm
-  on_timeout: escalate
-  timeout_seconds: 900
   overrides:
     - agent_name: payment-agent
       policy: human
@@ -27,7 +24,6 @@ policies:
       policy: human
 
 recovery:
-  reconcile_interval_seconds: 30
   replay_on_startup: true
 
 store:

@@ -11,7 +11,7 @@ from a2a.types import (
 A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
 _ROOM_DESCRIPTION = (
-    "Conversations as long-lived A2A tasks; room messages as A2A Messages"
+    "Group-chat fields (mentions, quote, interrupt) in message metadata"
 )
 
 
@@ -19,7 +19,7 @@ def build_agent_card(public_url: str) -> AgentCard:
     base = public_url.rstrip("/")
     return AgentCard(
         name="ChoirWorks",
-        description="多 Agent 协作工作群（A2A facade）",
+        description="多 Agent 协作工作群（A2A SDK）",
         version="0.1.0",
         capabilities=AgentCapabilities(
             streaming=True,

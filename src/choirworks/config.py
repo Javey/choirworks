@@ -15,7 +15,6 @@ class ServerConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     planner_model: str = "openai/gpt-4.1"
-    assist_model: str = "openai/gpt-4.1-mini"
     timeout_seconds: float = 60.0
     max_plan_retries: int = 2
 
@@ -41,13 +40,10 @@ class PolicyOverride(BaseModel):
 
 class PolicyConfig(BaseModel):
     default: str = "auto_llm"
-    on_timeout: str = "escalate"
-    timeout_seconds: float = 900.0
     overrides: list[PolicyOverride] = Field(default_factory=list)
 
 
 class RecoveryConfig(BaseModel):
-    reconcile_interval_seconds: float = 30.0
     replay_on_startup: bool = True
 
 

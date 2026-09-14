@@ -44,6 +44,26 @@ class LiteLLMClient:
             timeout=self._timeout,
         )
 
+    async def structured_with_raw(
+        self, *, system: str, user: str, schema: type[T]
+    ) -> tuple[T, str]:
+        """Structured call that also returns the model's free-form reasoning text."""
+        result, raw = await self._instructor.chat.completions.create_with_completion(
+            model=self._model,
+            response_model=schema,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            timeout=self._timeout,
+        )
+        content = ""
+        try:
+            content = raw.choices[0].message.content or ""
+        except (AttributeError, IndexError, TypeError):
+            content = ""
+        return result, content
+
     async def text(self, *, system: str, user: str) -> str:
         response: ModelResponse = await self._completion_fn(
             model=self._model,
