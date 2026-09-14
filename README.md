@@ -1,5 +1,11 @@
 # ChoirWorks
 
+> [!WARNING]
+> **本仓库目前仍处于概念验证阶段，不具备任何实际使用价值。**
+> 所有设计、接口与行为均可能随时大幅变更乃至推翻重做，不承诺任何形式的稳定性、
+> 兼容性与安全性，请勿用于生产环境或任何真实业务。本文档描述的是愿景与现状，
+> 而非可用性承诺。
+
 ChoirWorks —— 多 Agent 协作工作群：人类像 CEO 一样提出目标，协调者拆解任务并把 Agent 拉进群，
 成员之间可以互相 @、引用回复、中途求助；平台不执行业务动作，负责编排、调度 A2A subagent，
 并支持暂停协助、断点恢复与平台侧回退。
@@ -25,11 +31,11 @@ uv run pytest
 历史消息按 seq 游标增量拉取。
 
 ```bash
-# 开发（Vite :5173，/v1 代理到 :8080）
+# 开发（Vite :5173，/v1 代理到 :8567）
 cd frontend && npm install
 npm run dev
 
-# 生产构建（FastAPI 自动托管 frontend/dist，访问 http://127.0.0.1:8080）
+# 生产构建（FastAPI 自动托管 frontend/dist，访问 http://127.0.0.1:8567）
 npm run build
 
 # 前端测试
@@ -41,10 +47,10 @@ npm test
 无需 API Key、无需真实 Agent，一条命令拉起「假 Agent + 确定性规划器 + Hub + 前端」：
 
 ```bash
-uv run choirworks-sim --port 8080 --fresh
+uv run choirworks-sim --port 8567 --fresh
 ```
 
-启动后自动注册 6 个脚本化 Agent（researcher / writer / critic / analyst / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8080` 直接对话：
+启动后自动注册 6 个脚本化 Agent（researcher / writer / critic / analyst / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8567` 直接对话：
 
 | 请求示例 | 演示场景 |
 |---|---|
@@ -62,15 +68,15 @@ uv run choirworks-sim --port 8080 --fresh
 
 ```bash
 # 人类消息（quote_id 可引用任意消息；interrupt 需同时给 quote_id）
-curl -X POST localhost:8080/v1/conversations/<conversation_id>/messages \
+curl -X POST localhost:8567/v1/conversations/<conversation_id>/messages \
   -H 'content-type: application/json' \
   -d '{"text":"请协调多个子代理协作完成这项分析","mentions":["researcher"]}'
 
 # 房间时间线（seq 游标增量拉取，含成员与摘要）
-curl 'localhost:8080/v1/conversations/<conversation_id>/messages?since_seq=0'
+curl 'localhost:8567/v1/conversations/<conversation_id>/messages?since_seq=0'
 
 # 房间事件流（message/room/plan/node/intervention 事件，SSE）
-curl -N 'localhost:8080/v1/conversations/<conversation_id>/stream?since_seq=0'
+curl -N 'localhost:8567/v1/conversations/<conversation_id>/stream?since_seq=0'
 ```
 
 行为约定：
@@ -95,16 +101,16 @@ ChoirWorks 自身是一个标准 A2A v1.0 Server，可被任意 A2A client（包
 
 ```bash
 # AgentCard
-curl -s localhost:8080/.well-known/agent-card.json | python -m json.tool
+curl -s localhost:8567/.well-known/agent-card.json | python -m json.tool
 
 # 发消息（非流式）；带 contextId 续接同一群，带 taskId 作答/排队/续接
-curl -s -X POST localhost:8080/v1/a2a -H 'content-type: application/json' -d '{
+curl -s -X POST localhost:8567/v1/a2a -H 'content-type: application/json' -d '{
   "jsonrpc":"2.0","id":1,"method":"SendMessage",
   "params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"@researcher 请分析 X"}]}}
 }'
 
 # 流式订阅任务（SSE，data 帧为 JSON-RPC response，result 为 StreamResponse）
-curl -s -N -X POST localhost:8080/v1/a2a -H 'content-type: application/json' -d '{
+curl -s -N -X POST localhost:8567/v1/a2a -H 'content-type: application/json' -d '{
   "jsonrpc":"2.0","id":2,"method":"SubscribeToTask","params":{"id":"<task_id>"}
 }'
 ```
@@ -117,48 +123,48 @@ curl -s -N -X POST localhost:8080/v1/a2a -H 'content-type: application/json' -d 
 ```bash
 cp config.example.yaml config.yaml   # 可选
 export OPENAI_API_KEY=...            # Planner 使用的模型 Key
-uv run choirworks                     # 默认 http://127.0.0.1:8080
+uv run choirworks                     # 默认 http://127.0.0.1:8567
 ```
 
 ## 接口速览
 
 ```bash
 # 注册一个 A2A agent（Agent Card 会被拉取并缓存）
-curl -X POST localhost:8080/v1/agents \
+curl -X POST localhost:8567/v1/agents \
   -H 'content-type: application/json' \
   -d '{"name":"demo","card_url":"http://127.0.0.1:9001"}'
 
 # 自动规划：不传 target，由 LLM 拆解 DAG 并自动调度
-curl -X POST localhost:8080/v1/tasks \
+curl -X POST localhost:8567/v1/tasks \
   -H 'content-type: application/json' \
   -d '{"request":"调研 A2A 协议并写一份摘要"}'
 
 # 手动单节点（调试用）：传 target 后调用 dispatch
-curl -X POST localhost:8080/v1/tasks \
+curl -X POST localhost:8567/v1/tasks \
   -H 'content-type: application/json' \
   -d '{"request":"hello","target":{"agent_name":"demo"}}'
-curl -X POST localhost:8080/v1/tasks/<task_id>/nodes/<node_id>/dispatch
+curl -X POST localhost:8567/v1/tasks/<task_id>/nodes/<node_id>/dispatch
 
 # 查询快照
-curl localhost:8080/v1/tasks/<task_id>
+curl localhost:8567/v1/tasks/<task_id>
 
 # SSE 事件流；断线重连携带 Last-Event-ID 头或 ?after_seq= 自动回放缺失事件
-curl -N localhost:8080/v1/tasks/<task_id>/events
+curl -N localhost:8567/v1/tasks/<task_id>/events
 
 # 人工介入：subagent input-required 时按策略（auto_llm/peer_agent/human）处置
-curl "localhost:8080/v1/tasks/<task_id>/interventions?status=pending"
-curl -X POST localhost:8080/v1/tasks/<task_id>/interventions/<intervention_id> \
+curl "localhost:8567/v1/tasks/<task_id>/interventions?status=pending"
+curl -X POST localhost:8567/v1/tasks/<task_id>/interventions/<intervention_id> \
   -H 'content-type: application/json' -d '{"text":"在这里回答"}'
 
 # Checkpoint 与回退（dry_run 只报告影响面；restart 发取消信号并重置 checkpoint 之后的节点）
-curl localhost:8080/v1/tasks/<task_id>/checkpoints
-curl -X POST localhost:8080/v1/tasks/<task_id>/rollback \
+curl localhost:8567/v1/tasks/<task_id>/checkpoints
+curl -X POST localhost:8567/v1/tasks/<task_id>/rollback \
   -H 'content-type: application/json' \
   -d '{"checkpoint_id":"<ck>","mode":"dry_run"}'
 
 # 单节点重试 / 取消整个任务
-curl -X POST localhost:8080/v1/tasks/<task_id>/nodes/<node_id>/retry
-curl -X POST localhost:8080/v1/tasks/<task_id>/cancel
+curl -X POST localhost:8567/v1/tasks/<task_id>/nodes/<node_id>/retry
+curl -X POST localhost:8567/v1/tasks/<task_id>/cancel
 ```
 
 ## 恢复与对账
