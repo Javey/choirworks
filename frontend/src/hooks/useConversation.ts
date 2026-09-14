@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { subscribeTask } from "../api/a2a";
 import { api } from "../api/client";
-import { subscribeTaskEvents } from "../api/events";
 import {
   applyEvent,
   fromSnapshot,
@@ -59,16 +59,29 @@ export function useConversation(conversationId: string | null) {
     for (const view of views) {
       const terminal = isTerminal(view.status);
       if (!terminal && !streams.current.has(view.id)) {
-        const close = subscribeTaskEvents(view.id, view.lastSeq, {
-          onEvent: (event) =>
-            setViews((prev) =>
-              prev.map((item) => (item.id === view.id ? applyEvent(item, event) : item)),
-            ),
-          onState: (state) =>
-            setViews((prev) =>
-              prev.map((item) => (item.id === view.id ? withConnection(item, state) : item)),
-            ),
-        });
+        const close = subscribeTask(
+          view.id,
+          {
+            onEvent: (event) =>
+              setViews((prev) =>
+                prev.map((item) =>
+                  item.id === view.id
+                    ? applyEvent(item, {
+                        ...event,
+                        seq: Math.max(item.lastSeq + 1, event.seq),
+                      })
+                    : item,
+                ),
+              ),
+            onState: (state) =>
+              setViews((prev) =>
+                prev.map((item) =>
+                  item.id === view.id ? withConnection(item, state) : item,
+                ),
+              ),
+          },
+          { baseSeq: view.lastSeq },
+        );
         streams.current.set(view.id, close);
       }
       if (terminal) {

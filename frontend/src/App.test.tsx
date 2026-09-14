@@ -3,47 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
-
-type Listener = (event: MessageEvent<string>) => void;
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  url: string;
-  readyState = 0;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  private listeners = new Map<string, Set<Listener>>();
-
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-
-  addEventListener(type: string, listener: EventListener) {
-    const set = this.listeners.get(type) ?? new Set<Listener>();
-    set.add(listener as Listener);
-    this.listeners.set(type, set);
-  }
-
-  removeEventListener(type: string, listener: EventListener) {
-    this.listeners.get(type)?.delete(listener as Listener);
-  }
-
-  close() {
-    this.readyState = 2;
-  }
-
-  emit(type: string, payload: unknown, id: number) {
-    for (const listener of this.listeners.get(type) ?? []) {
-      listener(
-        new MessageEvent(type, {
-          data: JSON.stringify(payload),
-          lastEventId: String(id),
-        }),
-      );
-    }
-  }
-}
+import { A2A_ROOM_URI } from "./api/a2a";
 
 function roomMessage(overrides: Record<string, unknown>) {
   return {
@@ -59,6 +19,19 @@ function roomMessage(overrides: Record<string, unknown>) {
   };
 }
 
+function sseStream(frames: string[]): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const frame of frames) controller.enqueue(encoder.encode(frame));
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
 function setupFetch(messages: unknown[]) {
   const calls: { url: string; method: string }[] = [];
   let posted = 0;
@@ -72,6 +45,42 @@ function setupFetch(messages: unknown[]) {
         headers: { "content-type": "application/json" },
       });
 
+    if (url === "/v1/a2a" && method === "POST") {
+      const rpc = JSON.parse(String(init?.body ?? "{}")) as {
+        id: number;
+        method: string;
+        params?: { message?: { parts?: { text?: string }[] } };
+      };
+      if (rpc.method === "SubscribeToTask") return sseStream([]);
+      if (rpc.method === "SendMessage") {
+        posted += 1;
+        const text = rpc.params?.message?.parts?.[0]?.text ?? "";
+        const id = `m-new-${posted}`;
+        const seq = 10 + posted;
+        messages.push(roomMessage({ id, seq, text }));
+        return json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            message: {
+              messageId: id,
+              contextId: "c1",
+              taskId: "c1",
+              role: "ROLE_USER",
+              parts: [{ text }],
+              metadata: {
+                [A2A_ROOM_URI]: {
+                  kind: "message",
+                  sender: "CEO",
+                  seq,
+                  mentions: [],
+                },
+              },
+            },
+          },
+        });
+      }
+    }
     if (url === "/v1/conversations" && method === "GET") return json([]);
     if (url === "/v1/conversations" && method === "POST") {
       return json({ conversation_id: "c1", title: "新对话" }, 201);
@@ -92,14 +101,6 @@ function setupFetch(messages: unknown[]) {
     if (url.startsWith("/v1/conversations/c1/messages") && method === "GET") {
       return json({ messages, members: [], summary: null, last_seq: 1 });
     }
-    if (url === "/v1/conversations/c1/messages" && method === "POST") {
-      posted += 1;
-      const body = JSON.parse(String(init?.body ?? "{}")) as { text: string };
-      const id = `m-new-${posted}`;
-      const seq = 10 + posted;
-      messages.push(roomMessage({ id, seq, text: body.text }));
-      return json({ message_id: id, seq, task_id: `t${posted}` }, 201);
-    }
     return json({ detail: `unhandled ${method} ${url}` }, 500);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -107,8 +108,6 @@ function setupFetch(messages: unknown[]) {
 }
 
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  vi.stubGlobal("EventSource", FakeEventSource);
   window.history.pushState({}, "", "/");
 });
 
@@ -119,7 +118,7 @@ afterEach(() => {
 describe("App 群聊", () => {
   it("首条消息创建会话并展示 CEO 输入", async () => {
     const user = userEvent.setup();
-    setupFetch([]);
+    const { calls } = setupFetch([]);
     render(<App />);
 
     const composer = screen.getByPlaceholderText(
@@ -130,6 +129,9 @@ describe("App 群聊", () => {
 
     expect(await screen.findByText("第一条")).toBeInTheDocument();
     expect(screen.getAllByText("CEO").length).toBeGreaterThan(0);
+    expect(
+      calls.some((call) => call.url === "/v1/a2a" && call.method === "POST"),
+    ).toBe(true);
   });
 
   it("任务完成后仍可继续发言并立即显示", async () => {

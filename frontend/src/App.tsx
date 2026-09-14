@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { sendRoomMessage } from "./api/a2a";
 import { api } from "./api/client";
 import { Composer } from "./components/Composer";
 import { RollbackDialog } from "./components/RollbackDialog";
@@ -61,7 +62,7 @@ export default function App() {
       try {
         const created = await api.createConversation(text.slice(0, 40));
         navigate(created.conversation_id);
-        await api.postRoomMessage(created.conversation_id, { text });
+        await sendRoomMessage(created.conversation_id, { text });
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));

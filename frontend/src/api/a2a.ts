@@ -330,9 +330,12 @@ export async function sendRoomMessage(
 export type ConnectionState = "live" | "reconnecting" | "closed";
 
 export interface SubscriptionHandlers {
-  onSnapshot?: (task: ProtoStruct) => void;
   onEvent: (event: EventDto) => void;
   onState: (state: ConnectionState) => void;
+}
+
+export interface RoomSubscriptionHandlers extends SubscriptionHandlers {
+  onSnapshot?: (snapshot: RoomMessagesDto) => void;
 }
 
 export interface SubscriptionOptions {
@@ -497,7 +500,7 @@ function runStream(
 
 export function subscribeRoom(
   conversationId: string,
-  handlers: SubscriptionHandlers,
+  handlers: RoomSubscriptionHandlers,
   options: SubscriptionOptions = {},
 ): () => void {
   let seq = options.baseSeq ?? 0;
@@ -511,7 +514,7 @@ export function subscribeRoom(
     },
     (result) => {
       if (result.task) {
-        handlers.onSnapshot?.(result.task as ProtoStruct);
+        handlers.onSnapshot?.(roomSnapshotFromTask(result.task as ProtoStruct));
         return;
       }
       const event = roomEventFromResult(result);
