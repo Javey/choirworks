@@ -82,6 +82,35 @@ curl -N 'localhost:8080/v1/conversations/<conversation_id>/stream?since_seq=0'
 - 上下文按「房间头 + 摘要 + 与我相关 + 最近窗口」分级投喂给每次被唤醒的 Agent。
 
 
+## A2A 北向接口（AgentCard + JSON-RPC）
+
+ChoirWorks 自身是一个标准 A2A v1.0 Server，可被任意 A2A client（包括另一个 ChoirWorks 实例）当作 agent 编排，支持 task 级群嵌套。
+
+- AgentCard：`GET /.well-known/agent-card.json`
+- JSON-RPC：`POST /v1/a2a`，方法：`SendMessage` / `SendStreamingMessage` / `GetTask` / `CancelTask` / `SubscribeToTask`
+- 公共地址由 `a2a.public_url`（env `CHOIRWORKS_A2A__PUBLIC_URL`）配置
+- 映射：hub task = 1 个 A2A Task（`conversation_id` = `contextId`），节点状态/产物经 `metadata` 与 `artifact_update` 流式表达；`input-required` 即干预问题
+- 嵌套：把内层实例的 AgentCard 地址作为 `card_url` 注册为 agent，即可派发任务并把产物回传
+
+```bash
+# AgentCard
+curl -s localhost:8080/.well-known/agent-card.json | python -m json.tool
+
+# 发消息（非流式）；带 contextId 续接同一群，带 taskId 作答/排队/续接
+curl -s -X POST localhost:8080/v1/a2a -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"SendMessage",
+  "params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"@researcher 请分析 X"}]}}
+}'
+
+# 流式订阅任务（SSE，data 帧为 JSON-RPC response，result 为 StreamResponse）
+curl -s -N -X POST localhost:8080/v1/a2a -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":2,"method":"SubscribeToTask","params":{"id":"<task_id>"}
+}'
+```
+
+> 当前仅支持 v1.0（未开启 v0.3 兼容）；`ListTasks` 与 push notification 返回不支持；房间级 A2A 暴露（Room Extension）在 M12 提供。
+
+
 ## 运行
 
 ```bash

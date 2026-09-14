@@ -2026,3 +2026,14 @@ git commit -m "docs: A2A 北向接口说明（M11）"
 - **Spec 覆盖**：§3 事实基线→实现依据；§4 架构→Task 1/4/6；§5.1–5.4 映射→Task 2/3；§5.5 订阅→Task 6；§5.6 发送→Task 5；§7 错误/背压→Task 4/5/6（背压沿用 EventSubscription 关闭语义）；§9 M11 验收（SDK 集成 + 嵌套）→Task 6/7；§10 测试→各 Task；§12 样例与实现一致。房间（§6）与前端（§8）属 M12/M13，不在本计划。
 - **已知偏离**：`plan.extended` 的事件 payload 只有增量，由 handler `_enrich` 补当前完整 `dag` 后再映射，保持 spec 的"全量替换"语义。
 - **类型一致性**：`TaskStreamMapper`、`snapshot_to_task`、`room_message_to_a2a`、`cancel_task`/`TaskNotCancelable`、`start_hub`、`HubA2AHandler` 命名在任务间一致。
+
+## 执行后修正（M11 实施记录）
+
+实施过程中发现并修正了计划中的若干假设，代码以修正后为准：
+
+1. **SDK 流式事件形态（Task 6）**：`jsonrpc_dispatcher` 对每个事件调用 `proto_utils.to_stream_response(evt)`，而该函数不识别 `StreamResponse`（实测返回空）。实际实现将 mapper 的 `StreamResponse` 在 yield 边界拆成 `Task/Message/TaskStatusUpdateEvent/TaskArtifactUpdateEvent`（`_unwrap_stream_response`），两个 `_stream_task` 循环都在映射后立即检查 `mapper.terminal`。
+2. **订阅测试的前置条件（Task 6）**：`POST /v1/tasks` 带 target 不自动启动编排，订阅测试需显式 `POST .../nodes/{id}/dispatch`；artifact id 形如 `{plan_id}:n1:{remote_id}`，断言用 `":n1:" in id`。
+3. **注册地址语义（Task 7）**：`AgentRegistry.agent_url` 改为返回注册时的 `card_url`（base），RPC 接口地址由 SDK 从 card 读取。原实现返回 card 的 `supportedInterfaces[0].url`，导致直接把 `.../v1/a2a` 当 base 再拼 `/.well-known/agent-card.json` 而 404，嵌套不可用。
+4. **未知 contextId（Task 7）**：`_submit` 对不存在的 `context_id` 自动新建群（A2A 允许服务端自选 contextId），跨实例嵌套时外层 hub 下发自己的 task id 作为 contextId 不再报 `ConversationNotFound`。
+5. **嵌套测试表名（Task 7）**：任务表为 `orchestration_tasks`（计划笔误为 `tasks`）。
+6. **ask 干预测试（Task 5）**：fixture 需 `policies={"default": "human"}` 才能稳定停在 `AWAITING_INPUT`（仓库既有惯例）。

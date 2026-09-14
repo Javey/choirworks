@@ -52,6 +52,10 @@ def test_task_state_map_maps_each_status(status: TaskStatus, expected: TaskState
     assert TASK_STATE_MAP[status] is expected
 
 
+def test_task_state_map_covers_all_statuses():
+    assert set(TASK_STATE_MAP) == set(TaskStatus)
+
+
 def test_snapshot_maps_state_and_artifacts():
     mapped = snapshot_to_task(_snapshot(TaskStatus.RUNNING))
     assert mapped.id == "task-1"
