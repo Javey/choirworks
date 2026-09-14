@@ -30,8 +30,10 @@ from a2a.utils.errors import (
 from fastapi import FastAPI
 
 from choirworks.a2a.mapping import (
+    A2A_ROOM_URI,
     TaskStreamMapper,
     room_message_to_a2a,
+    room_to_task,
     snapshot_to_task,
 )
 from choirworks.core.cancel import TaskNotCancelable, cancel_task
@@ -39,6 +41,7 @@ from choirworks.core.events import SubscriptionClosed
 from choirworks.core.room import post_message
 from choirworks.core.tasks import TaskNotFound, TaskSnapshot
 from choirworks.models.enums import (
+    TERMINAL_TASK_STATUSES,
     EventType,
     InterventionStatus,
     NodeStatus,
@@ -78,13 +81,47 @@ class HubA2AHandler(RequestHandler):
         snapshot = await self._snapshot(task_id)
         return snapshot_to_task(snapshot, question=await self._pending_question(snapshot))
 
+    def _note_extensions(self, context: ServerCallContext) -> None:
+        if A2A_ROOM_URI in context.requested_extensions:
+            logger.debug("A2A room extension activated for request")
+
+    async def _room_snapshot(self, conversation_id: str) -> tuple[Task, bool]:
+        db = self._app.state.db
+        conversation = await projections.fetch_conversation(db, conversation_id)
+        if conversation is None:
+            raise TaskNotFound(conversation_id)
+        messages = await projections.fetch_messages(db, conversation_id, limit=1000)
+        members = await projections.fetch_room_members(db, conversation_id)
+        summary = await projections.fetch_room_summary(db, conversation_id)
+        running = False
+        task_ids = await projections.fetch_task_ids_for_conversation(
+            db, conversation_id
+        )
+        for task_id in task_ids:
+            task = await projections.fetch_task(db, task_id)
+            if task is not None and task.status not in TERMINAL_TASK_STATUSES:
+                running = True
+                break
+        room = room_to_task(
+            conversation, messages, members, summary, running=running
+        )
+        return room, running
+
+    async def _room_task(self, conversation_id: str) -> Task:
+        room, _ = await self._room_snapshot(conversation_id)
+        return room
+
     async def on_get_task(
         self, params: GetTaskRequest, context: ServerCallContext
     ) -> Task | None:
+        self._note_extensions(context)
         try:
             return await self._a2a_task(params.id)
         except TaskNotFound:
-            return None
+            try:
+                return await self._room_task(params.id)
+            except TaskNotFound:
+                return None
 
     async def on_cancel_task(
         self, params: CancelTaskRequest, context: ServerCallContext
@@ -204,6 +241,7 @@ class HubA2AHandler(RequestHandler):
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Task | Message:
+        self._note_extensions(context)
         return await self._submit(params)
 
     async def _enrich(self, event: Event) -> Event:

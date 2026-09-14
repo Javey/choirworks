@@ -126,6 +126,34 @@ async def test_rebuild_projections_is_deterministic(tmp_path):
         await db.close()
 
 
+async def test_latest_conversation_seq(tmp_path):
+    db, store = await make_store(tmp_path)
+    try:
+        await store.append(
+            None,
+            EventType.CONVERSATION_CREATED,
+            {"conversation_id": "c1", "title": "群"},
+            conversation_id="c1",
+        )
+        posted = await store.append(
+            None,
+            EventType.MESSAGE_POSTED,
+            {
+                "message_id": "m1",
+                "conversation_id": "c1",
+                "seq": 1,
+                "role": "user",
+                "text": "hi",
+            },
+            conversation_id="c1",
+        )
+        await store.append("t1", EventType.TASK_COMPLETED, {})
+        assert await store.latest_conversation_seq("c1") == posted.seq
+        assert await store.latest_conversation_seq("missing") == 0
+    finally:
+        await db.close()
+
+
 async def snapshot(db: Database) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
     for table in (

@@ -101,6 +101,14 @@ class EventStore:
         )
         return int((await cursor.fetchone())["seq"])
 
+    async def latest_conversation_seq(self, conversation_id: str) -> int:
+        cursor = await self._db.conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS seq FROM events"
+            " WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        return int((await cursor.fetchone())["seq"])
+
     @staticmethod
     def _row_to_event(row: Any) -> Event:
         return Event(
