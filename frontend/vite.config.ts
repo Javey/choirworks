@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/v1': 'http://127.0.0.1:8567',
       '/healthz': 'http://127.0.0.1:8567',
+      '/.well-known': 'http://127.0.0.1:8567',
     },
   },
   test: {

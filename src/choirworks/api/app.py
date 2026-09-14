@@ -11,6 +11,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
     create_agent_card_routes,
     create_jsonrpc_routes,
+    create_rest_routes,
 )
 from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
 from a2a.server.tasks.database_task_store import DatabaseTaskStore
@@ -122,10 +123,12 @@ async def create_app(
         jsonrpc_routes = create_jsonrpc_routes(
             request_handler=request_handler, rpc_url="/v1/a2a"
         )
+        rest_routes = create_rest_routes(request_handler=request_handler)
         add_a2a_routes_to_fastapi(
             app,
             agent_card_routes=agent_card_routes,
             jsonrpc_routes=jsonrpc_routes,
+            rest_routes=rest_routes,
         )
 
         try:

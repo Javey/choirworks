@@ -43,9 +43,14 @@ def build_agent_card(public_url: str) -> AgentCard:
         ],
         supported_interfaces=[
             AgentInterface(
+                protocol_binding="HTTP+JSON",
+                url=f"{base}/v1",
+                protocol_version="1.0",
+            ),
+            AgentInterface(
                 protocol_binding="JSONRPC",
                 url=f"{base}/v1/a2a",
                 protocol_version="1.0",
-            )
+            ),
         ],
     )

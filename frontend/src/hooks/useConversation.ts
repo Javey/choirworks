@@ -1,21 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  A2A_URL,
-  rpcRequest,
-  postJson,
-  postSse,
-  sendMessageParams,
-  type ConnectionState,
-} from "../api/a2a";
+import { getClient } from "../api/a2a-client";
 import {
   applyStreamEvent,
   conversationFromTask,
   emptyConversation,
   type ConversationView,
 } from "../lib/conversationView";
-
-type ProtoStruct = Record<string, unknown>;
 
 export interface ConversationSendInput {
   text: string;
@@ -24,11 +15,12 @@ export interface ConversationSendInput {
   interrupt?: boolean;
 }
 
+export type ConnectionState = "live" | "reconnecting" | "closed";
+
 export function useConversation(conversationId: string | null) {
   const [view, setView] = useState<ConversationView>(emptyConversation);
   const [connection, setConnection] = useState<ConnectionState>("closed");
   const [error, setError] = useState<string | null>(null);
-  const seqRef = useRef(0);
   const navigateRef = useRef<((id: string) => void) | null>(null);
 
   const load = useCallback(async () => {
@@ -37,14 +29,9 @@ export function useConversation(conversationId: string | null) {
       return;
     }
     try {
-      const result = await postJson(
-        A2A_URL,
-        rpcRequest("GetTask", { id: conversationId }),
-      );
-      const task = (result as ProtoStruct).id ? result : (result as ProtoStruct).task;
-      if (task && (task as ProtoStruct).id) {
-        setView(conversationFromTask(task as ProtoStruct, conversationId));
-      }
+      const client = await getClient();
+      const task = await client.getTask({ id: conversationId, tenant: "" });
+      setView(conversationFromTask(task as unknown as Record<string, unknown>, conversationId));
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "加载失败");
     }
@@ -65,23 +52,17 @@ export function useConversation(conversationId: string | null) {
     const run = async () => {
       while (!stopped) {
         try {
+          const client = await getClient();
           let received = false;
-          for await (const response of postSse(
-            A2A_URL,
-            rpcRequest("SubscribeToTask", { id: conversationId }),
-          )) {
+          for await (const event of client.resubscribeTask({ id: conversationId, tenant: "" })) {
             if (stopped) break;
-            if (response.error) {
-              throw new Error(response.error.message ?? "订阅失败");
-            }
             if (!received) {
               received = true;
               attempt = 0;
               setConnection("live");
             }
-            seqRef.current += 1;
             setView((prev) =>
-              applyStreamEvent(prev, response.result ?? {}, seqRef.current),
+              applyStreamEvent(prev, event as unknown as Record<string, unknown>, Date.now()),
             );
           }
           if (stopped) break;
@@ -103,38 +84,37 @@ export function useConversation(conversationId: string | null) {
 
   const send = useCallback(
     async (input: ConversationSendInput) => {
+      const client = await getClient();
+      const message = {
+        messageId: crypto.randomUUID(),
+        role: 1,
+        parts: [{
+          content: { $case: "text" as const, value: input.text },
+          metadata: undefined,
+          filename: "",
+          mediaType: "text/plain",
+        }],
+        contextId: conversationId ?? "",
+        taskId: conversationId ?? "",
+        metadata: undefined,
+        extensions: [],
+        referenceTaskIds: [],
+      };
+
       if (conversationId) {
-        // Existing conversation: non-streaming SendMessage, SubscribeToTask delivers events
-        await postJson(
-          A2A_URL,
-          rpcRequest(
-            "SendMessage",
-            sendMessageParams({
-              text: input.text,
-              contextId: conversationId,
-              taskId: conversationId,
-            }),
-          ),
-        );
+        await client.sendMessage({ message, tenant: "", configuration: undefined, metadata: undefined });
         return;
       }
-      // New conversation: stream all events, navigate on first Task
-      const request = rpcRequest(
-        "SendStreamingMessage",
-        sendMessageParams({ text: input.text }),
-      );
-      for await (const response of postSse(A2A_URL, request)) {
-        if (response.error) {
-          throw new Error(response.error.message ?? "发送失败");
-        }
-        const result = response.result ?? {};
-        const task = (result as ProtoStruct).task as ProtoStruct | undefined;
-        if (task && task.id && navigateRef.current) {
-          navigateRef.current(String(task.id));
+
+      for await (const event of client.sendMessageStream({ message, tenant: "", configuration: undefined, metadata: undefined })) {
+        const payload = event.payload;
+        if (payload?.$case === "task" && payload.value?.id && navigateRef.current) {
+          navigateRef.current(payload.value.id);
           navigateRef.current = null;
         }
-        seqRef.current += 1;
-        setView((prev) => applyStreamEvent(prev, result, seqRef.current));
+        setView((prev) =>
+          applyStreamEvent(prev, event as unknown as Record<string, unknown>, Date.now()),
+        );
       }
     },
     [conversationId],
