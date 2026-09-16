@@ -6,4 +6,5 @@ __pycache__/
 data/
 frontend/node_modules/
 frontend/dist/
-.envconfig.yaml
+.env
+config.yaml
