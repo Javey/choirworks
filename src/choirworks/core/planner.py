@@ -104,6 +104,8 @@ class PlanningFailed(RuntimeError):
 SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
 Return only JSON matching the required schema. Rules:
+- agent_name MUST be exactly one of the listed agent names (e.g., "researcher", "writer").
+  Do NOT use skill names, descriptions, or any other value as agent_name.
 - Every node must reference an existing agent_name and, when provided, an existing skill_id.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.

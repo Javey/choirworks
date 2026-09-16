@@ -192,6 +192,7 @@ class FakeAgent:
 
 def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
     card_name = name or f"fake-{behavior}"
+    skill_name = name or behavior
     return AgentCard(
         name=card_name,
         description=f"simulated A2A agent ({behavior})",
@@ -201,9 +202,9 @@ def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
         default_output_modes=["text/plain"],
         skills=[
             AgentSkill(
-                id="echo",
-                name="echo",
-                description="模拟回复",
+                id=skill_name,
+                name=skill_name,
+                description=f"模拟 {skill_name} 能力",
                 tags=["simulation"],
             )
         ],

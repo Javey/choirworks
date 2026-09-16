@@ -15,8 +15,12 @@ class ServerConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     planner_model: str = "openai/gpt-4.1"
+    api_base: str | None = None
     timeout_seconds: float = 60.0
     max_plan_retries: int = 2
+    context_window: int | None = None
+    compaction_threshold: float = 0.8
+    compaction_retention: int = 10
 
 
 class SchedulerConfig(BaseModel):
@@ -47,6 +51,13 @@ class RecoveryConfig(BaseModel):
     replay_on_startup: bool = True
 
 
+class SimConfig(BaseModel):
+    start_agents: bool = False
+    agents: list[dict[str, str]] = Field(default_factory=list)
+    chunk_size: int = 2
+    chunk_delay: float = 0.04
+
+
 class A2AConfig(BaseModel):
     public_url: str = "http://127.0.0.1:8567"
 
@@ -55,6 +66,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CHOIRWORKS_",
         env_nested_delimiter="__",
+        env_file=".env",
         extra="ignore",
     )
 
@@ -65,6 +77,7 @@ class Settings(BaseSettings):
     policies: PolicyConfig = Field(default_factory=PolicyConfig)
     recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
     a2a: A2AConfig = Field(default_factory=A2AConfig)
+    sim: SimConfig = Field(default_factory=SimConfig)
 
 
 def load_settings(yaml_path: Path | str | None = None) -> Settings:

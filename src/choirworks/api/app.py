@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any
 
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -39,7 +40,9 @@ async def create_app(
     resolved = settings or Settings()
     llm_client = llm or LiteLLMClient(
         model=resolved.llm.planner_model,
+        api_base=resolved.llm.api_base,
         timeout_seconds=resolved.llm.timeout_seconds,
+        context_window=resolved.llm.context_window,
     )
 
     app = FastAPI(title="ChoirWorks", version="0.1.0")
@@ -83,6 +86,8 @@ async def create_app(
             max_node_attempts=resolved.scheduler.max_node_attempts,
             retry_backoff=resolved.scheduler.retry_backoff_seconds,
             replan_on_failure=resolved.scheduler.replan_on_failure,
+            compaction_threshold=resolved.llm.compaction_threshold,
+            compaction_retention=resolved.llm.compaction_retention,
         )
         executor.set_task_store(task_store)
 
@@ -118,6 +123,28 @@ async def create_app(
             rest_routes=rest_routes,
         )
 
+        sim_agents: list[Any] = []
+        if resolved.sim.start_agents and resolved.sim.agents:
+            from choirworks.sim.fake_agent import start_fake_agent
+
+            async with db.conn.execute("DELETE FROM agent_registry"):
+                pass
+            async with db.conn.execute("DELETE FROM tasks"):
+                pass
+            await db.conn.commit()
+            for spec in resolved.sim.agents:
+                name = spec["name"]
+                behavior = spec.get("behavior", "echo")
+                agent = await start_fake_agent(
+                    behavior,
+                    name=name,
+                    chunk_size=resolved.sim.chunk_size,
+                    chunk_delay=resolved.sim.chunk_delay,
+                )
+                sim_agents.append(agent)
+                await registry.register(name, agent.url)
+            logger.info("Started %d sim agent(s)", len(sim_agents))
+
         from choirworks.a2a.recovery import recover_tasks
 
         if resolved.recovery.replay_on_startup:
@@ -126,6 +153,8 @@ async def create_app(
         try:
             yield
         finally:
+            for agent in sim_agents:
+                await agent.stop()
             await executor.shutdown()
             await request_handler.aclose()
             await remote.close()

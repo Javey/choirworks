@@ -96,3 +96,9 @@ class FakeLLM:
         if not self.text_results:
             raise AssertionError("FakeLLM has no scripted text result")
         return self.text_results.pop(0)
+
+    def count_tokens(self, text: str) -> int:
+        return len(text) // 3
+
+    def get_context_window(self) -> int:
+        return 128000

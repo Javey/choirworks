@@ -26,12 +26,21 @@ class LiteLLMClient:
         model: str,
         timeout_seconds: float = 60.0,
         *,
+        api_base: str | None = None,
+        context_window: int | None = None,
         completion_fn: Any | None = None,
     ):
         self._model = model
         self._timeout = timeout_seconds
+        self._api_base = api_base
+        self._context_window = context_window
         self._completion_fn = completion_fn or litellm.acompletion
         self._instructor = instructor.from_litellm(self._completion_fn)
+
+    def _extra_kwargs(self) -> dict[str, Any]:
+        if self._api_base:
+            return {"api_base": self._api_base}
+        return {}
 
     async def structured(self, *, system: str, user: str, schema: type[T]) -> T:
         return await self._instructor.chat.completions.create(
@@ -42,6 +51,7 @@ class LiteLLMClient:
                 {"role": "user", "content": user},
             ],
             timeout=self._timeout,
+            **self._extra_kwargs(),
         )
 
     async def structured_with_raw(
@@ -56,6 +66,7 @@ class LiteLLMClient:
                 {"role": "user", "content": user},
             ],
             timeout=self._timeout,
+            **self._extra_kwargs(),
         )
         content = ""
         try:
@@ -72,5 +83,21 @@ class LiteLLMClient:
                 {"role": "user", "content": user},
             ],
             timeout=self._timeout,
+            **self._extra_kwargs(),
         )
         return response.choices[0].message.content or ""
+
+    def count_tokens(self, text: str) -> int:
+        try:
+            return litellm.token_counter(model=self._model, text=text)
+        except Exception:  # noqa: BLE001
+            return len(text) // 3
+
+    def get_context_window(self) -> int:
+        if self._context_window:
+            return self._context_window
+        try:
+            info = litellm.get_model_info(self._model)
+            return int(info.get("max_input_tokens", 128000))
+        except Exception:  # noqa: BLE001
+            return 128000

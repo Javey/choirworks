@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from "react";
 import { AtSign, CornerDownLeft, X } from "lucide-react";
 
 import type { RoomMemberDto, RoomMessageDto } from "../../lib/types";
-import { Avatar } from "../Avatar";
 
 export interface RoomSendInput {
   text: string;
@@ -201,7 +200,6 @@ export function RoomComposer({
                     insertMention(member.agent_name);
                   }}
                 >
-                  <Avatar name={member.agent_name} size={24} />
                   <span className="text-[13px]">@{member.agent_name}</span>
                 </button>
               ))}

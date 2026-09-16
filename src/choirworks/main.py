@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 import uvicorn
 
@@ -10,7 +11,10 @@ from choirworks.config import load_settings
 
 
 def main() -> None:
-    settings = load_settings(os.environ.get("CHOIRWORKS_CONFIG"))
+    config_path = os.environ.get("CHOIRWORKS_CONFIG")
+    if config_path is None and Path("config.yaml").exists():
+        config_path = "config.yaml"
+    settings = load_settings(config_path)
     app = asyncio.run(create_app(settings))
     uvicorn.run(
         app,

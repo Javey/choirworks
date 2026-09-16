@@ -86,6 +86,11 @@ function metaOf(container: ProtoStruct): ProtoStruct {
   return (container.metadata as ProtoStruct | undefined) ?? {};
 }
 
+function partMetaOf(container: ProtoStruct): ProtoStruct {
+  const parts = (container.parts as ProtoStruct[] | undefined) ?? [];
+  return parts.length > 0 ? metaOf(parts[0]) : {};
+}
+
 function roomMetaOf(container: ProtoStruct): ProtoStruct {
   const meta = metaOf(container);
   return (meta[ROOM_META_KEY] as ProtoStruct | undefined) ?? {};
@@ -100,10 +105,9 @@ export function conversationFromTask(
   );
   const history = (task.history as ProtoStruct[] | undefined) ?? [];
   const messages: ChatMessage[] = history.map((msg) => {
-    const meta = metaOf(msg);
-    const role = msg.role === Role.ROLE_USER ? "user" : "agent";
-    const sender = typeof meta.sender === "string" ? meta.sender : null;
     const rm = roomMetaOf(msg);
+    const sender = typeof rm.sender === "string" ? rm.sender : null;
+    const role = msg.role === Role.ROLE_USER ? "user" : (sender === "assistant" ? "assistant" : "agent");
     return {
       id: String(msg.messageId ?? ""),
       role,
@@ -273,49 +277,33 @@ export function applyStreamEvent(
       };
     }
 
-    if (kind === "agent.message" && statusMsg) {
+    // StatusUpdate with message = thinking (assistant reasoning, plan.announced, etc.)
+    if (statusMsg) {
       const msgText = textOfParts(statusMsg);
-      const rm = roomMetaOf(statusMsg);
-      const sender = typeof rm.sender === "string" ? rm.sender : null;
-      const nodeId = typeof rm.node_id === "string" ? rm.node_id : null;
-      const chatMsg: ChatMessage = {
-        id: String(statusMsg.messageId ?? `msg-${seq}`),
-        role: "agent",
-        sender,
-        text: msgText,
-        mentions: [],
-        quote_id: null,
-        node_id: nodeId,
-        task_id: view.taskId,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state,
-        messages: [...view.messages, chatMsg],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "task.completion_summary" && statusMsg) {
-      const msgText = textOfParts(statusMsg);
-      const chatMsg: ChatMessage = {
-        id: String(statusMsg.messageId ?? `completion-${seq}`),
-        role: "assistant",
-        sender: "assistant",
-        text: msgText,
-        mentions: [],
-        quote_id: null,
-        node_id: null,
-        task_id: view.taskId,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state,
-        messages: [...view.messages, chatMsg],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
+      if (msgText) {
+        const rm = roomMetaOf(statusMsg);
+        const sender = typeof rm.sender === "string" ? rm.sender : "assistant";
+        const chatMsg: ChatMessage = {
+          id: String(statusMsg.messageId ?? `thought-${seq}`),
+          role: "assistant",
+          sender,
+          text: msgText,
+          mentions: [],
+          quote_id: null,
+          node_id: typeof rm.node_id === "string" ? rm.node_id : null,
+          task_id: view.taskId,
+          created_at: new Date().toISOString(),
+        };
+        if (view.messages.some((m) => m.id === chatMsg.id)) {
+          return view;
+        }
+        return {
+          ...view,
+          state,
+          messages: [...view.messages, chatMsg],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
     }
 
     if (kind === "intervention.question" || kind === "node.input_required") {
@@ -339,11 +327,60 @@ export function applyStreamEvent(
     const artUpdate = result;
     const artifact = (artUpdate.artifact as ProtoStruct | undefined) ?? {};
     const meta = metaOf(artUpdate);
+    const kind = typeof meta.kind === "string" ? meta.kind : "";
     const nodeId = typeof meta.node_id === "string" ? meta.node_id : null;
     const text = textOfParts(artifact);
     const lastChunk = artUpdate.lastChunk === true;
     const agentName = typeof meta.agent_name === "string" ? meta.agent_name : "";
 
+    // agent.message as artifact = agent output (final message, not streaming)
+    if (kind === "agent.message" && text) {
+      const chatMsg: ChatMessage = {
+        id: String(artifact.artifactId ?? `agent-msg-${seq}`),
+        role: "agent",
+        sender: agentName || null,
+        text,
+        mentions: [],
+        quote_id: null,
+        node_id: nodeId,
+        task_id: view.taskId,
+        created_at: new Date().toISOString(),
+      };
+      if (view.messages.some((m) => m.id === chatMsg.id)) {
+        return view;
+      }
+      return {
+        ...view,
+        messages: [...view.messages, chatMsg],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    // Thought part in artifact (e.g. from ADK agents with adk_thought)
+    const pMeta = partMetaOf(artifact);
+    if (pMeta.cw_thought === true && text) {
+      const chatMsg: ChatMessage = {
+        id: String(artifact.artifactId ?? `thought-${seq}`),
+        role: "assistant",
+        sender: agentName || "assistant",
+        text,
+        mentions: [],
+        quote_id: null,
+        node_id: nodeId,
+        task_id: view.taskId,
+        created_at: new Date().toISOString(),
+      };
+      if (view.messages.some((m) => m.id === chatMsg.id)) {
+        return view;
+      }
+      return {
+        ...view,
+        messages: [...view.messages, chatMsg],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    // node.artifact = streaming output (working bubbles → final output)
     if (nodeId && text) {
       const existing = view.workingBubbles.find((b) => b.nodeId === nodeId);
       const append = artUpdate.append === true;

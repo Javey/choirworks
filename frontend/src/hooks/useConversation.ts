@@ -34,6 +34,7 @@ function isSettled(state: string | undefined): boolean {
 
 export function useConversation(conversationId: string | null) {
   const [view, setView] = useState<ConversationView>(emptyConversation);
+  const [rawEvents, setRawEvents] = useState<unknown[]>([]);
   const [error, setError] = useState<string | null>(null);
   const navigateRef = useRef<((id: string) => void) | null>(null);
   const viewRef = useRef(view);
@@ -48,6 +49,7 @@ export function useConversation(conversationId: string | null) {
   const apply = useCallback(
     (event: unknown) => {
       const seq = seqRef.current++;
+      setRawEvents((prev) => [...prev, event]);
       commit(
         applyStreamEvent(
           viewRef.current,
@@ -79,8 +81,11 @@ export function useConversation(conversationId: string | null) {
   );
 
   useEffect(() => {
+    if (viewRef.current.taskId === conversationId) return;
+
     genRef.current += 1;
     seqRef.current = 0;
+    setRawEvents([]);
     if (!conversationId) {
       commit(emptyConversation);
       return;
@@ -144,6 +149,7 @@ export function useConversation(conversationId: string | null) {
         configuration: undefined,
         metadata: undefined,
       })) {
+        apply(event);
         const payload = (event as StreamResponse).payload;
         if (payload?.$case === "task" && payload.value?.id) {
           createdTaskId = payload.value.id;
@@ -152,7 +158,6 @@ export function useConversation(conversationId: string | null) {
             navigateRef.current = null;
           }
         }
-        apply(event);
       }
       const latest = viewRef.current;
       if (createdTaskId && !isSettled(latest.state)) {
@@ -166,5 +171,5 @@ export function useConversation(conversationId: string | null) {
     navigateRef.current = fn;
   }, []);
 
-  return { view, error, send, setOnTaskCreated };
+  return { view, rawEvents, error, send, setOnTaskCreated };
 }

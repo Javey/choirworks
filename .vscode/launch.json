@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ChoirWorks (真实 LLM)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "choirworks.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "ChoirWorks Sim (离线)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "choirworks.sim.runner",
+      "cwd": "${workspaceFolder}",
+      "args": ["--fresh"],
+      "justMyCode": false
+    }
+  ]
+}

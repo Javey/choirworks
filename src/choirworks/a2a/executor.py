@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Any, TypedDict
 
 from a2a.helpers import new_task, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -44,6 +44,25 @@ A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
 
 DEFAULT_POLICY = "auto_llm"
 MAX_PEER_CONTEXT = 2000
+
+SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI orchestrator.
+Condense the following messages into a brief summary preserving:
+- Key decisions and their rationale
+- Completed work and outputs
+- Unresolved questions and pending tasks
+- Agent assignments and roles
+
+Be concise. Output only the summary."""
+
+
+class RoomOptions(TypedDict, total=False):
+    mentions: list[str]
+    quote_id: str
+    interrupt: bool
+    sender: str
+    role: str
+    kind: str
+    node_id: str
 
 
 class PeerChoice(BaseModel):
@@ -109,13 +128,30 @@ def _join_text(parts: Any) -> str:
     return "\n".join(p.text for p in parts if p.HasField("text"))
 
 
-def _room_options(message: Message | None) -> dict[str, Any]:
+def _room_options(message: Message | None) -> RoomOptions:
     if message is None or not message.metadata.fields:
         return {}
     room = message.metadata.fields.get(A2A_ROOM_URI)
     if room is None or not room.HasField("struct_value"):
         return {}
     return MessageToDict(room.struct_value, preserving_proto_field_name=True)
+
+
+def _room_meta(msg: Message) -> dict[str, Any]:
+    if not msg.metadata.fields:
+        return {}
+    room = msg.metadata.fields.get(A2A_ROOM_URI)
+    if room is None or not room.HasField("struct_value"):
+        return {}
+    return MessageToDict(room.struct_value, preserving_proto_field_name=True)
+
+
+def _message_text(msg: Message) -> str:
+    parts: list[str] = []
+    for part in (msg.parts or []):
+        if part.WhichOneof("content") == "text":
+            parts.append(part.text)
+    return "\n".join(parts)
 
 
 def _is_resume_message(message: Message | None) -> bool:
@@ -162,6 +198,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         retry_backoff: float = 1.0,
         max_derived_nodes: int = 5,
         replan_on_failure: bool = True,
+        compaction_threshold: float = 0.8,
+        compaction_retention: int = 10,
     ):
         self._registry = registry
         self._remote = remote
@@ -174,6 +212,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._retry_backoff = retry_backoff
         self._max_derived_nodes = max_derived_nodes
         self._replan_on_failure = replan_on_failure
+        self._compaction_threshold = compaction_threshold
+        self._compaction_retention = compaction_retention
 
         self._states: dict[str, OrchestrationState] = {}
         self._runners: dict[str, asyncio.Task] = {}
@@ -181,6 +221,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._locks: dict[str, asyncio.Lock] = {}
         self._node_tasks: dict[str, dict[asyncio.Task, NodeState]] = {}
         self._context_ids: dict[str, str] = {}
+        self._context_cache: dict[str, tuple[str, int]] = {}
         self._task_store: Any | None = None
 
     # ------------------------------------------------------------- lifecycle
@@ -340,7 +381,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_id: str,
         event_queue: EventQueue,
         *,
-        room: dict[str, Any] | None = None,
+        room: RoomOptions | None = None,
         follow_up: bool = False,
     ) -> None:
         context_brief = await self._context_brief(context_id, exclude_task_id=task_id)
@@ -401,6 +442,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 },
                 reasoning_msg.metadata,
             )
+            ParseDict({"cw_thought": True}, reasoning_msg.parts[0].metadata)
             await self._emit(
                 event_queue, state, task_id, context_id,
                 "assistant.reasoning", TaskState.TASK_STATE_WORKING,
@@ -899,29 +941,25 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             elif chunk.HasField("message"):
                 msg_text = _join_text(chunk.message.parts)
                 artifacts.append({"id": "message", "name": "message", "text": msg_text})
-                agent_msg = new_text_message(
-                    msg_text, role=Role.ROLE_AGENT,
-                    task_id=task_id, context_id=context_id,
-                )
-                ParseDict(
-                    {
-                        A2A_ROOM_URI: {
-                            "sender": node.agent_name,
-                            "node_id": node.id,
-                            "role": "agent",
-                        }
-                    },
-                    agent_msg.metadata,
+                art = Artifact(
+                    artifact_id=f"{node.id}:message",
+                    name=node.name,
+                    parts=[Part(text=msg_text)],
                 )
                 await queue.enqueue_event(
-                    _status_update(
-                        task_id,
-                        context_id,
-                        TaskState.TASK_STATE_WORKING,
-                        kind="agent.message",
-                        orch_state=state,
-                        message=agent_msg,
-                        node_id=node.id,
+                    TaskArtifactUpdateEvent(
+                        task_id=task_id,
+                        context_id=context_id,
+                        artifact=art,
+                        append=False,
+                        last_chunk=True,
+                        metadata=_struct(
+                            {
+                                "kind": "agent.message",
+                                "node_id": node.id,
+                                "agent_name": node.agent_name,
+                            }
+                        ),
                     )
                 )
 
@@ -1176,7 +1214,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id: str,
         context_id: str,
         event_queue: EventQueue,
-        room: dict[str, Any],
+        room: RoomOptions,
     ) -> None:
         if not text:
             return
@@ -1510,10 +1548,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         message = new_text_message(
             text, role=Role.ROLE_AGENT, task_id=task_id, context_id=context_id
         )
-        room: dict[str, Any] = {"sender": "assistant", "role": "assistant"}
+        room: RoomOptions = {"sender": "assistant", "role": "assistant"}
         if node_id:
             room["node_id"] = node_id
         ParseDict({A2A_ROOM_URI: room}, message.metadata)
+        ParseDict({"cw_thought": True}, message.parts[0].metadata)
         await self._emit(
             queue,
             state,
@@ -1560,16 +1599,48 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             page = await self._task_store.list(params, ServerCallContext())
         except Exception:  # noqa: BLE001 - context is best effort
             return ""
-        lines: list[str] = []
+
+        timeline: list[str] = []
         for task in page.tasks:
             if task.id == exclude_task_id:
                 continue
-            state = load_state(task)
-            if state is None:
-                continue
-            for node in state.nodes.values():
-                if node.status == "completed" and node.output:
-                    lines.append(
-                        f"- [{task.id}] @{node.agent_name}: {node.output[:400]}"
-                    )
-        return "\n".join(lines[-20:])
+            for msg in (task.history or []):
+                rm = _room_meta(msg)
+                sender = rm.get("sender") or ("user" if msg.role == Role.ROLE_USER else "agent")
+                text = _message_text(msg)
+                if text:
+                    timeline.append(f"[{sender}] {text}")
+
+        if not timeline:
+            return ""
+
+        full_text = "\n".join(timeline)
+        threshold = int(self._llm.get_context_window() * self._compaction_threshold)
+        token_count = self._llm.count_tokens(full_text)
+
+        if token_count <= threshold:
+            return full_text
+
+        retention = min(self._compaction_retention, len(timeline))
+        split = len(timeline) - retention
+        recent = timeline[split:]
+        old = timeline[:split]
+
+        cached = self._context_cache.get(context_id)
+        if cached and cached[1] == split:
+            summary = cached[0]
+        elif cached and cached[1] < split:
+            new_msgs = "\n".join(timeline[cached[1]:split])
+            summary = await self._llm.text(
+                system=SUMMARIZE_PROMPT,
+                user=f"Previous summary:\n{cached[0]}\n\nNew messages:\n{new_msgs}",
+            )
+            self._context_cache[context_id] = (summary, split)
+        else:
+            summary = await self._llm.text(
+                system=SUMMARIZE_PROMPT,
+                user="\n".join(old),
+            )
+            self._context_cache[context_id] = (summary, split)
+
+        return f"## 群聊历史摘要\n{summary}\n\n## 最近消息\n" + "\n".join(recent)
