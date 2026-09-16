@@ -1,0 +1,48 @@
+server:
+  host: 127.0.0.1
+  port: 8567
+
+llm:
+  planner_model: openai/glm-5.1
+  api_base: https://kspmas.ksyun.com/v1/
+  timeout_seconds: 60
+  max_plan_retries: 2
+
+scheduler:
+  max_parallel_nodes: 5
+  node_timeout_seconds: 600
+  max_node_attempts: 2
+  retry_backoff_seconds: 1.0
+  replan_on_failure: true
+  max_plan_nodes: 20
+
+policies:
+  default: auto_llm
+  overrides:
+    - agent_name: critic
+      policy: human
+    - agent_name: researcher
+      policy: peer_agent
+    - agent_name: writer
+      policy: peer_agent
+
+recovery:
+  replay_on_startup: true
+
+store:
+  db_path: ./data/choirworks.db
+
+a2a:
+  public_url: http://127.0.0.1:8567
+
+sim:
+  start_agents: true
+  agents:
+    - {name: researcher, behavior: collaborate}
+    - {name: writer, behavior: inquire}
+    - {name: critic, behavior: review}
+    - {name: analyst, behavior: assist}
+    - {name: flaky, behavior: flaky_once}
+    - {name: broken, behavior: flaky_always}
+  chunk_size: 2
+  chunk_delay: 0.04
