@@ -10,6 +10,7 @@ from typing import Any, Literal
 from a2a.helpers import new_task, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
+from a2a.server.tasks.task_store import TaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -199,7 +200,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     # ------------------------------------------------------------- lifecycle
 
-    def set_task_store(self, task_store: Any) -> None:
+    def set_task_store(self, task_store: TaskStore) -> None:
         """Injected by the app so follow-up plans can read conversation history."""
         self._brief_builder.set_task_store(task_store)
 

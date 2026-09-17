@@ -4,9 +4,9 @@ from __future__ import annotations
 # google-adk's flows/llm_flows (Apache-2.0, https://github.com/google/adk-python),
 # which splits prompt construction into dedicated modules.
 from collections.abc import Iterable, Sequence
-from typing import Any
 
 from a2a.server.context import ServerCallContext
+from a2a.server.tasks.task_store import TaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, Role
 
 from choirworks.a2a.room import message_text, room_options
@@ -134,10 +134,10 @@ class ContextBriefBuilder:
         self._llm = llm
         self._compaction_threshold = compaction_threshold
         self._compaction_retention = compaction_retention
-        self._task_store: Any | None = None
+        self._task_store: TaskStore | None = None
         self._cache: dict[str, tuple[str, int]] = {}
 
-    def set_task_store(self, task_store: Any) -> None:
+    def set_task_store(self, task_store: TaskStore) -> None:
         self._task_store = task_store
 
     async def build(self, context_id: str, exclude_task_id: str) -> str:
