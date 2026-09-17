@@ -5,7 +5,7 @@ import logging
 import re
 import uuid
 from collections.abc import Sequence
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 from a2a.helpers import new_task, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -27,7 +27,7 @@ from pydantic import BaseModel, create_model
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.a2a.room import A2A_ROOM_URI, room_options
+from choirworks.a2a.room import A2A_ROOM_URI, RoomOptions, room_options
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
@@ -47,16 +47,6 @@ from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner, PlanningFailed
 
 logger = logging.getLogger(__name__)
-
-
-class RoomOptions(TypedDict, total=False):
-    mentions: list[str]
-    quote_id: str
-    interrupt: bool
-    sender: str
-    role: str
-    kind: str
-    node_id: str
 
 
 class AssistanceDecision(BaseModel):
