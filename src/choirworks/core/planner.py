@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.context import build_planner_capabilities, build_planner_user_message
 from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
 
@@ -26,6 +27,23 @@ class PlanDraft(BaseModel):
     nodes: list[PlanNodeDraft]
 
 
+# Enum-pinned structured output mirrors google-adk's TransferToAgentTool
+# (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0), which
+# constrains agent_name to a JSON-Schema enum so hallucinated names cannot
+# pass validation.
+def constrained_plan_schema(agent_names: Sequence[str]) -> type[PlanDraft]:
+    node = create_model(
+        "PlanNodeDraftConstrained",
+        __base__=PlanNodeDraft,
+        agent_name=(Literal[*agent_names], ...),
+    )
+    return create_model(
+        "PlanDraftConstrained",
+        __base__=PlanDraft,
+        nodes=(list[node], ...),
+    )
+
+
 class PlanValidationError(ValueError):
     pass
 
@@ -43,13 +61,12 @@ def validate_plan(
         raise PlanValidationError("duplicate node id in plan")
     id_set = set(ids)
     agents_by_name = {agent.name: agent for agent in agents}
-
     for node in draft.nodes:
-        record = agents_by_name.get(node.agent_name)
-        if record is None:
-            raise PlanValidationError(f"unknown agent: {node.agent_name}")
         if node.skill_id is not None:
-            skills = {skill.get("id") for skill in record.card.get("skills", [])}
+            record = agents_by_name[node.agent_name]
+            skills = {
+                skill.get("id") for skill in record.card.get("skills", [])
+            }
             if node.skill_id not in skills:
                 raise PlanValidationError(
                     f"unknown skill '{node.skill_id}' for agent {node.agent_name}"
@@ -104,9 +121,8 @@ class PlanningFailed(RuntimeError):
 SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
 Return only JSON matching the required schema. Rules:
-- agent_name MUST be exactly one of the listed agent names (e.g., "researcher", "writer").
-  Do NOT use skill names, descriptions, or any other value as agent_name.
-- Every node must reference an existing agent_name and, when provided, an existing skill_id.
+- agent_name is enum-constrained to the registered agents listed below.
+- skill_id, when set, must be an existing skill id of the assigned agent.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.
 - Put the exact instruction for the agent in each node's input.text."""
@@ -148,16 +164,15 @@ class Planner:
         agents = await self._registry.list()
         if not agents:
             raise PlanningFailed("no agents registered; register at least one A2A agent first")
-        capabilities = self._capabilities_text(agents)
-        user = f"User request:\n{request}\n\nAvailable agents:\n{capabilities}"
-        if reason:
-            user += f"\n\nReason for replanning:\n{reason}"
-        if context:
-            user += f"\n\nCompleted work so far:\n{context}"
+        schema = constrained_plan_schema([agent.name for agent in agents])
+        capabilities = build_planner_capabilities(agents)
+        user = build_planner_user_message(
+            request, capabilities, reason=reason, context=context
+        )
 
         last_error: Exception | None = None
         for _ in range(self._max_retries + 1):
-            draft, reasoning = await self._structured(user)
+            draft, reasoning = await self._structured(user, schema)
             try:
                 validate_plan(draft, agents, self._max_nodes)
                 return draft, reasoning
@@ -168,26 +183,15 @@ class Planner:
             f"planner failed after {self._max_retries + 1} attempts: {last_error}"
         )
 
-    async def _structured(self, user: str) -> tuple[PlanDraft, str]:
+    async def _structured(
+        self, user: str, schema: type[PlanDraft]
+    ) -> tuple[PlanDraft, str]:
         raw_method = getattr(self._llm, "structured_with_raw", None)
         if raw_method is not None:
             return await raw_method(
-                system=SYSTEM_PROMPT, user=user, schema=PlanDraft
+                system=SYSTEM_PROMPT, user=user, schema=schema
             )
         draft = await self._llm.structured(
-            system=SYSTEM_PROMPT, user=user, schema=PlanDraft
+            system=SYSTEM_PROMPT, user=user, schema=schema
         )
         return draft, ""
-
-    @staticmethod
-    def _capabilities_text(agents: Sequence[AgentRecord]) -> str:
-        lines = []
-        for agent in agents:
-            skills = agent.card.get("skills", [])
-            skill_text = "; ".join(
-                f"{skill.get('id')} ({skill.get('description', '')})" for skill in skills
-            )
-            lines.append(
-                f"- {agent.name}: {agent.card.get('description', '')} skills=[{skill_text}]"
-            )
-        return "\n".join(lines)

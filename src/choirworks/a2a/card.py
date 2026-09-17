@@ -8,7 +8,7 @@ from a2a.types import (
     AgentSkill,
 )
 
-A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
+from choirworks.a2a.room import A2A_ROOM_URI
 
 _ROOM_DESCRIPTION = (
     "Group-chat fields (mentions, quote, interrupt) in message metadata"

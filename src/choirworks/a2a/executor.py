@@ -4,16 +4,15 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any, TypedDict
+from collections.abc import Sequence
+from typing import Any, Literal, TypedDict
 
 from a2a.helpers import new_task, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
     Artifact,
-    ListTasksRequest,
     Message,
     Part,
     Role,
@@ -23,16 +22,26 @@ from a2a.types.a2a_pb2 import (
     TaskStatusUpdateEvent,
 )
 from google.protobuf import struct_pb2
-from google.protobuf.json_format import MessageToDict, ParseDict
-from pydantic import BaseModel
+from google.protobuf.json_format import ParseDict
+from pydantic import BaseModel, create_model
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
+from choirworks.a2a.room import A2A_ROOM_URI, room_options
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
     OrchestrationState,
     load_state,
+)
+from choirworks.core.context import (
+    ContextBriefBuilder,
+    build_assist_input,
+    build_followup_input,
+    build_peer_choice_user,
+    build_peer_fallback_input,
+    build_replan_context,
+    build_replan_reason,
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner, PlanningFailed
@@ -40,19 +49,7 @@ from choirworks.core.policy import PolicyEngine
 
 logger = logging.getLogger(__name__)
 
-A2A_ROOM_URI = "https://github.com/Javey/choirworks/extensions/room/v1"
-
 DEFAULT_POLICY = "auto_llm"
-MAX_PEER_CONTEXT = 2000
-
-SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI orchestrator.
-Condense the following messages into a brief summary preserving:
-- Key decisions and their rationale
-- Completed work and outputs
-- Unresolved questions and pending tasks
-- Agent assignments and roles
-
-Be concise. Output only the summary."""
 
 
 class RoomOptions(TypedDict, total=False):
@@ -71,10 +68,20 @@ class PeerChoice(BaseModel):
     reasoning: str = ""
 
 
+# Same enum-pinning approach as google-adk's TransferToAgentTool
+# (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0).
+def constrained_peer_choice(names: Sequence[str]) -> type[PeerChoice]:
+    return create_model(
+        "PeerChoiceConstrained",
+        __base__=PeerChoice,
+        agent_name=(Literal[*names], ...),
+    )
+
+
 PEER_SYSTEM = """You coordinate a group of expert agents.
 One agent is blocked and asked for help. Choose the best registered agent to assist.
 Return only JSON matching the schema:
-- agent_name: must be one of the available agents (not the requester)
+- agent_name: the chosen helper (enum-constrained to the listed candidates)
 - instruction: the exact task description for the helper
 - reasoning: one short sentence"""
 
@@ -126,32 +133,6 @@ def _status_update(
 
 def _join_text(parts: Any) -> str:
     return "\n".join(p.text for p in parts if p.HasField("text"))
-
-
-def _room_options(message: Message | None) -> RoomOptions:
-    if message is None or not message.metadata.fields:
-        return {}
-    room = message.metadata.fields.get(A2A_ROOM_URI)
-    if room is None or not room.HasField("struct_value"):
-        return {}
-    return MessageToDict(room.struct_value, preserving_proto_field_name=True)
-
-
-def _room_meta(msg: Message) -> dict[str, Any]:
-    if not msg.metadata.fields:
-        return {}
-    room = msg.metadata.fields.get(A2A_ROOM_URI)
-    if room is None or not room.HasField("struct_value"):
-        return {}
-    return MessageToDict(room.struct_value, preserving_proto_field_name=True)
-
-
-def _message_text(msg: Message) -> str:
-    parts: list[str] = []
-    for part in (msg.parts or []):
-        if part.WhichOneof("content") == "text":
-            parts.append(part.text)
-    return "\n".join(parts)
 
 
 def _is_resume_message(message: Message | None) -> bool:
@@ -212,8 +193,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._retry_backoff = retry_backoff
         self._max_derived_nodes = max_derived_nodes
         self._replan_on_failure = replan_on_failure
-        self._compaction_threshold = compaction_threshold
-        self._compaction_retention = compaction_retention
+        self._brief_builder = ContextBriefBuilder(
+            llm,
+            compaction_threshold=compaction_threshold,
+            compaction_retention=compaction_retention,
+        )
 
         self._states: dict[str, OrchestrationState] = {}
         self._runners: dict[str, asyncio.Task] = {}
@@ -221,14 +205,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._locks: dict[str, asyncio.Lock] = {}
         self._node_tasks: dict[str, dict[asyncio.Task, NodeState]] = {}
         self._context_ids: dict[str, str] = {}
-        self._context_cache: dict[str, tuple[str, int]] = {}
-        self._task_store: Any | None = None
 
     # ------------------------------------------------------------- lifecycle
 
     def set_task_store(self, task_store: Any) -> None:
         """Injected by the app so follow-up plans can read conversation history."""
-        self._task_store = task_store
+        self._brief_builder.set_task_store(task_store)
 
     def _lock_for(self, task_id: str) -> asyncio.Lock:
         return self._locks.setdefault(task_id, asyncio.Lock())
@@ -240,7 +222,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id = context.task_id or ""
         context_id = context.context_id or ""
         existing = context.current_task
-        room = _room_options(context.message)
+        room = room_options(context.message)
         mentions = list(room.get("mentions") or [])
         for name in re.findall(r"@([A-Za-z0-9_-]+)", text):
             if name not in mentions:
@@ -384,7 +366,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         room: RoomOptions | None = None,
         follow_up: bool = False,
     ) -> None:
-        context_brief = await self._context_brief(context_id, exclude_task_id=task_id)
+        context_brief = await self._brief_builder.build(
+            context_id, exclude_task_id=task_id
+        )
         try:
             draft, reasoning = await self._planner.plan_with_reasoning(
                 text, context=context_brief or None
@@ -1134,7 +1118,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             agent_url=agent.card_url,
             deps=[],
             input_text=choice.instruction
-            or f"请协助回答以下问题：\n{node.question or node.input_text}",
+            or build_peer_fallback_input(node.question or node.input_text),
             derived=True,
             assist_requested_by=node.id,
         )
@@ -1156,23 +1140,17 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     async def _choose_peer(
         self, node: NodeState, candidates: list[Any]
     ) -> PeerChoice | None:
-        capabilities = "\n".join(
-            f"- {agent.name}: {agent.card.get('description', '')}"
-            for agent in candidates
+        user = build_peer_choice_user(
+            node.agent_name,
+            node.question or node.input_text,
+            candidates,
         )
-        user = (
-            f"Requester: {node.agent_name}\n"
-            f"Question / blocked work:\n{node.question or node.input_text}\n\n"
-            f"Available agents:\n{capabilities}"
-        )
+        schema = constrained_peer_choice([agent.name for agent in candidates])
         try:
             choice = await self._llm.structured(
-                system=PEER_SYSTEM, user=user, schema=PeerChoice
+                system=PEER_SYSTEM, user=user, schema=schema
             )
         except Exception:  # noqa: BLE001 - fall back to first candidate
-            return PeerChoice(agent_name=candidates[0].name)
-        names = {agent.name for agent in candidates}
-        if choice.agent_name not in names:
             return PeerChoice(agent_name=candidates[0].name)
         return choice
 
@@ -1321,12 +1299,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             return
         state.derived_count += 1
         node_id = f"{anchor.id}-f{state.derived_count}"
-        input_text = text
-        if anchor.output:
-            input_text = (
-                f"引用 @{anchor.agent_name} 此前产出：\n{anchor.output[:MAX_PEER_CONTEXT]}\n\n"
-                f"新要求：{text}"
-            )
+        input_text = build_followup_input(anchor.agent_name, anchor.output, text)
         followup = NodeState(
             id=node_id,
             name=f"继续 · {anchor.name}",
@@ -1407,11 +1380,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 agent_name=name,
                 agent_url=known[name].card_url,
                 deps=[],
-                input_text=(
-                    f"@{node.agent_name} 在协作中请求你的协助。\n"
-                    f"参考上下文：\n{(node.output or '')[:MAX_PEER_CONTEXT]}\n\n"
-                    f"请提供你的专业协助。"
-                ),
+                input_text=build_assist_input(node.agent_name, node.output),
                 derived=True,
                 assist_requested_by=node.id,
                 source_message_id=node.id,
@@ -1440,19 +1409,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_id: str,
         queue: EventQueue,
     ) -> bool:
-        outputs = "\n".join(
-            f"- @{node.agent_name}: {(node.output or '')[:400]}"
-            for node in state.nodes.values()
-            if node.status == "completed"
-        )
-        errors = ", ".join(
-            node.error or node.id for node in state.nodes.values() if node.status == "failed"
-        )
+        nodes = state.nodes.values()
         try:
             draft = await self._planner.plan(
                 state.rationale or "继续完成任务",
-                reason=f"nodes failed: {errors}",
-                context=outputs or None,
+                reason=build_replan_reason(nodes),
+                context=build_replan_context(nodes) or None,
             )
         except PlanningFailed:
             return False
@@ -1588,59 +1550,3 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 agent_url=record.card_url,
                 reason=reason,
             )
-
-    async def _context_brief(
-        self, context_id: str, exclude_task_id: str
-    ) -> str:
-        if not context_id or self._task_store is None:
-            return ""
-        try:
-            params = ListTasksRequest(context_id=context_id, page_size=50)
-            page = await self._task_store.list(params, ServerCallContext())
-        except Exception:  # noqa: BLE001 - context is best effort
-            return ""
-
-        timeline: list[str] = []
-        for task in page.tasks:
-            if task.id == exclude_task_id:
-                continue
-            for msg in (task.history or []):
-                rm = _room_meta(msg)
-                sender = rm.get("sender") or ("user" if msg.role == Role.ROLE_USER else "agent")
-                text = _message_text(msg)
-                if text:
-                    timeline.append(f"[{sender}] {text}")
-
-        if not timeline:
-            return ""
-
-        full_text = "\n".join(timeline)
-        threshold = int(self._llm.get_context_window() * self._compaction_threshold)
-        token_count = self._llm.count_tokens(full_text)
-
-        if token_count <= threshold:
-            return full_text
-
-        retention = min(self._compaction_retention, len(timeline))
-        split = len(timeline) - retention
-        recent = timeline[split:]
-        old = timeline[:split]
-
-        cached = self._context_cache.get(context_id)
-        if cached and cached[1] == split:
-            summary = cached[0]
-        elif cached and cached[1] < split:
-            new_msgs = "\n".join(timeline[cached[1]:split])
-            summary = await self._llm.text(
-                system=SUMMARIZE_PROMPT,
-                user=f"Previous summary:\n{cached[0]}\n\nNew messages:\n{new_msgs}",
-            )
-            self._context_cache[context_id] = (summary, split)
-        else:
-            summary = await self._llm.text(
-                system=SUMMARIZE_PROMPT,
-                user="\n".join(old),
-            )
-            self._context_cache[context_id] = (summary, split)
-
-        return f"## 群聊历史摘要\n{summary}\n\n## 最近消息\n" + "\n".join(recent)

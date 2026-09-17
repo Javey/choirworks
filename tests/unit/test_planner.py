@@ -54,12 +54,6 @@ def test_valid_plan_passes():
     validate_plan(draft, AGENTS, max_nodes=10)
 
 
-def test_unknown_agent_rejected():
-    draft = PlanDraft(rationale="x", nodes=[node("n1", "ghost")])
-    with pytest.raises(PlanValidationError, match="unknown agent"):
-        validate_plan(draft, AGENTS, max_nodes=10)
-
-
 def test_unknown_skill_rejected():
     draft = PlanDraft(rationale="x", nodes=[node("n1", "research", skill="nope")])
     with pytest.raises(PlanValidationError, match="unknown skill"):
@@ -134,7 +128,7 @@ async def test_planner_returns_valid_draft(tmp_path):
 
 
 async def test_planner_retries_with_feedback(tmp_path):
-    bad = PlanDraft(rationale="bad", nodes=[node("n1", "ghost")])
+    bad = PlanDraft(rationale="bad", nodes=[node("n1", "research", skill="nope")])
     good = PlanDraft(rationale="good", nodes=[node("n1", "research", skill="search")])
     llm = FakeLLM(structured_results=[bad, good])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
@@ -142,14 +136,14 @@ async def test_planner_retries_with_feedback(tmp_path):
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
         draft = await planner.plan("x")
         assert draft.rationale == "good"
-        assert "unknown agent" in llm.structured_calls[1]["user"]
+        assert "unknown skill" in llm.structured_calls[1]["user"]
     finally:
         await remote.close()
         await db.close()
 
 
 async def test_planner_fails_after_retries(tmp_path):
-    bad = PlanDraft(rationale="bad", nodes=[node("n1", "ghost")])
+    bad = PlanDraft(rationale="bad", nodes=[node("n1", "research", skill="nope")])
     llm = FakeLLM(structured_results=[bad, bad, bad])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
@@ -168,6 +162,24 @@ async def test_planner_rejects_when_no_agents(tmp_path):
         planner = Planner(FakeLLM(), registry)
         with pytest.raises(PlanningFailed, match="no agents"):
             await planner.plan("x")
+    finally:
+        await remote.close()
+        await db.close()
+
+
+async def test_planner_schema_constrains_agent_names(tmp_path):
+    llm = FakeLLM(
+        structured_results=[
+            PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
+        ]
+    )
+    db, remote, registry = await make_registry(tmp_path, AGENTS)
+    try:
+        planner = Planner(llm, registry, max_nodes=10, max_retries=2)
+        await planner.plan("x")
+        schema = llm.structured_calls[0]["schema"]
+        node_schema = schema.model_json_schema()["$defs"]["PlanNodeDraftConstrained"]
+        assert node_schema["properties"]["agent_name"]["enum"] == ["research", "writer"]
     finally:
         await remote.close()
         await db.close()
