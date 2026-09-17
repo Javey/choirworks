@@ -10,7 +10,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8567
-    frontend_dir: Path = Path("frontend/dist")
 
 
 class LLMConfig(BaseModel):

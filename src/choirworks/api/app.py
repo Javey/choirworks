@@ -15,8 +15,7 @@ from a2a.server.routes import (
 from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
 from a2a.server.tasks.database_task_store import DatabaseTaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, TaskState
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request
 from google.protobuf.json_format import MessageToDict
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -194,21 +193,5 @@ async def create_app(
                 "last_status": state_name,
             })
         return conversations
-
-    frontend_dir = settings.server.frontend_dir
-
-    @app.get("/")
-    async def root():
-        if (frontend_dir / "index.html").exists():
-            from fastapi.responses import FileResponse
-            return FileResponse(frontend_dir / "index.html")
-        raise HTTPException(status_code=404, detail="frontend not built")
-
-    if frontend_dir.exists() and (frontend_dir / "assets").exists():
-        app.mount(
-            "/assets",
-            StaticFiles(directory=frontend_dir / "assets", html=True),
-            name="assets",
-        )
 
     return app
