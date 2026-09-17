@@ -30,12 +30,13 @@ FLAKY_AGENTS = {"broken"}
 REQUEST_PATTERN = re.compile(r"User request:\n(.*?)(?:\n\nAvailable agents:|\Z)", re.S)
 AGENT_PATTERN = re.compile(r"^- (\S+):", re.M)
 WORKER_PATTERN = re.compile(
-    r"Worker node '(\S+)' asks:\n(.*?)(?:\n\nRegistered agents:|\Z)", re.S
+    r"Requester: (\S+)\nQuestion / blocked work:\n(.*?)(?:\n\nFor context:|\Z)", re.S
 )
 PEER_ROUTES = {
     "writer": ("researcher",),
     "researcher": ("analyst",),
 }
+HUMAN_AGENTS = {"critic"}
 
 _NEXT_ID = 0
 
@@ -165,54 +166,47 @@ def _make_plan(user: str) -> tuple[str, PlanDraft]:
     return "\n".join(lines), draft
 
 
-def _make_peer_choice(user: str) -> tuple[str, dict[str, Any]]:
-    """Return (reasoning_text, PeerChoice dict) based on pattern matching."""
+def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
+    """Return (reasoning_text, AssistanceDecision dict) based on pattern matching."""
     match = WORKER_PATTERN.search(user)
     agents = _registered(user)
 
     if match is not None:
         asking = match.group(1)
         question = match.group(2).strip()
-        preferred = PEER_ROUTES.get(asking, ("researcher", "writer", "critic", "analyst"))
+
+        if asking in HUMAN_AGENTS:
+            reasoning = f"Agent {asking} 的求助需要人工介入。"
+            return reasoning, {
+                "action": "human",
+                "agent_name": None,
+                "instruction": "",
+            }
+
+        preferred = PEER_ROUTES.get(asking, ("researcher", "writer", "analyst"))
         for name in preferred:
             if name in agents and name != asking:
-                reasoning = f"Worker agent {asking} 提出了问题，最适合回答的是 @{name}。"
+                reasoning = f"Agent {asking} 提出了问题，最适合回答的是 @{name}。"
                 return reasoning, {
+                    "action": "peer",
                     "agent_name": name,
                     "instruction": f"请补充信息：{question}",
                 }
         available = sorted(agents - FLAKY_AGENTS - {asking})
         if available:
             name = available[0]
-            reasoning = f"Worker agent {asking} 提出了问题，安排 @{name} 回答。"
+            reasoning = f"Agent {asking} 提出了问题，安排 @{name} 回答。"
             return reasoning, {
+                "action": "peer",
                 "agent_name": name,
                 "instruction": f"请补充信息：{question}",
             }
-        reasoning = "没有可用的 peer agent，默认推荐 researcher。"
-        return reasoning, {
-            "agent_name": "researcher",
-            "instruction": "请基于已有信息回答 worker agent 的问题。",
-        }
 
-    for name in ("researcher", "writer", "critic"):
-        if name in agents:
-            reasoning = f"选择 @{name} 来回答 worker agent 的问题。"
-            return reasoning, {
-                "agent_name": name,
-                "instruction": "请基于已有信息回答 worker agent 的问题。",
-            }
-    available = sorted(agents - FLAKY_AGENTS)
-    if available:
-        reasoning = f"选择 @{available[0]} 来回答。"
-        return reasoning, {
-            "agent_name": available[0],
-            "instruction": "请基于已有信息回答 worker agent 的问题。",
-        }
-    reasoning = "无可用 agent，无法做出 peer choice。"
+    reasoning = "无可用 peer agent，转人工处理。"
     return reasoning, {
-        "agent_name": "researcher",
-        "instruction": "请基于已有信息回答 worker agent 的问题。",
+        "action": "human",
+        "agent_name": None,
+        "instruction": "",
     }
 
 
@@ -241,11 +235,11 @@ async def sim_acompletion(**kwargs: Any) -> ModelResponse:
                 content=reasoning,
             )
 
-        if tool_name == "PeerChoice":
-            reasoning, choice = _make_peer_choice(user_content)
+        if tool_name == "AssistanceDecision":
+            reasoning, decision = _make_assistance_decision(user_content)
             return _tool_response(
-                "PeerChoice",
-                choice,
+                "AssistanceDecision",
+                decision,
                 content=reasoning,
             )
 

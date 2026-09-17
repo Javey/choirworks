@@ -16,16 +16,6 @@ scheduler:
   replan_on_failure: true
   max_plan_nodes: 20
 
-policies:
-  default: auto_llm
-  overrides:
-    - agent_name: critic
-      policy: human
-    - agent_name: researcher
-      policy: peer_agent
-    - agent_name: writer
-      policy: peer_agent
-
 recovery:
   replay_on_startup: true
 

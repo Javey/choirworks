@@ -1,7 +1,7 @@
 
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 
-from choirworks.a2a.executor import PeerChoice
+from choirworks.a2a.executor import AssistanceDecision
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
@@ -45,41 +45,25 @@ async def _send_once(client, request) -> str:
     return task_id
 
 
-
-
-async def test_auto_llm_resolves_intervention(tmp_path, ask_agent):
+async def test_llm_routes_to_human(tmp_path, ask_agent):
     settings = Settings(
         store={"db_path": tmp_path / "hitl.db"},
         a2a={"public_url": "http://test"},
-        policies={"default": "auto_llm"},
         scheduler={"retry_backoff_seconds": 0.0},
     )
     from tests.support.fakes import FakeLLM
 
-    llm = FakeLLM(structured_results=[_plan("ask")] * 2, text_results=["自动答复"])
+    llm = FakeLLM(
+        structured_results=[
+            _plan("ask"),
+            AssistanceDecision(action="human"),
+        ],
+    )
     async with sdk_hub(tmp_path, "hitl.db", settings=settings, llm=llm) as (
         _app,
         http,
         client,
     ):
-        await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
-        task_id = await _send_once(client, _message("请评估"))
-        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
-        assert "自动答复" in task_artifact_text(task)
-        interventions = task_metadata(task).get("interventions", [])
-        assert any(item.get("responder") == "auto_llm" for item in interventions)
-
-
-async def test_human_intervention_awaits_answer(tmp_path, ask_agent):
-    settings = Settings(
-        store={"db_path": tmp_path / "hitl.db"},
-        a2a={"public_url": "http://test"},
-        policies={"default": "human", "timeout_seconds": 30},
-        scheduler={"retry_backoff_seconds": 0.0},
-    )
-    async with sdk_hub(
-        tmp_path, "hitl.db", settings=settings, plans=[_plan("ask")] * 2
-    ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))
         pending = await wait_for_task(
@@ -95,17 +79,13 @@ async def test_human_intervention_awaits_answer(tmp_path, ask_agent):
         assert "人工答复" in task_artifact_text(task)
 
 
-async def test_peer_agent_spawns_helper_and_resumes(tmp_path):
+async def test_llm_routes_to_peer_agent(tmp_path):
     researcher = await start_fake_agent("collaborate", name="researcher")
     analyst = await start_fake_agent("assist", name="analyst")
     try:
         settings = Settings(
             store={"db_path": tmp_path / "hitl.db"},
             a2a={"public_url": "http://test"},
-            policies={
-                "default": "auto_llm",
-                "overrides": [{"agent_name": "researcher", "policy": "peer_agent"}],
-            },
             scheduler={"retry_backoff_seconds": 0.0},
         )
         from tests.support.fakes import FakeLLM
@@ -113,9 +93,12 @@ async def test_peer_agent_spawns_helper_and_resumes(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 _plan("researcher", "请协调协作"),
-                PeerChoice(agent_name="analyst", instruction="请协助确认技术细节"),
+                AssistanceDecision(
+                    action="peer",
+                    agent_name="analyst",
+                    instruction="请协助确认技术细节",
+                ),
             ],
-            text_results=["fallback"],
         )
         async with sdk_hub(tmp_path, "hitl.db", settings=settings, llm=llm) as (
             _app,

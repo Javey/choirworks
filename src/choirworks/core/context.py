@@ -65,7 +65,7 @@ def build_planner_user_message(
     return user
 
 
-def build_peer_choice_user(
+def build_assistance_decision_user(
     requester_name: str,
     blocked_text: str,
     candidates: Sequence[AgentRecord],

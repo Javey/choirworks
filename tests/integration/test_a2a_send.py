@@ -86,17 +86,18 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
 
 
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
+    from choirworks.a2a.executor import AssistanceDecision
+
     settings = Settings(
         store={"db_path": tmp_path / "send.db"},
         a2a={"public_url": "http://test"},
-        policies={"default": "human", "timeout_seconds": 30},
         scheduler={"retry_backoff_seconds": 0.0},
     )
     async with sdk_hub(
         tmp_path,
         "send.db",
         settings=settings,
-        plans=[_plan("ask", "请评估")] * 4,
+        plans=[_plan("ask", "请评估"), AssistanceDecision(action="human")],
     ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))

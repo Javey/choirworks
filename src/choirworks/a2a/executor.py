@@ -37,19 +37,16 @@ from choirworks.a2a.state import (
 from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
+    build_assistance_decision_user,
     build_followup_input,
-    build_peer_choice_user,
     build_peer_fallback_input,
     build_replan_context,
     build_replan_reason,
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner, PlanningFailed
-from choirworks.core.policy import PolicyEngine
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_POLICY = "auto_llm"
 
 
 class RoomOptions(TypedDict, total=False):
@@ -62,28 +59,34 @@ class RoomOptions(TypedDict, total=False):
     node_id: str
 
 
-class PeerChoice(BaseModel):
-    agent_name: str
+class AssistanceDecision(BaseModel):
+    action: Literal["peer", "human"]
+    agent_name: str | None = None
     instruction: str = ""
     reasoning: str = ""
 
 
-# Same enum-pinning approach as google-adk's TransferToAgentTool
-# (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0).
-def constrained_peer_choice(names: Sequence[str]) -> type[PeerChoice]:
-    return create_model(
-        "PeerChoiceConstrained",
-        __base__=PeerChoice,
-        agent_name=(Literal[*names], ...),
-    )
+def assistance_decision_schema(
+    candidate_names: Sequence[str],
+) -> type[AssistanceDecision]:
+    fields: dict[str, Any] = {}
+    if candidate_names:
+        fields["agent_name"] = (Literal[*candidate_names] | None, None)
+    else:
+        fields["action"] = (Literal["human"], ...)
+    return create_model("AssistanceDecision", __base__=AssistanceDecision, **fields)
 
 
-PEER_SYSTEM = """You coordinate a group of expert agents.
-One agent is blocked and asked for help. Choose the best registered agent to assist.
-Return only JSON matching the schema:
-- agent_name: the chosen helper (enum-constrained to the listed candidates)
-- instruction: the exact task description for the helper
-- reasoning: one short sentence"""
+ASSISTANCE_SYSTEM = """You are the orchestrator of a multi-agent group.
+An agent is blocked and needs help. Decide how to handle it:
+- action="peer": delegate to another registered agent that can help
+- action="human": escalate to a human
+
+Return only JSON matching the schema.
+When action="peer", agent_name must be one of the listed candidates
+and instruction should describe the task.
+When action="human", leave agent_name empty.
+- reasoning: one short sentence explaining your decision."""
 
 
 def _struct(data: dict[str, Any]) -> struct_pb2.Struct:
@@ -170,7 +173,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         registry: AgentRegistry,
         remote: RemoteAgentClient,
         planner: Planner,
-        policy: PolicyEngine,
         llm: LiteLLMClient,
         *,
         max_parallel: int = 5,
@@ -185,7 +187,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._registry = registry
         self._remote = remote
         self._planner = planner
-        self._policy = policy
         self._llm = llm
         self._max_parallel = max_parallel
         self._node_timeout = node_timeout
@@ -404,10 +405,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 agent_url=agent_urls.get(node_draft.agent_name, ""),
                 deps=list(node_draft.deps),
                 input_text=str(node_draft.input.get("text", "")),
-                policy_override=(
-                    node_draft.policy_override
-                    or ("human" if node_draft.requires_approval else None)
-                ),
             )
             state.nodes[node.id] = node
 
@@ -1005,42 +1002,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if active_helpers:
                 continue
 
-            policy = self._policy.resolve(
-                node.policy_override, node.agent_name, None, None
-            )
-            if policy == "auto_llm":
-                question = node.question or node.output or ""
-                try:
-                    answer = await self._llm.text(
-                        system=(
-                            "You are the orchestrator of a multi-agent group. "
-                            "Answer the blocked agent's question concisely and directly."
-                        ),
-                        user=question,
-                    )
-                except Exception:  # noqa: BLE001 - fall back to asking the human
-                    logger.exception("auto_llm intervention failed for %s", node.id)
-                    await self._request_human(state, node, task_id, context_id, queue)
-                    continue
-                intervention = state.add_intervention(
-                    node.id, node.question or "需要确认"
-                )
-                intervention.status = "resolved"
-                intervention.answer = answer
-                intervention.responder = "auto_llm"
-                node.input_text = answer
-                node.status = "ready"
-                node.question = None
-                await self._emit(
-                    queue, state, task_id, context_id,
-                    "intervention.resolved",
-                    intervention_id=intervention.id,
-                    node_id=node.id,
-                    responder="auto_llm",
-                )
-                progress = True
-            elif policy == "peer_agent":
-                if await self._spawn_peer(state, node, task_id, context_id, queue):
+            decision = await self._decide_assistance(node)
+            if decision is not None and decision.action == "peer" and decision.agent_name:
+                if await self._spawn_assist(
+                    state, node, decision, task_id, context_id, queue
+                ):
                     progress = True
                 else:
                     await self._request_human(
@@ -1087,10 +1053,34 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             question=intervention.question,
         )
 
-    async def _spawn_peer(
+    async def _decide_assistance(
+        self, node: NodeState
+    ) -> AssistanceDecision | None:
+        if node.question is None:
+            return None
+        agents = await self._registry.list()
+        candidates = [agent for agent in agents if agent.name != node.agent_name]
+        if not candidates:
+            return AssistanceDecision(action="human")
+        user = build_assistance_decision_user(
+            node.agent_name,
+            node.question or node.input_text,
+            candidates,
+        )
+        schema = assistance_decision_schema([agent.name for agent in candidates])
+        try:
+            return await self._llm.structured(
+                system=ASSISTANCE_SYSTEM, user=user, schema=schema
+            )
+        except Exception:  # noqa: BLE001 - fall back to human
+            logger.exception("assistance decision failed for %s", node.id)
+            return AssistanceDecision(action="human")
+
+    async def _spawn_assist(
         self,
         state: OrchestrationState,
         node: NodeState,
+        decision: AssistanceDecision,
         task_id: str,
         context_id: str,
         queue: EventQueue,
@@ -1098,14 +1088,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if state.derived_count >= self._max_derived_nodes:
             return False
         agents = await self._registry.list()
-        candidates = [agent for agent in agents if agent.name != node.agent_name]
-        if not candidates:
-            return False
-        choice = await self._choose_peer(node, candidates)
-        if choice is None:
-            return False
         agent = next(
-            (item for item in candidates if item.name == choice.agent_name), None
+            (item for item in agents if item.name == decision.agent_name), None
         )
         if agent is None:
             return False
@@ -1117,7 +1101,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             agent_name=agent.name,
             agent_url=agent.card_url,
             deps=[],
-            input_text=choice.instruction
+            input_text=decision.instruction
             or build_peer_fallback_input(node.question or node.input_text),
             derived=True,
             assist_requested_by=node.id,
@@ -1136,23 +1120,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         await self._persist(queue, state, task_id, context_id)
         return True
-
-    async def _choose_peer(
-        self, node: NodeState, candidates: list[Any]
-    ) -> PeerChoice | None:
-        user = build_peer_choice_user(
-            node.agent_name,
-            node.question or node.input_text,
-            candidates,
-        )
-        schema = constrained_peer_choice([agent.name for agent in candidates])
-        try:
-            choice = await self._llm.structured(
-                system=PEER_SYSTEM, user=user, schema=schema
-            )
-        except Exception:  # noqa: BLE001 - fall back to first candidate
-            return PeerChoice(agent_name=candidates[0].name)
-        return choice
 
     async def _answer_intervention(
         self,

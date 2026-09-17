@@ -11,7 +11,7 @@ from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
     build_followup_input,
-    build_peer_choice_user,
+    build_assistance_decision_user,
     build_peer_fallback_input,
     build_planner_capabilities,
     build_planner_user_message,
@@ -93,9 +93,9 @@ def test_build_planner_user_message_without_reason_and_context():
     assert "Reason for replanning" not in user
 
 
-def test_build_peer_choice_user():
+def test_build_assistance_decision_user():
     candidates = [make_agent("a"), make_agent("b")]
-    user = build_peer_choice_user("c", "需要确认", candidates)
+    user = build_assistance_decision_user("c", "需要确认", candidates)
     assert "Requester: c" in user
     assert "Question / blocked work:\n需要确认" in user
     assert QUOTED_CONTENT_PREAMBLE in user

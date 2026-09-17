@@ -74,8 +74,8 @@ uv run choirworks-sim --port 8567 --fresh
 - **会话 = A2A Context**：同一 `contextId` 下的 Task 属于同一个群；`Task.metadata` 保存计划、
   节点、成员、干预与排队消息，`GetTask` 即快照。
 - **非阻塞**：Agent 在后台工作，流式产出以 artifact / status 事件推送；`@`、引用、求助可随时进入。
-- **求助处理**：subagent `input-required` 后按策略 `auto_llm`（编排器自答）/ `peer_agent`
-  （LLM 选人建协助节点，完成后回填续跑）/ `human`（提问等待答复后续跑）。
+- **求助处理**：subagent `input-required` 后由大模型统一分析——转交另一个 agent（建协助节点，
+  完成后回填续跑）或转交人类（提问等待答复后续跑）；LLM 不可用时降级转人工。
 - **引用与打断**：消息 metadata 的 `quote_id` 引用在途节点则排队补投、引用已完成产出则建接续节点；
   `interrupt=true` 取消当前节点并转入新节点。
 - **动态组队**：计划涉及的 Agent 自动入群；用户 `@mention` 入群；Agent 间 `@` 由编排器仲裁

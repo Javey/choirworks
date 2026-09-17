@@ -28,7 +28,6 @@ from choirworks.api import agents as agents_routes
 from choirworks.config import Settings
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner
-from choirworks.core.policy import PolicyEngine
 from choirworks.store.db import Database
 
 logger = logging.getLogger(__name__)
@@ -73,13 +72,11 @@ async def create_app(
             max_nodes=settings.scheduler.max_plan_nodes,
             max_retries=settings.llm.max_plan_retries,
         )
-        policy = PolicyEngine(settings.policies)
 
         executor = ChoirWorksAgentExecutor(
             registry=registry,
             remote=remote,
             planner=planner,
-            policy=policy,
             llm=llm_client,
             max_parallel=settings.scheduler.max_parallel_nodes,
             node_timeout=settings.scheduler.node_timeout_seconds,
@@ -105,7 +102,6 @@ async def create_app(
         app.state.remote = remote
         app.state.registry = registry
         app.state.planner = planner
-        app.state.policy = policy
         app.state.executor = executor
         app.state.request_handler = request_handler
         app.state.agent_card = agent_card

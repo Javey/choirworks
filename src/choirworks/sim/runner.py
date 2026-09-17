@@ -36,13 +36,6 @@ def build_settings(host: str, port: int, db_path: Path) -> Settings:
         server={"host": host, "port": port},
         store={"db_path": db_path},
         a2a={"public_url": f"http://{host}:{port}"},
-        policies={
-            "overrides": [
-                {"agent_name": "critic", "policy": "human"},
-                {"agent_name": "researcher", "policy": "peer_agent"},
-                {"agent_name": "writer", "policy": "peer_agent"},
-            ]
-        },
         scheduler={"retry_backoff_seconds": 0.2},
     )
 

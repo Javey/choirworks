@@ -1,9 +1,8 @@
 from datetime import UTC, datetime
 
-from choirworks.a2a.executor import PeerChoice
+from choirworks.a2a.executor import AssistanceDecision
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
-from choirworks.core.policy import PolicyEngine  # noqa: F401  (ensure module import graph sane)
 from choirworks.models.domain import AgentRecord
 from choirworks.sim.litellm_mock import sim_acompletion
 
@@ -74,42 +73,46 @@ async def test_broken_plan_triggers_replan_without_broken_agent():
     assert agents_of(replanned) == ["writer"]
 
 
-async def test_peer_choice_skips_broken_agents():
-    client = make_client()
-    choice = await client.structured(system="peer", user=prompt("谁来回答？"), schema=PeerChoice)
-    assert isinstance(choice, PeerChoice)
-    assert choice.agent_name in {"researcher", "writer", "critic", "flaky", "analyst"}
-    assert choice.instruction
-
-
-async def test_text_returns_nonempty_simulated_answer():
-    client = make_client()
-    answer = await client.text(system="assist", user="question: who are you?")
-    assert answer.startswith("模拟")
-    assert len(answer) > 2
-
-
-async def test_peer_choice_routes_to_researcher_for_writer():
+async def test_assistance_decision_routes_to_researcher_for_writer():
     prompt_text = (
         prompt("协作任务")
-        + "\n\nWorker node 'writer' asks:\n缺少关键信息：请 A 提供调研结论。"
+        + "\n\nRequester: writer\nQuestion / blocked work:\n缺少关键信息：请 A 提供调研结论。"
     )
     client = make_client()
-    choice = await client.structured(system="peer", user=prompt_text, schema=PeerChoice)
-    assert choice.agent_name == "researcher"
-    assert "请补充信息" in choice.instruction
-    assert "缺少关键信息" in choice.instruction
+    decision = await client.structured(
+        system="assistance", user=prompt_text, schema=AssistanceDecision
+    )
+    assert decision.action == "peer"
+    assert decision.agent_name == "researcher"
+    assert "请补充信息" in decision.instruction
+    assert "缺少关键信息" in decision.instruction
 
 
-async def test_peer_choice_routes_to_analyst_for_researcher():
+async def test_assistance_decision_routes_to_analyst_for_researcher():
     prompt_text = (
         prompt("协作任务")
-        + "\n\nWorker node 'researcher' asks:\n需要 C 参与确认技术细节。"
+        + "\n\nRequester: researcher\nQuestion / blocked work:\n需要 C 参与确认技术细节。"
     )
     client = make_client()
-    choice = await client.structured(system="peer", user=prompt_text, schema=PeerChoice)
-    assert choice.agent_name == "analyst"
-    assert "需要 C 参与" in choice.instruction
+    decision = await client.structured(
+        system="assistance", user=prompt_text, schema=AssistanceDecision
+    )
+    assert decision.action == "peer"
+    assert decision.agent_name == "analyst"
+    assert "需要 C 参与" in decision.instruction
+
+
+async def test_assistance_decision_routes_to_human_for_critic():
+    prompt_text = (
+        prompt("评审任务")
+        + "\n\nRequester: critic\nQuestion / blocked work:\n需要人工确认评审标准。"
+    )
+    client = make_client()
+    decision = await client.structured(
+        system="assistance", user=prompt_text, schema=AssistanceDecision
+    )
+    assert decision.action == "human"
+    assert decision.agent_name is None
 
 
 async def test_coordination_plan_runs_workers_in_parallel():

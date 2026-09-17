@@ -178,7 +178,7 @@ async def test_planner_schema_constrains_agent_names(tmp_path):
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
         await planner.plan("x")
         schema = llm.structured_calls[0]["schema"]
-        node_schema = schema.model_json_schema()["$defs"]["PlanNodeDraftConstrained"]
+        node_schema = schema.model_json_schema()["$defs"]["PlanNodeDraft"]
         assert node_schema["properties"]["agent_name"]["enum"] == ["research", "writer"]
     finally:
         await remote.close()

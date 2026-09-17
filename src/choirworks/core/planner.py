@@ -18,8 +18,6 @@ class PlanNodeDraft(BaseModel):
     skill_id: str | None = None
     input: dict[str, Any] = Field(default_factory=dict)
     deps: list[str] = Field(default_factory=list)
-    requires_approval: bool = False
-    policy_override: str | None = None
 
 
 class PlanDraft(BaseModel):
@@ -33,12 +31,12 @@ class PlanDraft(BaseModel):
 # pass validation.
 def constrained_plan_schema(agent_names: Sequence[str]) -> type[PlanDraft]:
     node = create_model(
-        "PlanNodeDraftConstrained",
+        "PlanNodeDraft",
         __base__=PlanNodeDraft,
         agent_name=(Literal[*agent_names], ...),
     )
     return create_model(
-        "PlanDraftConstrained",
+        "PlanDraft",
         __base__=PlanDraft,
         nodes=(list[node], ...),
     )
@@ -93,25 +91,6 @@ def validate_plan(
                 queue.append(child)
     if visited != len(ids):
         raise PlanValidationError("plan contains a cycle")
-
-
-def draft_to_dag(draft: PlanDraft, agent_urls: dict[str, str]) -> dict[str, Any]:
-    return {
-        "nodes": [
-            {
-                "id": node.id,
-                "name": node.name,
-                "agent_url": agent_urls[node.agent_name],
-                "agent_name": node.agent_name,
-                "skill_id": node.skill_id,
-                "deps": node.deps,
-                "input": node.input,
-                "requires_approval": node.requires_approval,
-                "policy_override": node.policy_override,
-            }
-            for node in draft.nodes
-        ]
-    }
 
 
 class PlanningFailed(RuntimeError):

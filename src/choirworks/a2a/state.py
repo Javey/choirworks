@@ -49,7 +49,6 @@ class NodeState:
     deps: list[str] = field(default_factory=list)
     input_text: str = ""
     derived: bool = False
-    policy_override: str | None = None
     question: str | None = None
     source_message_id: str | None = None
     assist_requested_by: str | None = None
@@ -68,7 +67,6 @@ class NodeState:
             "deps": list(self.deps),
             "input_text": self.input_text,
             "derived": self.derived,
-            "policy_override": self.policy_override,
             "question": self.question,
             "source_message_id": self.source_message_id,
             "assist_requested_by": self.assist_requested_by,
@@ -89,7 +87,6 @@ class NodeState:
             deps=[str(dep) for dep in data.get("deps", [])],
             input_text=str(data.get("input_text", "")),
             derived=bool(data.get("derived", False)),
-            policy_override=data.get("policy_override"),
             question=data.get("question"),
             source_message_id=data.get("source_message_id"),
             assist_requested_by=data.get("assist_requested_by"),

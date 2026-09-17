@@ -36,17 +36,6 @@ class StoreConfig(BaseModel):
     db_path: Path = Path("./data/choirworks.db")
 
 
-class PolicyOverride(BaseModel):
-    agent_name: str | None = None
-    skill_id: str | None = None
-    policy: str
-
-
-class PolicyConfig(BaseModel):
-    default: str = "auto_llm"
-    overrides: list[PolicyOverride] = Field(default_factory=list)
-
-
 class RecoveryConfig(BaseModel):
     replay_on_startup: bool = True
 
@@ -74,7 +63,6 @@ class Settings(BaseSettings):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    policies: PolicyConfig = Field(default_factory=PolicyConfig)
     recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
     a2a: A2AConfig = Field(default_factory=A2AConfig)
     sim: SimConfig = Field(default_factory=SimConfig)
