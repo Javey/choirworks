@@ -80,8 +80,8 @@ async def test_llm_routes_to_human(tmp_path, ask_agent):
 
 
 async def test_llm_routes_to_peer_agent(tmp_path):
-    researcher = await start_fake_agent("collaborate", name="researcher")
-    analyst = await start_fake_agent("assist", name="analyst")
+    pm = await start_fake_agent("collaborate", name="product-manager")
+    qa = await start_fake_agent("assist", name="qa-engineer")
     try:
         settings = Settings(
             store={"db_path": tmp_path / "hitl.db"},
@@ -92,10 +92,10 @@ async def test_llm_routes_to_peer_agent(tmp_path):
 
         llm = FakeLLM(
             structured_results=[
-                _plan("researcher", "请协调协作"),
+                _plan("product-manager", "请协调协作"),
                 AssistanceDecision(
                     action="peer",
-                    agent_name="analyst",
+                    agent_name="qa-engineer",
                     instruction="请协助确认技术细节",
                 ),
             ],
@@ -106,10 +106,10 @@ async def test_llm_routes_to_peer_agent(tmp_path):
             client,
         ):
             await http.post(
-                "/v1/agents", json={"name": "researcher", "card_url": researcher.url}
+                "/v1/agents", json={"name": "product-manager", "card_url": pm.url}
             )
             await http.post(
-                "/v1/agents", json={"name": "analyst", "card_url": analyst.url}
+                "/v1/agents", json={"name": "qa-engineer", "card_url": qa.url}
             )
             task_id = await _send_once(client, _message("请协调协作"))
             task = await wait_for_task(
@@ -118,14 +118,14 @@ async def test_llm_routes_to_peer_agent(tmp_path):
             nodes = task_nodes(task)
             helpers = [node for node in nodes.values() if node.get("derived")]
             assert helpers, nodes
-            assert helpers[0]["agent_name"] == "analyst"
+            assert helpers[0]["agent_name"] == "qa-engineer"
             assert helpers[0]["status"] == "completed"
             assert nodes["n1"]["status"] == "completed"
             members = [
                 member.get("name", member.get("agent_name"))
                 for member in task_metadata(task).get("members", [])
             ]
-            assert "analyst" in members
+            assert "qa-engineer" in members
     finally:
-        await researcher.stop()
-        await analyst.stop()
+        await pm.stop()
+        await qa.stop()

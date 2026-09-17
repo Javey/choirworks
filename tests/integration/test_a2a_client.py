@@ -8,7 +8,7 @@ async def test_resolve_card_and_send_text(echo_agent):
     client = RemoteAgentClient()
     try:
         card = await client.resolve_card(echo_agent.url)
-        assert card.name == "fake-echo"
+        assert card.name == "echo"
 
         chunks = [chunk async for chunk in client.send_text(echo_agent.url, "hello")]
         assert chunks[0].HasField("task")

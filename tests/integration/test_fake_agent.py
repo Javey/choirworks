@@ -12,7 +12,7 @@ async def test_fake_agent_echoes_with_official_client():
         async with httpx.AsyncClient() as http:
             resolver = A2ACardResolver(httpx_client=http, base_url=agent.url)
             card = await resolver.get_agent_card()
-            assert card.name == "fake-echo"
+            assert card.name == "echo"
 
         client = await create_client(
             agent=agent.card, client_config=ClientConfig(streaming=True)
@@ -53,7 +53,7 @@ async def test_fake_agent_streams_artifact_chunks():
                 appends.append(bool(update.append))
                 last_chunks.append(bool(update.last_chunk))
         assert len(texts) >= 3
-        assert "".join(texts) == "文稿（writer）：基于「hi」生成的模拟报告。"
+        assert "".join(texts) == "已基于「hi」完成接口实现和单元测试。"
         assert appends[0] is False
         assert all(appends[1:])
         assert last_chunks[-1] is True

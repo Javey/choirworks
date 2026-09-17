@@ -22,7 +22,7 @@ async def test_register_list_refresh_delete(tmp_path, echo_agent):
         assert by_name is not None and by_name.id == record.id
 
         refreshed = await registry.refresh(record.id)
-        assert refreshed.card["name"] == "fake-echo"
+        assert refreshed.card["name"] == "echo"
 
         assert await registry.delete(record.id) is True
         assert await registry.list() == []

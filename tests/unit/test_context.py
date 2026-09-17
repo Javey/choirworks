@@ -10,8 +10,8 @@ from choirworks.a2a.state import NodeState
 from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
-    build_followup_input,
     build_assistance_decision_user,
+    build_followup_input,
     build_peer_fallback_input,
     build_planner_capabilities,
     build_planner_user_message,

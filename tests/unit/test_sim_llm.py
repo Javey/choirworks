@@ -19,7 +19,15 @@ def agent(name: str) -> AgentRecord:
 
 AGENTS = [
     agent(name)
-    for name in ("researcher", "writer", "critic", "flaky", "broken", "analyst")
+    for name in (
+        "product-manager",
+        "developer",
+        "code-reviewer",
+        "qa-engineer",
+        "finance-analyst",
+        "approval-manager",
+        "auditor",
+    )
 ]
 
 
@@ -43,69 +51,73 @@ def agents_of(draft: PlanDraft) -> list[str]:
     return [node.agent_name for node in draft.nodes]
 
 
-async def test_default_plan_researches_then_writes():
-    draft = await plan_for("帮我调研 A2A 协议并写一份摘要")
-    assert agents_of(draft) == ["researcher", "writer"]
+async def test_default_plan_pm_then_developer():
+    draft = await plan_for("帮我调研技术方案并写一份设计文档")
+    assert agents_of(draft) == ["product-manager", "developer"]
     assert draft.nodes[1].deps == [draft.nodes[0].id]
 
 
-async def test_review_plan_uses_critic():
-    draft = await plan_for("帮我评审这段文案")
-    assert agents_of(draft) == ["writer", "critic"]
+async def test_review_plan_uses_code_reviewer():
+    draft = await plan_for("请审查这段代码的安全性和质量")
+    assert agents_of(draft) == ["developer", "code-reviewer"]
     assert draft.nodes[1].deps == [draft.nodes[0].id]
 
 
-async def test_retry_plan_uses_flaky_then_writer():
-    draft = await plan_for("这个任务可能会偶发失败，请自动重试")
-    assert agents_of(draft) == ["flaky", "writer"]
+async def test_retry_plan_uses_approval_manager_then_finance_analyst():
+    draft = await plan_for("请审批这笔报销，如果失败请重试")
+    assert agents_of(draft) == ["approval-manager", "finance-analyst"]
 
 
-async def test_broken_plan_triggers_replan_without_broken_agent():
-    draft = await plan_for("模拟失败并降级替换")
-    assert agents_of(draft) == ["broken", "writer"]
+async def test_broken_plan_triggers_replan_without_auditor():
+    draft = await plan_for("请审计合规性并降级处理")
+    assert agents_of(draft) == ["auditor", "finance-analyst"]
 
-    replan_prompt = prompt("模拟失败并降级替换")
+    replan_prompt = prompt("请审计合规性并降级处理")
     replan_prompt += "\n\nReason for replanning:\nnode 'n1' failed: boom"
     client = make_client()
     replanned = await client.structured(system="plan", user=replan_prompt, schema=PlanDraft)
     validate_plan(replanned, AGENTS, 20)
-    assert "broken" not in agents_of(replanned)
-    assert agents_of(replanned) == ["writer"]
+    assert "auditor" not in agents_of(replanned)
+    assert agents_of(replanned) == ["developer"]
 
 
-async def test_assistance_decision_routes_to_researcher_for_writer():
+async def test_assistance_decision_routes_to_pm_for_developer():
     prompt_text = (
         prompt("协作任务")
-        + "\n\nRequester: writer\nQuestion / blocked work:\n缺少关键信息：请 A 提供调研结论。"
+        + "\n\nRequester: developer\n"
+        + "Question / blocked work:\n"
+        + "缺少关键信息：请 product-manager 提供需求文档。"
     )
     client = make_client()
     decision = await client.structured(
         system="assistance", user=prompt_text, schema=AssistanceDecision
     )
     assert decision.action == "peer"
-    assert decision.agent_name == "researcher"
+    assert decision.agent_name == "product-manager"
     assert "请补充信息" in decision.instruction
     assert "缺少关键信息" in decision.instruction
 
 
-async def test_assistance_decision_routes_to_analyst_for_researcher():
+async def test_assistance_decision_routes_to_qa_for_pm():
     prompt_text = (
         prompt("协作任务")
-        + "\n\nRequester: researcher\nQuestion / blocked work:\n需要 C 参与确认技术细节。"
+        + "\n\nRequester: product-manager\n"
+        + "Question / blocked work:\n"
+        + "需要 qa-engineer 协助确认技术细节。"
     )
     client = make_client()
     decision = await client.structured(
         system="assistance", user=prompt_text, schema=AssistanceDecision
     )
     assert decision.action == "peer"
-    assert decision.agent_name == "analyst"
-    assert "需要 C 参与" in decision.instruction
+    assert decision.agent_name == "qa-engineer"
+    assert "需要 qa-engineer" in decision.instruction
 
 
-async def test_assistance_decision_routes_to_human_for_critic():
+async def test_assistance_decision_routes_to_human_for_code_reviewer():
     prompt_text = (
         prompt("评审任务")
-        + "\n\nRequester: critic\nQuestion / blocked work:\n需要人工确认评审标准。"
+        + "\n\nRequester: code-reviewer\nQuestion / blocked work:\n需要人工确认评审标准。"
     )
     client = make_client()
     decision = await client.structured(
@@ -115,9 +127,9 @@ async def test_assistance_decision_routes_to_human_for_critic():
     assert decision.agent_name is None
 
 
-async def test_coordination_plan_runs_workers_in_parallel():
-    draft = await plan_for("请协调多个子代理协作完成这项分析")
-    assert agents_of(draft) == ["researcher", "writer"]
+async def test_coordination_plan_runs_pm_and_developer_in_parallel():
+    draft = await plan_for("请协调团队完成这个功能的需求分析和开发")
+    assert agents_of(draft) == ["product-manager", "developer"]
     assert draft.nodes[0].deps == []
     assert draft.nodes[1].deps == []
 

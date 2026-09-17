@@ -28,11 +28,12 @@ a2a:
 sim:
   start_agents: true
   agents:
-    - {name: researcher, behavior: collaborate}
-    - {name: writer, behavior: inquire}
-    - {name: critic, behavior: review}
-    - {name: analyst, behavior: assist}
-    - {name: flaky, behavior: flaky_once}
-    - {name: broken, behavior: flaky_always}
+    - {name: product-manager, behavior: collaborate}
+    - {name: developer, behavior: inquire}
+    - {name: code-reviewer, behavior: review}
+    - {name: qa-engineer, behavior: assist}
+    - {name: finance-analyst, behavior: echo}
+    - {name: approval-manager, behavior: flaky_once}
+    - {name: auditor, behavior: flaky_always}
   chunk_size: 2
   chunk_delay: 0.04

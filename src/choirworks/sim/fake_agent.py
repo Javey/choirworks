@@ -86,24 +86,24 @@ class ScriptedExecutor(AgentExecutor):
         if self._behavior == "review":
             return "请确认是否采用该方案？"
         if self._behavior == "collaborate":
-            return "需要 C 参与确认技术细节，请协助。"
+            return "需要 qa-engineer 协助确认技术细节，请协助。"
         if self._behavior == "inquire":
-            return "缺少关键信息：请 A 提供调研结论。"
+            return "缺少关键信息：请 product-manager 提供需求文档。"
         return "who are you?"
 
     def _success_text(self, text: str) -> str:
         if self._behavior == "research":
-            return f"调研结果（{self._name or 'researcher'}）：关于「{text}」的模拟要点。"
+            return f"调研结果：关于「{text}」的要点分析。"
         if self._behavior == "write":
-            return f"文稿（{self._name or 'writer'}）：基于「{text}」生成的模拟报告。"
+            return f"已基于「{text}」完成接口实现和单元测试。"
         if self._behavior == "collaborate":
             if "请补充信息" in text:
-                return f"调研补充（{self._name or 'researcher'}）：这是 A 提供的模拟关键信息。"
-            return f"调研结果（{self._name or 'researcher'}）：关于「{text}」的模拟要点。"
+                return "调研补充：结合 qa-engineer 的反馈，补充了技术可行性分析。"
+            return f"调研结果：关于「{text}」的要点分析。"
         if self._behavior == "inquire":
-            return f"文稿（{self._name or 'writer'}）：基于「{text}」生成的模拟报告。"
+            return f"已基于「{text}」完成接口实现和单元测试。"
         if self._behavior == "assist":
-            return "分析结论：这是模拟的专家答复。"
+            return "分析结论：测试通过，功能符合预期。"
         return f"echo:{text}"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -156,9 +156,9 @@ class ScriptedExecutor(AgentExecutor):
             if self._behavior == "review":
                 answer = f"已按你的意见定稿：{instruction}"
             elif self._behavior == "collaborate":
-                answer = f"协作完成（{self._name or 'researcher'}）：已结合 C 的协助。"
+                answer = "协作完成：已结合 qa-engineer 的协助，方案确认可行。"
             elif self._behavior == "inquire":
-                answer = f"B 已获得信息并完成：{instruction}"
+                answer = f"已获得需求信息并完成开发：{instruction}"
             else:
                 answer = f"answered:{instruction}"
             await self._emit_artifact(updater, answer)
@@ -190,12 +190,39 @@ class FakeAgent:
         AppStatus.should_exit = False
 
 
+BEHAVIOR_DESCRIPTIONS: dict[str, str] = {
+    "collaborate": "负责需求分析、产品规划，协调团队成员推进项目",
+    "inquire": "负责后端服务开发，实现 API 和业务逻辑",
+    "review": "负责代码审查，确保代码质量和安全性",
+    "assist": "负责测试和验证，确保功能符合需求",
+    "echo": "负责财务数据分析，生成财务报告和预算建议",
+    "flaky_once": "负责审批流程管理，处理报销和采购审批",
+    "flaky_always": "负责合规审计，检查财务记录和流程合规性",
+    "research": "负责需求分析、产品规划，协调团队成员推进项目",
+    "write": "负责后端服务开发，实现 API 和业务逻辑",
+}
+
+BEHAVIOR_SKILL_DESCRIPTIONS: dict[str, str] = {
+    "collaborate": "需求分析与产品规划",
+    "inquire": "后端开发与接口实现",
+    "review": "代码审查与质量把控",
+    "assist": "软件测试与质量验证",
+    "echo": "财务分析与报告生成",
+    "flaky_once": "审批流程管理",
+    "flaky_always": "合规审计与风险检查",
+    "research": "需求分析与产品规划",
+    "write": "后端开发与接口实现",
+}
+
+
 def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
-    card_name = name or f"fake-{behavior}"
+    card_name = name or behavior
     skill_name = name or behavior
+    description = BEHAVIOR_DESCRIPTIONS.get(behavior, f"{behavior} agent")
+    skill_desc = BEHAVIOR_SKILL_DESCRIPTIONS.get(behavior, behavior)
     return AgentCard(
         name=card_name,
-        description=f"simulated A2A agent ({behavior})",
+        description=description,
         version="1.0.0",
         capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text/plain"],
@@ -204,8 +231,8 @@ def _make_card(behavior: str, url: str, name: str = "") -> AgentCard:
             AgentSkill(
                 id=skill_name,
                 name=skill_name,
-                description=f"模拟 {skill_name} 能力",
-                tags=["simulation"],
+                description=skill_desc,
+                tags=[],
             )
         ],
         supported_interfaces=[

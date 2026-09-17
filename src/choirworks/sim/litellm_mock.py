@@ -25,7 +25,7 @@ from litellm.types.utils import (
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 
-FLAKY_AGENTS = {"broken"}
+FLAKY_AGENTS = {"auditor"}
 
 REQUEST_PATTERN = re.compile(r"User request:\n(.*?)(?:\n\nAvailable agents:|\Z)", re.S)
 AGENT_PATTERN = re.compile(r"^- (\S+):", re.M)
@@ -33,10 +33,10 @@ WORKER_PATTERN = re.compile(
     r"Requester: (\S+)\nQuestion / blocked work:\n(.*?)(?:\n\nFor context:|\Z)", re.S
 )
 PEER_ROUTES = {
-    "writer": ("researcher",),
-    "researcher": ("analyst",),
+    "developer": ("product-manager",),
+    "product-manager": ("qa-engineer",),
 }
-HUMAN_AGENTS = {"critic"}
+HUMAN_AGENTS = {"code-reviewer"}
 
 _NEXT_ID = 0
 
@@ -83,7 +83,7 @@ def _text_response(content: str) -> ModelResponse:
 
 def _request(user: str) -> str:
     match = REQUEST_PATTERN.search(user)
-    return (match.group(1).strip() if match else user.strip()) or "模拟任务"
+    return (match.group(1).strip() if match else user.strip()) or "任务"
 
 
 def _registered(user: str) -> set[str]:
@@ -110,47 +110,60 @@ def _make_plan(user: str) -> tuple[str, PlanDraft]:
 
     if "Reason for replanning:" in user:
         draft = PlanDraft(
-            rationale="模拟重规划：跳过故障节点，直接产出结果",
-            nodes=[_node("n1", "writer", request, deps=[])],
-        )
-    elif any(k in request for k in ("评审", "审查", "确认")):
-        draft = PlanDraft(
-            rationale="模拟计划：先产出再评审",
-            nodes=[
-                _node("n1", "writer", request, deps=[]),
-                _node("n2", "critic", f"请评审上一步产出：{request}", deps=["n1"]),
-            ],
-        )
-    elif any(k in request for k in ("协作", "协调", "配合")):
-        draft = PlanDraft(
-            rationale="模拟计划：两个 worker 并行协作",
-            nodes=[
-                _node("n1", "researcher", request, deps=[]),
-                _node("n2", "writer", request, deps=[]),
-            ],
+            rationale="重规划：跳过故障节点，直接产出结果",
+            nodes=[_node("n1", "developer", request, deps=[])],
         )
     elif any(k in request for k in ("重试", "偶发")):
         draft = PlanDraft(
-            rationale="模拟计划：偶发失败 + 自动重试",
+            rationale="计划：审批流程（偶发超时需重试）",
             nodes=[
-                _node("n1", "flaky", request, deps=[]),
-                _node("n2", "writer", f"根据上一步结果产出最终稿：{request}", deps=["n1"]),
+                _node("n1", "approval-manager", request, deps=[]),
+                _node("n2", "finance-analyst", f"根据审批结果生成报告：{request}", deps=["n1"]),
             ],
         )
     elif any(k in request for k in ("失败", "降级", "替换")):
         draft = PlanDraft(
-            rationale="模拟计划：故障节点 + 降级产出",
+            rationale="计划：审计流程（可能失败需重规划）",
             nodes=[
-                _node("n1", "broken", request, deps=[]),
-                _node("n2", "writer", f"根据上一步结果产出最终稿：{request}", deps=["n1"]),
+                _node("n1", "auditor", request, deps=[]),
+                _node("n2", "finance-analyst", f"根据审计结果生成报告：{request}", deps=["n1"]),
+            ],
+        )
+    elif any(k in request for k in ("审计", "合规", "风险")):
+        draft = PlanDraft(
+            rationale="计划：财务分析后进行合规审计",
+            nodes=[
+                _node("n1", "finance-analyst", request, deps=[]),
+                _node("n2", "auditor", f"请审计上一步的财务数据：{request}", deps=["n1"]),
+            ],
+        )
+    elif any(k in request for k in ("审批", "报销", "采购")):
+        draft = PlanDraft(
+            rationale="计划：财务数据分析",
+            nodes=[_node("n1", "finance-analyst", request, deps=[])],
+        )
+    elif any(k in request for k in ("评审", "审查", "确认")):
+        draft = PlanDraft(
+            rationale="计划：先开发再代码审查",
+            nodes=[
+                _node("n1", "developer", request, deps=[]),
+                _node("n2", "code-reviewer", f"请审查上一步的代码：{request}", deps=["n1"]),
+            ],
+        )
+    elif any(k in request for k in ("协作", "协调", "配合")):
+        draft = PlanDraft(
+            rationale="计划：产品经理与开发并行推进",
+            nodes=[
+                _node("n1", "product-manager", request, deps=[]),
+                _node("n2", "developer", request, deps=[]),
             ],
         )
     else:
         draft = PlanDraft(
-            rationale="模拟计划：先调研后撰写",
+            rationale="计划：先需求分析后开发",
             nodes=[
-                _node("n1", "researcher", request, deps=[]),
-                _node("n2", "writer", f"基于上一步调研结果撰写：{request}", deps=["n1"]),
+                _node("n1", "product-manager", request, deps=[]),
+                _node("n2", "developer", f"基于需求分析结果进行开发：{request}", deps=["n1"]),
             ],
         )
 
@@ -183,7 +196,7 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
                 "instruction": "",
             }
 
-        preferred = PEER_ROUTES.get(asking, ("researcher", "writer", "analyst"))
+        preferred = PEER_ROUTES.get(asking, ("product-manager", "developer", "qa-engineer"))
         for name in preferred:
             if name in agents and name != asking:
                 reasoning = f"Agent {asking} 提出了问题，最适合回答的是 @{name}。"
@@ -244,4 +257,4 @@ async def sim_acompletion(**kwargs: Any) -> ModelResponse:
             )
 
     # Plain text call
-    return _text_response("模拟答复：已收到你的问题，这里给出示例回答。")
+    return _text_response("已收到你的问题，这里给出示例回答。")

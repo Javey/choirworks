@@ -14,20 +14,21 @@ from choirworks.sim.fake_agent import FakeAgent, start_fake_agent
 from choirworks.sim.litellm_mock import sim_acompletion
 
 SIM_AGENTS: list[tuple[str, str]] = [
-    ("researcher", "collaborate"),
-    ("writer", "inquire"),
-    ("critic", "review"),
-    ("analyst", "assist"),
-    ("flaky", "flaky_once"),
-    ("broken", "flaky_always"),
+    ("product-manager", "collaborate"),
+    ("developer", "inquire"),
+    ("code-reviewer", "review"),
+    ("qa-engineer", "assist"),
+    ("finance-analyst", "echo"),
+    ("approval-manager", "flaky_once"),
+    ("auditor", "flaky_always"),
 ]
 
 EXAMPLES = [
-    "请协调多个子代理协作完成这项分析",
-    "帮我调研 A2A 协议并写一份摘要",
-    "帮我评审这段文案",
-    "这个任务可能会偶发失败，请自动重试",
-    "模拟失败并降级替换",
+    "请协调团队完成这个功能的需求分析和开发",
+    "帮我调研技术方案并写一份设计文档",
+    "请审查这段代码的安全性和质量",
+    "帮我分析上季度的财务数据并生成报告",
+    "请审批这笔采购申请",
 ]
 
 
@@ -105,7 +106,7 @@ def _print_banner(host: str, port: int, agents: list[tuple[str, FakeAgent]]) -> 
     lines += [f"  - {example}" for example in EXAMPLES]
     lines += [
         "",
-        "前端已构建时直接访问根路径；Ctrl-C 退出。",
+        "Ctrl-C 退出。",
         "",
     ]
     print("\n".join(lines), flush=True)
