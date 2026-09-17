@@ -28,12 +28,11 @@ from pydantic import BaseModel, create_model
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.a2a.room import A2A_ROOM_URI, RoomOptions, room_options
+from choirworks.a2a.room import A2A_ROOM_URI, RoomOptions
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
     OrchestrationState,
-    load_state,
 )
 from choirworks.core.context import (
     ContextBriefBuilder,
@@ -45,7 +44,7 @@ from choirworks.core.context import (
     build_replan_reason,
 )
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.planner import Planner, PlanningFailed
+from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
 
 logger = logging.getLogger(__name__)
 
@@ -210,19 +209,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
+        """Plan-only executor: generate a plan, never dispatch it."""
         text = (context.get_user_input() or "").strip()
         task_id = context.task_id or ""
         context_id = context.context_id or ""
-        existing = context.current_task
-        room = room_options(context.message)
-        mentions = list(room.get("mentions") or [])
-        for name in re.findall(r"@([A-Za-z0-9_-]+)", text):
-            if name not in mentions:
-                mentions.append(name)
-        if mentions:
-            room["mentions"] = mentions
 
-        if existing is None:
+        if context.current_task is None:
             initial_task = new_task(
                 task_id=task_id,
                 context_id=context_id,
@@ -232,50 +224,69 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(initial_task)
 
         updater = TaskUpdater(event_queue, task_id, context_id)
-        self._queues[task_id] = event_queue
-        self._context_ids[task_id] = context_id
+        if not text:
+            await updater.complete()
+            return
 
-        async with self._lock_for(task_id):
-            state = self._states.get(task_id)
-            if state is None:
-                state = load_state(existing)
-                if state is not None:
-                    self._states[task_id] = state
+        state = OrchestrationState(plan_id=self._new_plan_id())
+        self._states[task_id] = state
+        await updater.start_work()
 
-            if state is None:
-                if not text:
-                    return
-                state = OrchestrationState(plan_id=self._new_plan_id())
-                self._states[task_id] = state
-                await updater.start_work()
-                await self._plan_and_launch(
-                    state, text, task_id, context_id, event_queue, room=room
-                )
-                return
-
-            if state.pending_interventions():
-                await self._answer_intervention(
-                    state, text, task_id, context_id, event_queue
-                )
-                return
-
-            if _is_resume_message(context.message):
-                await self._resume(state, task_id, context_id, event_queue)
-                return
-
-            if state.has_pending_work():
-                await self._route_message(
-                    state, text, task_id, context_id, event_queue, room
-                )
-                return
-
-            # Everything settled: treat the message as a follow-up request.
-            if not text:
-                return
-            await updater.start_work()
-            await self._plan_and_launch(
-                state, text, task_id, context_id, event_queue, room=room, follow_up=True
+        try:
+            draft, _reasoning = await self._stream_plan(
+                text, task_id, context_id, event_queue
             )
+        except PlanningFailed as exc:
+            logger.warning("Planning failed for task %s: %s", task_id, exc)
+            message = new_text_message(
+                f"规划失败：{exc}",
+                role=Role.ROLE_AGENT,
+                task_id=task_id,
+                context_id=context_id,
+            )
+            await self._emit(
+                event_queue, state, task_id, context_id,
+                "plan.failed", TaskState.TASK_STATE_FAILED, message=message,
+            )
+            return
+
+        agents = await self._registry.list()
+        agent_urls = {agent.name: agent.card_url for agent in agents}
+        state.rationale = draft.rationale
+        for node_draft in draft.nodes:
+            node = NodeState(
+                id=node_draft.id,
+                name=node_draft.name,
+                agent_name=node_draft.agent_name,
+                agent_url=agent_urls.get(node_draft.agent_name, ""),
+                deps=list(node_draft.deps),
+                input_text=str(node_draft.input.get("text", "")),
+            )
+            state.nodes[node.id] = node
+
+        await self._emit(
+            event_queue, state, task_id, context_id,
+            "plan.created", TaskState.TASK_STATE_WORKING,
+            plan_id=state.plan_id,
+            plan_version=state.plan_version,
+            rationale=state.rationale,
+            nodes=[
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "agent_name": n.agent_name,
+                    "deps": n.deps,
+                }
+                for n in state.nodes.values()
+            ],
+        )
+        plan_text = "任务已拆解：\n" + "\n".join(
+            f"- @{n.agent_name or n.id} 负责 {n.name}" for n in state.nodes.values()
+        )
+        await self._emit_room_message(
+            event_queue, state, task_id, context_id, "plan.announced", plan_text
+        )
+        await updater.complete()
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
@@ -347,6 +358,78 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     def _new_plan_id(self) -> str:
         return f"plan-{uuid.uuid4().hex[:8]}"
 
+    async def _emit_thought_chunk(
+        self,
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str,
+        *,
+        text: str,
+        append: bool,
+        last_chunk: bool,
+    ) -> None:
+        part = Part(text=text)
+        ParseDict({"cw_thought": True}, part.metadata)
+        await event_queue.enqueue_event(
+            TaskArtifactUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                artifact=Artifact(
+                    artifact_id="assistant:thinking",
+                    name="思考",
+                    parts=[part],
+                    metadata=_struct({"kind": "assistant.reasoning"}),
+                ),
+                append=append,
+                last_chunk=last_chunk,
+                metadata=_struct({"kind": "assistant.reasoning"}),
+            )
+        )
+
+    async def _stream_plan(
+        self,
+        request: str,
+        task_id: str,
+        context_id: str,
+        event_queue: EventQueue,
+        *,
+        reason: str | None = None,
+        context: str | None = None,
+    ) -> tuple[PlanDraft, str]:
+        """Stream the planner's thinking to subscribers, then return the plan."""
+        draft: PlanDraft | None = None
+        thinking_parts: list[str] = []
+        first_chunk = True
+        async for item in self._planner.plan(
+            request, reason=reason, context=context
+        ):
+            if isinstance(item, PlanDraft):
+                draft = item
+                continue
+            thinking_parts.append(item)
+            await self._emit_thought_chunk(
+                event_queue,
+                task_id,
+                context_id,
+                text=item,
+                append=not first_chunk,
+                last_chunk=False,
+            )
+            first_chunk = False
+        thinking = "".join(thinking_parts)
+        if thinking:
+            await self._emit_thought_chunk(
+                event_queue,
+                task_id,
+                context_id,
+                text=thinking,
+                append=False,
+                last_chunk=True,
+            )
+        if draft is None:
+            raise PlanningFailed("planner stream ended without a plan")
+        return draft, thinking
+
     async def _plan_and_launch(
         self,
         state: OrchestrationState,
@@ -362,8 +445,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             context_id, exclude_task_id=task_id
         )
         try:
-            draft, reasoning = await self._planner.plan_with_reasoning(
-                text, context=context_brief or None
+            draft, _reasoning = await self._stream_plan(
+                text,
+                task_id,
+                context_id,
+                event_queue,
+                context=context_brief or None,
             )
         except PlanningFailed as exc:
             logger.warning("Planning failed for task %s: %s", task_id, exc)
@@ -398,28 +485,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 input_text=str(node_draft.input.get("text", "")),
             )
             state.nodes[node.id] = node
-
-        if reasoning:
-            reasoning_msg = new_text_message(
-                reasoning, role=Role.ROLE_AGENT,
-                task_id=task_id, context_id=context_id,
-            )
-            ParseDict(
-                {
-                    A2A_ROOM_URI: {
-                        "sender": "assistant",
-                        "role": "assistant",
-                        "kind": "assistant.reasoning",
-                    }
-                },
-                reasoning_msg.metadata,
-            )
-            ParseDict({"cw_thought": True}, reasoning_msg.parts[0].metadata)
-            await self._emit(
-                event_queue, state, task_id, context_id,
-                "assistant.reasoning", TaskState.TASK_STATE_WORKING,
-                message=reasoning_msg,
-            )
 
         await self._emit(
             event_queue, state, task_id, context_id,
@@ -1060,12 +1125,18 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         schema = assistance_decision_schema([agent.name for agent in candidates])
         try:
-            return await self._llm.structured(
-                system=ASSISTANCE_SYSTEM, user=user, schema=schema
-            )
+            async for item in self._llm.stream_structured(
+                system=ASSISTANCE_SYSTEM,
+                user=user,
+                schema=schema,
+                tool_name="AssistanceDecision",
+            ):
+                if isinstance(item, AssistanceDecision):
+                    return item
         except Exception:  # noqa: BLE001 - fall back to human
             logger.exception("assistance decision failed for %s", node.id)
             return AssistanceDecision(action="human")
+        return AssistanceDecision(action="human")
 
     async def _spawn_assist(
         self,
@@ -1369,8 +1440,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     ) -> bool:
         nodes = state.nodes.values()
         try:
-            draft = await self._planner.plan(
+            draft, _thinking = await self._stream_plan(
                 state.rationale or "继续完成任务",
+                task_id,
+                context_id,
+                queue,
                 reason=build_replan_reason(nodes),
                 context=build_replan_context(nodes) or None,
             )

@@ -53,7 +53,7 @@ async def _connect(base_url: str):
     return http, client
 
 
-async def test_streaming_send_dispatches_task_and_plan(tmp_path, echo_agent):
+async def test_streaming_send_emits_plan(tmp_path, echo_agent):
     async with sdk_hub(
         tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True
     ) as (_app, http, client):
@@ -67,8 +67,19 @@ async def test_streaming_send_dispatches_task_and_plan(tmp_path, echo_agent):
             and "kind" in r.status_update.metadata.fields
         ]
         assert "plan.created" in kinds
+        thought_chunks = [
+            r.artifact_update.artifact.parts[0].text
+            for r in responses
+            if r.WhichOneof("payload") == "artifact_update"
+            and r.artifact_update.artifact.parts
+            and "cw_thought" in r.artifact_update.artifact.parts[0].metadata.fields
+        ]
+        assert len(thought_chunks) > 1
+        assert thought_chunks[-1] == "思考：将请求拆解为 1 个节点。"
+        assert "".join(thought_chunks[:-1]) == "思考：将请求拆解为 1 个节点。"
 
 
+@pytest.mark.skip(reason="execute 暂为 plan-only，任务规划后立即完成，无 live 节点事件")
 async def test_subscribe_replays_snapshot_then_live(tmp_path):
     delay = await start_fake_agent("delay", chunk_size=3)
     try:

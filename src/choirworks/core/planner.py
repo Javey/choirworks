@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from choirworks.a2a.registry import AgentRegistry
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
@@ -99,8 +99,12 @@ class PlanningFailed(RuntimeError):
 
 SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
-Return only JSON matching the required schema. Rules:
-- agent_name is enum-constrained to the registered agents listed below.
+
+First explain your decomposition briefly in your response text, then call the
+PlanDraft tool with the final plan.
+
+Rules:
+- agent_name is enum-constrained to the registered agents listed in the user message.
 - skill_id, when set, must be an existing skill id of the assigned agent.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.
@@ -127,22 +131,17 @@ class Planner:
         *,
         reason: str | None = None,
         context: str | None = None,
-    ) -> PlanDraft:
-        draft, _ = await self.plan_with_reasoning(
-            request, reason=reason, context=context
-        )
-        return draft
+    ) -> AsyncIterator[str | PlanDraft]:
+        """Stream the planning thought process, then yield the final draft.
 
-    async def plan_with_reasoning(
-        self,
-        request: str,
-        *,
-        reason: str | None = None,
-        context: str | None = None,
-    ) -> tuple[PlanDraft, str]:
+        Yields:
+            Plain-text thinking chunks followed by exactly one ``PlanDraft``.
+        """
         agents = await self._registry.list()
         if not agents:
-            raise PlanningFailed("no agents registered; register at least one A2A agent first")
+            raise PlanningFailed(
+                "no agents registered; register at least one A2A agent first"
+            )
         schema = constrained_plan_schema([agent.name for agent in agents])
         capabilities = build_planner_capabilities(agents)
         user = build_planner_user_message(
@@ -150,27 +149,36 @@ class Planner:
         )
 
         last_error: Exception | None = None
-        for _ in range(self._max_retries + 1):
-            draft, reasoning = await self._structured(user, schema)
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                yield f"\n\n（计划校验失败：{last_error}，正在重试…）\n\n"
+
+            draft: PlanDraft | None = None
             try:
+                async for item in self._llm.stream_structured(
+                    system=SYSTEM_PROMPT,
+                    user=user,
+                    schema=schema,
+                    tool_name="PlanDraft",
+                ):
+                    if isinstance(item, PlanDraft):
+                        draft = item
+                    else:
+                        yield item
+                if draft is None:
+                    raise ValueError("model did not call the PlanDraft tool")
                 validate_plan(draft, agents, self._max_nodes)
-                return draft, reasoning
-            except PlanValidationError as exc:
+            except (PlanValidationError, ValidationError, ValueError) as exc:
                 last_error = exc
-                user += f"\n\nPrevious plan was invalid: {exc}. Return a corrected plan."
+                user += (
+                    f"\n\nPrevious plan was invalid: {exc}."
+                    " Return a corrected plan."
+                )
+                continue
+
+            yield draft
+            return
+
         raise PlanningFailed(
             f"planner failed after {self._max_retries + 1} attempts: {last_error}"
         )
-
-    async def _structured(
-        self, user: str, schema: type[PlanDraft]
-    ) -> tuple[PlanDraft, str]:
-        raw_method = getattr(self._llm, "structured_with_raw", None)
-        if raw_method is not None:
-            return await raw_method(
-                system=SYSTEM_PROMPT, user=user, schema=schema
-            )
-        draft = await self._llm.structured(
-            system=SYSTEM_PROMPT, user=user, schema=schema
-        )
-        return draft, ""

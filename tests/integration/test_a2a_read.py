@@ -58,7 +58,7 @@ async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
         assert task.id == task_id
         assert task.context_id
         assert metadata["plan"]["version"] == 1
-        assert metadata["nodes"][0]["status"] == "completed"
+        assert metadata["nodes"][0]["status"] == "pending"
 
 
 async def test_get_task_unknown_raises(tmp_path):
@@ -73,6 +73,7 @@ async def test_cancel_unknown_task_raises(tmp_path):
             await client.cancel_task(CancelTaskRequest(id="missing"))
 
 
+@pytest.mark.skip(reason="execute 暂为 plan-only，任务规划后立即完成，无法取消运行中任务")
 async def test_cancel_running_task_marks_canceled(tmp_path):
     from choirworks.sim.fake_agent import start_fake_agent
 

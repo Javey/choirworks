@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TypeVar
 
-import instructor
 import litellm
-from litellm.types.utils import ModelResponse
+from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
+from litellm.types.utils import ChatCompletionDeltaToolCall, ModelResponse
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
+type CompletionResult = ModelResponse | CustomStreamWrapper
+type CompletionFn = Callable[..., Awaitable[CompletionResult]]
+
 
 class LiteLLMClient:
-    """LLM client backed by litellm + instructor.
+    """LLM client backed by litellm.
 
-    Pass ``completion_fn`` to inject a mock ``litellm.acompletion``-compatible
-    function for testing/offline simulation.  The mock must return a
-    ``ModelResponse`` whose ``choices[0].message`` contains:
-
-    * ``content``  – free-form reasoning / text
-    * ``tool_calls`` – structured payload (when using ``structured()``)
+    ``stream_structured`` enforces the schema with a forced function tool and
+    streams thinking deltas followed by the validated result.  ``text`` is the
+    plain non-streaming completion used for summaries.
     """
 
     def __init__(
@@ -28,55 +29,86 @@ class LiteLLMClient:
         *,
         api_base: str | None = None,
         context_window: int | None = None,
-        completion_fn: Any | None = None,
+        completion_fn: CompletionFn | None = None,
     ):
         self._model = model
         self._timeout = timeout_seconds
         self._api_base = api_base
         self._context_window = context_window
-        self._completion_fn = completion_fn or litellm.acompletion
-        self._instructor = instructor.from_litellm(self._completion_fn)
+        self._completion_fn: CompletionFn = completion_fn or litellm.acompletion
 
-    def _extra_kwargs(self) -> dict[str, Any]:
+    def _extra_kwargs(self) -> dict[str, str]:
         if self._api_base:
             return {"api_base": self._api_base}
         return {}
 
-    async def structured(self, *, system: str, user: str, schema: type[T]) -> T:
-        return await self._instructor.chat.completions.create(
-            model=self._model,
-            response_model=schema,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            timeout=self._timeout,
-            **self._extra_kwargs(),
-        )
+    async def stream_structured(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        tool_name: str | None = None,
+    ) -> AsyncIterator[str | T]:
+        """Stream thinking deltas, then yield the validated tool-call result.
 
-    async def structured_with_raw(
-        self, *, system: str, user: str, schema: type[T]
-    ) -> tuple[T, str]:
-        """Structured call that also returns the model's free-form reasoning text."""
-        result, raw = await self._instructor.chat.completions.create_with_completion(
+        The schema is enforced at the API layer via a forced function tool.
+        Argument fragments are accumulated across chunks and validated with
+        pydantic once the stream ends.
+        """
+        name = tool_name or schema.__name__
+        tool = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "parameters": schema.model_json_schema(),
+            },
+        }
+        response = await self._completion_fn(
             model=self._model,
-            response_model=schema,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             timeout=self._timeout,
+            stream=True,
+            tools=[tool],
+            tool_choice={"type": "function", "function": {"name": name}},
             **self._extra_kwargs(),
         )
-        content = ""
-        try:
-            content = raw.choices[0].message.content or ""
-        except (AttributeError, IndexError, TypeError):
-            content = ""
-        return result, content
+        if not isinstance(response, CustomStreamWrapper):
+            raise ValueError("expected a streaming response")
+
+        fragments: dict[int, list[str]] = {}
+        async for chunk in response:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            reasoning = (
+                delta.reasoning_content
+                if hasattr(delta, "reasoning_content")
+                else None
+            )
+            text = reasoning or delta.content
+            if text:
+                yield text
+            for call in delta.tool_calls or []:
+                if isinstance(call, ChatCompletionDeltaToolCall):
+                    fragments.setdefault(call.index, []).append(
+                        call.function.arguments
+                    )
+
+        if not fragments:
+            raise ValueError(f"model did not call the {name} tool")
+        if len(fragments) > 1:
+            raise ValueError(f"expected a single {name} tool call")
+        payload = "".join(next(iter(fragments.values())))
+        yield schema.model_validate_json(payload)
 
     async def text(self, *, system: str, user: str) -> str:
-        response: ModelResponse = await self._completion_fn(
+        response = await self._completion_fn(
             model=self._model,
             messages=[
                 {"role": "system", "content": system},
@@ -85,6 +117,8 @@ class LiteLLMClient:
             timeout=self._timeout,
             **self._extra_kwargs(),
         )
+        if not isinstance(response, ModelResponse):
+            raise ValueError("expected a non-streaming response")
         return response.choices[0].message.content or ""
 
     def count_tokens(self, text: str) -> int:
@@ -98,6 +132,6 @@ class LiteLLMClient:
             return self._context_window
         try:
             info = litellm.get_model_info(self._model)
-            return int(info.get("max_input_tokens", 128000))
+            return int(info.get("max_input_tokens") or 128000)
         except Exception:  # noqa: BLE001
             return 128000

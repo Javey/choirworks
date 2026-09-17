@@ -65,7 +65,8 @@ async def test_send_creates_task_with_plan(tmp_path, echo_agent):
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert task.id == task_id
         assert task.context_id
-        assert task_nodes(task)["n1"]["output"] == "echo:问题"
+        assert task_nodes(task)["n1"]["agent_name"] == "echo"
+        assert task_nodes(task)["n1"]["status"] == "pending"
 
 
 async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
@@ -85,6 +86,7 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         assert second.context_id == first.context_id
 
 
+@pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不处理干预")
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
     from choirworks.a2a.executor import AssistanceDecision
 
@@ -120,6 +122,7 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         assert "这是答复" in history_text
 
 
+@pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不排队")
 async def test_send_to_running_task_queues_message(tmp_path):
     slow = await start_fake_agent("slow")
     try:

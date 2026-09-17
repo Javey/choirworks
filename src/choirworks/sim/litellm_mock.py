@@ -1,29 +1,36 @@
 """Offline simulation at the litellm response layer.
 
 ``sim_acompletion`` is a drop-in replacement for ``litellm.acompletion``.
-It inspects the ``tools`` argument that *instructor* injects to determine
-which structured schema is requested, then returns a ``ModelResponse``
-whose ``message.content`` carries reasoning text and whose
-``message.tool_calls`` carries the structured payload — exactly what a
-real LLM in TOOLS mode would produce.
-
-For plain ``text()`` calls (no ``tools``), it returns a text-only response.
+For streaming tool calls it inspects ``tools`` and returns a
+``CustomStreamWrapper`` whose chunks carry reasoning text plus the structured
+tool-call argument fragments.  Plain calls (``text()``) return a text-only
+``ModelResponse``.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
+import litellm
+from litellm.litellm_core_utils.redact_messages import LiteLLMLoggingObject
+from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 from litellm.types.utils import (
-    ChatCompletionMessageToolCall,
+    ChatCompletionDeltaToolCall,
     Choices,
+    Delta,
+    Function,
     Message,
     ModelResponse,
+    ModelResponseStream,
+    StreamingChoices,
 )
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
+
+litellm.suppress_debug_info = True
 
 FLAKY_AGENTS = {"auditor"}
 
@@ -38,35 +45,25 @@ PEER_ROUTES = {
 }
 HUMAN_AGENTS = {"code-reviewer"}
 
-_NEXT_ID = 0
 
+class SimLogging:
+    """Minimal logging object required by ``CustomStreamWrapper``."""
 
-def _next_id() -> str:
-    global _NEXT_ID
-    _NEXT_ID += 1
-    return f"call_{_NEXT_ID}"
+    model_call_details: dict[str, Any] = {}
+    completion_start_time = None
+    call_type = "acompletion"
+    _is_sync_litellm_request = False
+    _llm_caching_handler = None
+    _response_cost_calculator = None
 
+    def _update_completion_start_time(self, completion_start_time) -> None:
+        self.completion_start_time = completion_start_time
 
-def _tool_response(
-    tool_name: str, arguments: dict[str, Any], *, content: str
-) -> ModelResponse:
-    """Build a TOOLS-mode ModelResponse with reasoning text + tool_call."""
-    tool_call = ChatCompletionMessageToolCall(
-        id=_next_id(),
-        type="function",
-        function={
-            "name": tool_name,
-            "arguments": json.dumps(arguments, ensure_ascii=False),
-        },
-    )
-    msg = Message(content=content, role="assistant", tool_calls=[tool_call])
-    return ModelResponse(
-        id="sim",
-        created=0,
-        model="sim",
-        choices=[Choices(finish_reason="tool_calls", index=0, message=msg)],
-        object="chat.completion",
-    )
+    async def dispatch_success_handlers(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def dispatch_failure_handlers(self, *args: Any, **kwargs: Any) -> None:
+        return None
 
 
 def _text_response(content: str) -> ModelResponse:
@@ -78,6 +75,64 @@ def _text_response(content: str) -> ModelResponse:
         model="sim",
         choices=[Choices(finish_reason="stop", index=0, message=msg)],
         object="chat.completion",
+    )
+
+
+async def _stream_structured_response(
+    reasoning: str, arguments: str, *, tool_name: str, chunk_size: int = 12
+) -> AsyncIterator[ModelResponseStream]:
+    """Yield reasoning text chunks then streamed tool-call argument fragments."""
+    for start in range(0, len(reasoning), chunk_size):
+        yield ModelResponseStream(
+            id="sim",
+            created=0,
+            model="sim",
+            choices=[
+                StreamingChoices(
+                    index=0,
+                    delta=Delta(content=reasoning[start : start + chunk_size]),
+                    finish_reason=None,
+                )
+            ],
+            object="chat.completion.chunk",
+        )
+
+    first = True
+    for start in range(0, len(arguments), chunk_size):
+        call = ChatCompletionDeltaToolCall(
+            index=0,
+            id="call_1" if first else None,
+            type="function" if first else None,
+            function=Function(
+                name=tool_name if first else None,
+                arguments=arguments[start : start + chunk_size],
+            ),
+        )
+        first = False
+        yield ModelResponseStream(
+            id="sim",
+            created=0,
+            model="sim",
+            choices=[
+                StreamingChoices(
+                    index=0,
+                    delta=Delta(tool_calls=[call]),
+                    finish_reason=None,
+                )
+            ],
+            object="chat.completion.chunk",
+        )
+
+    yield ModelResponseStream(
+        id="sim",
+        created=0,
+        model="sim",
+        choices=[
+            StreamingChoices(
+                index=0, delta=Delta(), finish_reason="tool_calls"
+            )
+        ],
+        object="chat.completion.chunk",
     )
 
 
@@ -223,38 +278,41 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
     }
 
 
-async def sim_acompletion(**kwargs: Any) -> ModelResponse:
+async def sim_acompletion(
+    **kwargs: Any,
+) -> ModelResponse | CustomStreamWrapper:
     """Mock ``litellm.acompletion`` for offline simulation.
 
-    Detects the requested schema via ``tools`` (injected by instructor)
-    or falls back to plain text response.
+    Streaming calls return a real ``CustomStreamWrapper``; the forced tool
+    name selects the canned reasoning + structured payload.  Non-streaming
+    calls return a plain text ``ModelResponse``.
     """
     tools = kwargs.get("tools")
     messages = kwargs.get("messages", [])
-    user_content = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            user_content = msg.get("content", "")
-            break
+    user_content = next(
+        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+        "",
+    )
 
-    if tools:
-        tool_name = tools[0]["function"]["name"]
-
+    if kwargs.get("stream"):
+        tool_name = tools[0]["function"]["name"] if tools else ""
         if tool_name == "PlanDraft":
             reasoning, draft = _make_plan(user_content)
-            return _tool_response(
-                "PlanDraft",
-                draft.model_dump(),
-                content=reasoning,
-            )
-
-        if tool_name == "AssistanceDecision":
+            arguments = draft.model_dump_json()
+        elif tool_name == "AssistanceDecision":
             reasoning, decision = _make_assistance_decision(user_content)
-            return _tool_response(
-                "AssistanceDecision",
-                decision,
-                content=reasoning,
-            )
+            arguments = json.dumps(decision, ensure_ascii=False)
+        else:
+            reasoning, arguments = "已收到你的问题，这里给出示例回答。", ""
+        return CustomStreamWrapper(
+            completion_stream=_stream_structured_response(
+                reasoning, arguments, tool_name=tool_name
+            ),
+            model="sim",
+            logging_obj=cast(
+                LiteLLMLoggingObject, cast(object, SimLogging())
+            ),
+        )
 
     # Plain text call
     return _text_response("已收到你的问题，这里给出示例回答。")

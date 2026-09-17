@@ -110,7 +110,19 @@ async def make_registry(tmp_path, agents):
     return db, remote, registry
 
 
-async def test_planner_returns_valid_draft(tmp_path):
+async def collect_plan(planner: Planner, request: str, **kwargs):
+    chunks: list[str] = []
+    draft: PlanDraft | None = None
+    async for item in planner.plan(request, **kwargs):
+        if isinstance(item, PlanDraft):
+            draft = item
+        else:
+            chunks.append(item)
+    assert draft is not None
+    return "".join(chunks), draft
+
+
+async def test_planner_streams_thinking(tmp_path):
     llm = FakeLLM(
         structured_results=[
             PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
@@ -119,9 +131,10 @@ async def test_planner_returns_valid_draft(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
-        draft = await planner.plan("研究并写一份报告")
+        thinking, draft = await collect_plan(planner, "研究并写一份报告")
+        assert thinking == "思考：将请求拆解为 1 个节点。"
         assert draft.nodes[0].agent_name == "research"
-        assert "Available agents" in llm.structured_calls[0]["user"]
+        assert "Available agents" in llm.stream_calls[0]["user"]
     finally:
         await remote.close()
         await db.close()
@@ -134,9 +147,10 @@ async def test_planner_retries_with_feedback(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
-        draft = await planner.plan("x")
+        thinking, draft = await collect_plan(planner, "x")
         assert draft.rationale == "good"
-        assert "unknown skill" in llm.structured_calls[1]["user"]
+        assert "unknown skill" in llm.stream_calls[1]["user"]
+        assert "正在重试" in thinking
     finally:
         await remote.close()
         await db.close()
@@ -149,8 +163,8 @@ async def test_planner_fails_after_retries(tmp_path):
     try:
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
         with pytest.raises(PlanningFailed):
-            await planner.plan("x")
-        assert len(llm.structured_calls) == 3
+            await collect_plan(planner, "x")
+        assert len(llm.stream_calls) == 3
     finally:
         await remote.close()
         await db.close()
@@ -161,13 +175,13 @@ async def test_planner_rejects_when_no_agents(tmp_path):
     try:
         planner = Planner(FakeLLM(), registry)
         with pytest.raises(PlanningFailed, match="no agents"):
-            await planner.plan("x")
+            await collect_plan(planner, "x")
     finally:
         await remote.close()
         await db.close()
 
 
-async def test_planner_schema_constrains_agent_names(tmp_path):
+async def test_planner_passes_constrained_schema_to_tool(tmp_path):
     llm = FakeLLM(
         structured_results=[
             PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
@@ -176,10 +190,14 @@ async def test_planner_schema_constrains_agent_names(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
-        await planner.plan("x")
-        schema = llm.structured_calls[0]["schema"]
-        node_schema = schema.model_json_schema()["$defs"]["PlanNodeDraft"]
-        assert node_schema["properties"]["agent_name"]["enum"] == ["research", "writer"]
+        await collect_plan(planner, "x")
+        call = llm.stream_calls[0]
+        assert call["tool_name"] == "PlanDraft"
+        node_schema = call["schema"].model_json_schema()["$defs"]["PlanNodeDraft"]
+        assert node_schema["properties"]["agent_name"]["enum"] == [
+            "research",
+            "writer",
+        ]
     finally:
         await remote.close()
         await db.close()

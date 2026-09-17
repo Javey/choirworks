@@ -1,5 +1,8 @@
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import BaseModel
+
 from choirworks.a2a.executor import AssistanceDecision
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
@@ -40,9 +43,22 @@ def make_client() -> LiteLLMClient:
     return LiteLLMClient(model="sim", completion_fn=sim_acompletion)
 
 
+async def structured_result(client: LiteLLMClient, *, system: str, user: str, schema, tool_name):
+    result = None
+    async for item in client.stream_structured(
+        system=system, user=user, schema=schema, tool_name=tool_name
+    ):
+        if not isinstance(item, str):
+            result = item
+    return result
+
+
 async def plan_for(request: str) -> PlanDraft:
     client = make_client()
-    draft = await client.structured(system="plan", user=prompt(request), schema=PlanDraft)
+    draft = await structured_result(
+        client, system="plan", user=prompt(request), schema=PlanDraft, tool_name="PlanDraft"
+    )
+    assert draft is not None
     validate_plan(draft, AGENTS, 20)
     return draft
 
@@ -75,7 +91,10 @@ async def test_broken_plan_triggers_replan_without_auditor():
     replan_prompt = prompt("请审计合规性并降级处理")
     replan_prompt += "\n\nReason for replanning:\nnode 'n1' failed: boom"
     client = make_client()
-    replanned = await client.structured(system="plan", user=replan_prompt, schema=PlanDraft)
+    replanned = await structured_result(
+        client, system="plan", user=replan_prompt, schema=PlanDraft, tool_name="PlanDraft"
+    )
+    assert replanned is not None
     validate_plan(replanned, AGENTS, 20)
     assert "auditor" not in agents_of(replanned)
     assert agents_of(replanned) == ["developer"]
@@ -89,9 +108,14 @@ async def test_assistance_decision_routes_to_pm_for_developer():
         + "缺少关键信息：请 product-manager 提供需求文档。"
     )
     client = make_client()
-    decision = await client.structured(
-        system="assistance", user=prompt_text, schema=AssistanceDecision
+    decision = await structured_result(
+        client,
+        system="assistance",
+        user=prompt_text,
+        schema=AssistanceDecision,
+        tool_name="AssistanceDecision",
     )
+    assert decision is not None
     assert decision.action == "peer"
     assert decision.agent_name == "product-manager"
     assert "请补充信息" in decision.instruction
@@ -106,9 +130,14 @@ async def test_assistance_decision_routes_to_qa_for_pm():
         + "需要 qa-engineer 协助确认技术细节。"
     )
     client = make_client()
-    decision = await client.structured(
-        system="assistance", user=prompt_text, schema=AssistanceDecision
+    decision = await structured_result(
+        client,
+        system="assistance",
+        user=prompt_text,
+        schema=AssistanceDecision,
+        tool_name="AssistanceDecision",
     )
+    assert decision is not None
     assert decision.action == "peer"
     assert decision.agent_name == "qa-engineer"
     assert "需要 qa-engineer" in decision.instruction
@@ -120,9 +149,14 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         + "\n\nRequester: code-reviewer\nQuestion / blocked work:\n需要人工确认评审标准。"
     )
     client = make_client()
-    decision = await client.structured(
-        system="assistance", user=prompt_text, schema=AssistanceDecision
+    decision = await structured_result(
+        client,
+        system="assistance",
+        user=prompt_text,
+        schema=AssistanceDecision,
+        tool_name="AssistanceDecision",
     )
+    assert decision is not None
     assert decision.action == "human"
     assert decision.agent_name is None
 
@@ -134,23 +168,49 @@ async def test_coordination_plan_runs_pm_and_developer_in_parallel():
     assert draft.nodes[1].deps == []
 
 
-async def test_raw_response_has_reasoning_content():
-    """The mock should populate message.content with reasoning text."""
+async def test_stream_structured_with_sim_yields_valid_plan():
     client = make_client()
-    draft = await client.structured(
-        system="plan", user=prompt("帮我调研"), schema=PlanDraft,
-    )
-    raw = getattr(draft, "_raw_response", None)
-    assert raw is not None
-    content = raw.choices[0].message.content
-    assert "收到请求" in content
-    assert "计划" in content
+    items = [
+        item
+        async for item in client.stream_structured(
+            system="plan",
+            user=prompt("帮我调研技术方案并写一份设计文档"),
+            schema=PlanDraft,
+            tool_name="PlanDraft",
+        )
+    ]
+    thinking = "".join(item for item in items if isinstance(item, str))
+    drafts = [item for item in items if isinstance(item, PlanDraft)]
+    assert thinking
+    assert len(drafts) == 1
+    validate_plan(drafts[0], AGENTS, 20)
+    assert agents_of(drafts[0]) == ["product-manager", "developer"]
 
 
-async def test_structured_with_raw_returns_reasoning():
-    client = make_client()
-    _draft, reasoning = await client.structured_with_raw(
-        system="plan", user=prompt("帮我调研"), schema=PlanDraft
+async def test_sim_stream_returns_custom_stream_wrapper():
+    from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
+
+    result = await sim_acompletion(
+        stream=True,
+        messages=[{"role": "user", "content": prompt("帮我调研")}],
+        tools=[
+            {"type": "function", "function": {"name": "PlanDraft", "parameters": {}}}
+        ],
     )
-    assert "收到请求" in reasoning
-    assert "计划" in reasoning
+    assert isinstance(result, CustomStreamWrapper)
+    async for _chunk in result:
+        pass
+
+
+async def test_stream_structured_raises_without_tool_call():
+    class Answer(BaseModel):
+        value: str
+
+    client = make_client()
+    with pytest.raises(ValueError, match="did not call"):
+        [
+            item
+            async for item in client.stream_structured(
+                system="x", user="y", schema=Answer, tool_name="Answer"
+            )
+        ]
