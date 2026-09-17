@@ -37,19 +37,19 @@ logger = logging.getLogger(__name__)
 async def create_app(
     settings: Settings | None = None, llm: LiteLLMClient | None = None
 ) -> FastAPI:
-    resolved = settings or Settings()
+    settings = settings or Settings()
     llm_client = llm or LiteLLMClient(
-        model=resolved.llm.planner_model,
-        api_base=resolved.llm.api_base,
-        timeout_seconds=resolved.llm.timeout_seconds,
-        context_window=resolved.llm.context_window,
+        model=settings.llm.planner_model,
+        api_base=settings.llm.api_base,
+        timeout_seconds=settings.llm.timeout_seconds,
+        context_window=settings.llm.context_window,
     )
 
     app = FastAPI(title="ChoirWorks", version="0.1.0")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        db_path = resolved.store.db_path
+        db_path = settings.store.db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         engine = create_async_engine(
@@ -70,10 +70,10 @@ async def create_app(
         planner = Planner(
             llm_client,
             registry,
-            max_nodes=resolved.scheduler.max_plan_nodes,
-            max_retries=resolved.llm.max_plan_retries,
+            max_nodes=settings.scheduler.max_plan_nodes,
+            max_retries=settings.llm.max_plan_retries,
         )
-        policy = PolicyEngine(resolved.policies)
+        policy = PolicyEngine(settings.policies)
 
         executor = ChoirWorksAgentExecutor(
             registry=registry,
@@ -81,24 +81,24 @@ async def create_app(
             planner=planner,
             policy=policy,
             llm=llm_client,
-            max_parallel=resolved.scheduler.max_parallel_nodes,
-            node_timeout=resolved.scheduler.node_timeout_seconds,
-            max_node_attempts=resolved.scheduler.max_node_attempts,
-            retry_backoff=resolved.scheduler.retry_backoff_seconds,
-            replan_on_failure=resolved.scheduler.replan_on_failure,
-            compaction_threshold=resolved.llm.compaction_threshold,
-            compaction_retention=resolved.llm.compaction_retention,
+            max_parallel=settings.scheduler.max_parallel_nodes,
+            node_timeout=settings.scheduler.node_timeout_seconds,
+            max_node_attempts=settings.scheduler.max_node_attempts,
+            retry_backoff=settings.scheduler.retry_backoff_seconds,
+            replan_on_failure=settings.scheduler.replan_on_failure,
+            compaction_threshold=settings.llm.compaction_threshold,
+            compaction_retention=settings.llm.compaction_retention,
         )
         executor.set_task_store(task_store)
 
-        agent_card = build_agent_card(resolved.a2a.public_url)
+        agent_card = build_agent_card(settings.a2a.public_url)
         request_handler = DefaultRequestHandler(
             agent_executor=executor,
             task_store=task_store,
             agent_card=agent_card,
         )
 
-        app.state.settings = resolved
+        app.state.settings = settings
         app.state.engine = engine
         app.state.task_store = task_store
         app.state.db = db
@@ -124,7 +124,7 @@ async def create_app(
         )
 
         sim_agents: list[Any] = []
-        if resolved.sim.start_agents and resolved.sim.agents:
+        if settings.sim.start_agents and settings.sim.agents:
             from choirworks.sim.fake_agent import start_fake_agent
 
             async with db.conn.execute("DELETE FROM agent_registry"):
@@ -132,14 +132,14 @@ async def create_app(
             async with db.conn.execute("DELETE FROM tasks"):
                 pass
             await db.conn.commit()
-            for spec in resolved.sim.agents:
+            for spec in settings.sim.agents:
                 name = spec["name"]
                 behavior = spec.get("behavior", "echo")
                 agent = await start_fake_agent(
                     behavior,
                     name=name,
-                    chunk_size=resolved.sim.chunk_size,
-                    chunk_delay=resolved.sim.chunk_delay,
+                    chunk_size=settings.sim.chunk_size,
+                    chunk_delay=settings.sim.chunk_delay,
                 )
                 sim_agents.append(agent)
                 await registry.register(name, agent.url)
@@ -147,7 +147,7 @@ async def create_app(
 
         from choirworks.a2a.recovery import recover_tasks
 
-        if resolved.recovery.replay_on_startup:
+        if settings.recovery.replay_on_startup:
             await recover_tasks(request_handler, task_store)
 
         try:
@@ -199,7 +199,7 @@ async def create_app(
             })
         return conversations
 
-    frontend_dir = resolved.server.frontend_dir
+    frontend_dir = settings.server.frontend_dir
 
     @app.get("/")
     async def root():
