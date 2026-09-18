@@ -1,7 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { getClient } from "./api/a2a-client";
+
+vi.mock("./api/a2a-client", () => ({ getClient: vi.fn() }));
 
 beforeEach(() => {
   window.history.pushState({}, "", "/");
@@ -9,6 +12,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
 });
 
 function setupFetch() {
@@ -65,5 +69,45 @@ describe("App", () => {
     expect(
       screen.getByPlaceholderText("输入消息，@ 指派 Agent，Enter 发送"),
     ).toBeInTheDocument();
+  });
+
+  it("navigates to the new conversation before the stream completes", async () => {
+    setupFetch();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = {
+      sendMessageStream: () =>
+        (async function* () {
+          yield {
+            payload: {
+              $case: "task",
+              value: {
+                id: "task-1",
+                contextId: "ctx-1",
+                status: { state: 3 },
+                history: [],
+                artifacts: [],
+              },
+            },
+          };
+          await gate;
+        })(),
+    } as unknown as Awaited<ReturnType<typeof getClient>>;
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    render(<App />);
+    const composer = screen.getByPlaceholderText(
+      "输入消息，@ 指派 Agent，Enter 发送",
+    );
+    fireEvent.change(composer, { target: { value: "分析 X" } });
+    fireEvent.click(screen.getByRole("button", { name: /发送/ }));
+
+    await waitFor(() => expect(window.location.search).toBe("?c=ctx-1"));
+    expect(screen.getByRole("button", { name: /发送/ })).toBeDisabled();
+
+    release();
+    await waitFor(() => expect(composer).toHaveValue(""));
   });
 });

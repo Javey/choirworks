@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal
 
@@ -9,6 +10,8 @@ from choirworks.a2a.registry import AgentRegistry
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
 from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
+
+logger = logging.getLogger(__name__)
 
 
 class PlanNodeDraft(BaseModel):
@@ -150,7 +153,12 @@ class Planner:
         last_error: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
-                yield f"\n\n（计划校验失败：{last_error}，正在重试…）\n\n"
+                logger.warning(
+                    "plan validation failed (attempt %d/%d): %s",
+                    attempt,
+                    self._max_retries + 1,
+                    last_error,
+                )
 
             draft: PlanDraft | None = None
             try:

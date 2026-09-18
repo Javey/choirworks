@@ -112,12 +112,15 @@ export function useConversation(contextId: string | null) {
   }, [contextId, follow, commit]);
 
   const send = useCallback(
-    async (input: ConversationSendInput) => {
+    async (
+      input: ConversationSendInput,
+      onContextCreated?: (contextId: string) => void,
+    ) => {
       const client = await getClient();
       const current = viewRef.current;
       const settled = isSettled(current.state);
       const taskId = settled ? "" : current.taskId;
-      const contextId = current.contextId;
+      let knownContextId = current.contextId;
       const message = {
         messageId: crypto.randomUUID(),
         role: Role.ROLE_USER,
@@ -129,7 +132,7 @@ export function useConversation(contextId: string | null) {
             mediaType: "text/plain",
           },
         ],
-        contextId,
+        contextId: knownContextId,
         taskId,
         metadata: undefined,
         extensions: [],
@@ -147,6 +150,11 @@ export function useConversation(contextId: string | null) {
         const payload = (event as StreamResponse).payload;
         if (payload?.$case === "task" && payload.value?.id) {
           createdTaskId = payload.value.id as string;
+          const createdContextId = payload.value.contextId;
+          if (createdContextId && createdContextId !== knownContextId) {
+            knownContextId = createdContextId;
+            onContextCreated?.(createdContextId);
+          }
         }
       }
       const latest = viewRef.current;

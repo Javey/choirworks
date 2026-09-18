@@ -409,6 +409,11 @@ export function applyStreamEvent(
     const text = textOfParts(artifact);
     const lastChunk = artUpdate.lastChunk === true;
     const agentName = typeof meta.agent_name === "string" ? meta.agent_name : "";
+    const artifactMeta = metaOf(artifact);
+    const author =
+      typeof artifactMeta.author === "string"
+        ? artifactMeta.author
+        : agentName || "assistant";
 
     // agent.message as artifact = agent output (final message, not streaming)
     if (kind === "agent.message" && text) {
@@ -433,13 +438,13 @@ export function applyStreamEvent(
       };
     }
 
-    // Thought part in artifact (e.g. from ADK agents with adk_thought)
+    // Thought part in artifact (planner / agent reasoning stream)
     const pMeta = partMetaOf(artifact);
     if (pMeta.cw_thought === true && text) {
       const chatMsg: ChatMessage = {
         id: String(artifact.artifactId ?? `thought-${seq}`),
         role: "assistant",
-        sender: agentName || "assistant",
+        sender: author,
         text,
         mentions: [],
         quote_id: null,

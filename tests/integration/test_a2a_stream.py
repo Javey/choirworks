@@ -59,20 +59,38 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         responses = [r async for r in client.send_message(_send("分析 X"))]
         assert responses[0].WhichOneof("payload") == "task"
-        kinds = [
-            r.status_update.metadata.fields["kind"].string_value
+        status_updates = [
+            r.status_update
             for r in responses
             if r.WhichOneof("payload") == "status_update"
-            and "kind" in r.status_update.metadata.fields
+        ]
+        kinds = [
+            su.metadata.fields["kind"].string_value
+            for su in status_updates
+            if "kind" in su.metadata.fields
         ]
         assert "plan.created" in kinds
-        thought_chunks = [
-            r.artifact_update.artifact.parts[0].text
+        assert "plan.announced" not in kinds
+        assert all(not su.status.HasField("message") for su in status_updates)
+        plan_created = next(
+            su
+            for su in status_updates
+            if su.metadata.fields["kind"].string_value == "plan.created"
+        )
+        nodes = plan_created.metadata.fields["nodes"].list_value.values
+        assert nodes[0].struct_value.fields["agent_name"].string_value == "echo"
+        thought_updates = [
+            r.artifact_update
             for r in responses
             if r.WhichOneof("payload") == "artifact_update"
             and r.artifact_update.artifact.parts
             and "cw_thought" in r.artifact_update.artifact.parts[0].metadata.fields
         ]
+        thought_chunks = [u.artifact.parts[0].text for u in thought_updates]
+        authors = {
+            u.artifact.metadata.fields["author"].string_value for u in thought_updates
+        }
+        assert authors == {"assistant"}
         assert len(thought_chunks) > 1
         assert thought_chunks[-1] == "思考：将请求拆解为 1 个节点。"
         assert "".join(thought_chunks[:-1]) == "思考：将请求拆解为 1 个节点。"

@@ -48,14 +48,19 @@ export default function App() {
   const handleSend = useCallback(
     async (input: ConversationSendInput) => {
       setBanner(null);
+      const startingNew = activeId === null;
       try {
-        await send(input);
+        await send(input, (contextId) => {
+          if (!startingNew) return;
+          navigate(contextId);
+          void refreshConversations();
+        });
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));
       }
     },
-    [send, refreshConversations],
+    [send, refreshConversations, activeId, navigate],
   );
 
   return (
@@ -96,7 +101,7 @@ export default function App() {
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-semibold text-sm text-feishu-text truncate">
               {activeId
-                ? (conversations.find((c) => c.id === activeId)?.title ?? "工作群")
+                ? (conversations.find((c) => c.id === activeId)?.title || "工作群")
                 : "ChoirWorks"}
             </span>
           </div>

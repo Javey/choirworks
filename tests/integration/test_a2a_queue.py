@@ -4,7 +4,7 @@ import pytest
 from a2a.types import CancelTaskRequest, GetTaskRequest, Message, Part, Role, SendMessageRequest
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.executor import A2A_ROOM_URI
+from choirworks.a2a.room import A2A_ROOM_URI
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.sdk import sdk_hub, task_nodes

@@ -90,6 +90,7 @@ export function Sidebar({
       <nav className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-0.5">
         {conversations.map((conversation) => {
           const isActive = conversation.id === activeId;
+          const label = conversation.title || "新对话";
           const bgColor = AVATAR_BG[conversation.last_status] ?? "#8f959e";
           const statusColor = STATUS_COLORS[conversation.last_status] ?? "bg-feishu-muted";
           return (
@@ -111,7 +112,7 @@ export function Sidebar({
                   className="flex items-center justify-center w-10 h-10 rounded-full text-white font-semibold text-sm"
                   style={{ background: bgColor }}
                 >
-                  {conversation.title.slice(0, 1).toUpperCase()}
+                  {label.slice(0, 1).toUpperCase()}
                 </div>
                 <span
                   className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-feishu-sidebar ${statusColor}`}
@@ -120,7 +121,7 @@ export function Sidebar({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[13px] font-medium text-feishu-text truncate">
-                    {conversation.title}
+                    {label}
                   </span>
                   <span className="text-[11px] text-feishu-muted shrink-0">
                     {timeAgo(conversation.updated_at)}

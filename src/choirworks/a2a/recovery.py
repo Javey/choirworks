@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from a2a.helpers import new_text_message
+from a2a.helpers import new_data_message
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks.task_store import TaskStore
@@ -48,8 +48,8 @@ async def recover_tasks(
                 continue
             if load_state(task) is None:
                 continue
-            message = new_text_message(
-                "（恢复）",
+            message = new_data_message(
+                {"kind": "resume"},
                 role=Role.ROLE_USER,
                 task_id=task.id,
                 context_id=task.context_id,

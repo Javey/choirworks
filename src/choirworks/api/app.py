@@ -167,7 +167,7 @@ async def create_app(
     async def create_conversation(body: dict) -> dict:
         import uuid
         conversation_id = uuid.uuid4().hex
-        title = body.get("title", "新对话")
+        title = body.get("title", "")
         return {"conversation_id": conversation_id, "title": title}
 
     @app.get("/v1/conversations")
@@ -180,7 +180,7 @@ async def create_app(
             ctx_id = task.context_id or task.id
             state_name = TaskState.Name(task.status.state).replace("TASK_STATE_", "").lower()
             if ctx_id not in sessions:
-                title = "新对话"
+                title = ""
                 if task.metadata.fields:
                     meta = MessageToDict(
                         task.metadata, preserving_proto_field_name=True

@@ -147,7 +147,7 @@ async def test_planner_retries_with_feedback(tmp_path):
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
         thinking, draft = await collect_plan(planner, "x")
         assert "unknown skill" in llm.stream_calls[1]["user"]
-        assert "正在重试" in thinking
+        assert thinking == "思考：将请求拆解为 1 个节点。" * 2
     finally:
         await remote.close()
         await db.close()
