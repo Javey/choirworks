@@ -24,7 +24,6 @@ def _settings(db_path) -> Settings:
 
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
-        rationale="single",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": "开始"}

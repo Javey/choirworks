@@ -64,6 +64,7 @@ export const emptyConversation: ConversationView = {
 type ProtoStruct = Record<string, unknown>;
 
 const ROOM_META_KEY = "https://github.com/Javey/choirworks/extensions/room/v1";
+const STATE_JSON_KEY = "choirworks.state";
 
 function stateName(state: unknown): string {
   if (typeof state === "number") return taskStateToJSON(state as TaskState);
@@ -100,40 +101,68 @@ export function conversationFromTask(
   task: ProtoStruct,
   taskId: string,
 ): ConversationView {
-  const state = stateName(
-    (task.status as ProtoStruct | undefined)?.state,
-  );
-  const history = (task.history as ProtoStruct[] | undefined) ?? [];
-  const messages: ChatMessage[] = history.map((msg) => {
-    const rm = roomMetaOf(msg);
-    const sender = typeof rm.sender === "string" ? rm.sender : null;
-    const role = msg.role === Role.ROLE_USER ? "user" : (sender === "assistant" ? "assistant" : "agent");
-    return {
-      id: String(msg.messageId ?? ""),
-      role,
-      sender,
-      text: textOfParts(msg),
-      mentions: Array.isArray(rm.mentions) ? rm.mentions.map(String) : [],
-      quote_id: typeof rm.quote_id === "string" ? rm.quote_id : null,
-      node_id: typeof rm.node_id === "string" ? rm.node_id : null,
-      task_id: typeof msg.taskId === "string" ? msg.taskId : null,
-      created_at: "",
-    };
-  });
+  return conversationFromTasks([task as ProtoStruct], taskId);
+}
 
-  const meta = metaOf(task);
-  const nodesMeta = (meta.nodes as ProtoStruct[] | undefined) ?? [];
+export function conversationFromTasks(
+  tasks: ProtoStruct[],
+  contextId: string,
+): ConversationView {
+  const messages: ChatMessage[] = [];
+  const seenIds = new Set<string>();
+  for (const task of tasks) {
+    const history = (task.history as ProtoStruct[] | undefined) ?? [];
+    for (const msg of history) {
+      const id = String(msg.messageId ?? "");
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      const rm = roomMetaOf(msg);
+      const sender = typeof rm.sender === "string" ? rm.sender : null;
+      const role = msg.role === Role.ROLE_USER ? "user" : (sender === "assistant" ? "assistant" : "agent");
+      messages.push({
+        id,
+        role,
+        sender,
+        text: textOfParts(msg),
+        mentions: Array.isArray(rm.mentions) ? rm.mentions.map(String) : [],
+        quote_id: typeof rm.quote_id === "string" ? rm.quote_id : null,
+        node_id: typeof rm.node_id === "string" ? rm.node_id : null,
+        task_id: typeof msg.taskId === "string" ? msg.taskId : null,
+        created_at: "",
+      });
+    }
+  }
 
-  const nodes: TaskNodeInfo[] = nodesMeta.map((n) => ({
-    id: String(n.id ?? ""),
-    name: String(n.name ?? ""),
-    agent_name: String(n.agent_name ?? ""),
-    status: String(n.status ?? "pending"),
-    output: typeof n.output === "string" ? n.output : undefined,
-    error: typeof n.error === "string" ? n.error : undefined,
-  }));
+  let lastTaskId = "";
+  let lastState = taskStateToJSON(TaskState.TASK_STATE_SUBMITTED);
+  let nodes: TaskNodeInfo[] = [];
+  for (const task of tasks) {
+    const state = stateName(
+      (task.status as ProtoStruct | undefined)?.state,
+    );
+    lastTaskId = String(task.id ?? "");
+    lastState = state;
+    const meta = metaOf(task);
+    const stateJson = meta[STATE_JSON_KEY];
+    if (typeof stateJson === "string") {
+      try {
+        const parsed = JSON.parse(stateJson) as ProtoStruct;
+        const nodesMeta = (parsed.nodes as ProtoStruct[] | undefined) ?? [];
+        nodes = nodesMeta.map((n) => ({
+          id: String(n.id ?? ""),
+          name: String(n.name ?? ""),
+          agent_name: String(n.agent_name ?? ""),
+          status: String(n.status ?? "pending"),
+          output: typeof n.output === "string" ? n.output : undefined,
+          error: typeof n.error === "string" ? n.error : undefined,
+        }));
+      } catch { /* ignore invalid JSON */ }
+    }
+  }
 
-  const artifacts = (task.artifacts as ProtoStruct[] | undefined) ?? [];
+  const artifacts = (tasks.flatMap(
+    (task) => (task.artifacts as ProtoStruct[] | undefined) ?? [],
+  ));
   for (const art of artifacts) {
     const text = textOfParts(art);
     const nodeMeta = metaOf(art);
@@ -147,9 +176,9 @@ export function conversationFromTask(
   }
 
   return {
-    taskId,
-    contextId: String(task.contextId ?? taskId),
-    state,
+    taskId: lastTaskId,
+    contextId: contextId,
+    state: lastState,
     messages,
     notifications: [],
     members: [],
@@ -168,12 +197,60 @@ export function applyStreamEvent(
   if (!payload?.$case || payload.value === undefined) return view;
   const result = payload.value as ProtoStruct;
 
-  // Task snapshot
+  // Task snapshot — merge new task's history into existing view
   if (payload.$case === "task") {
-    return conversationFromTask(
-      result,
-      view.taskId || String(result.id ?? ""),
+    const taskId = String(result.id ?? "");
+    const state = stateName(
+      (result.status as ProtoStruct | undefined)?.state,
     );
+    const history = (result.history as ProtoStruct[] | undefined) ?? [];
+    const newMessages: ChatMessage[] = [];
+    const seenIds = new Set(view.messages.map((m) => m.id));
+    for (const msg of history) {
+      const id = String(msg.messageId ?? "");
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      const rm = roomMetaOf(msg);
+      const sender = typeof rm.sender === "string" ? rm.sender : null;
+      const role = msg.role === Role.ROLE_USER ? "user" : (sender === "assistant" ? "assistant" : "agent");
+      newMessages.push({
+        id,
+        role,
+        sender,
+        text: textOfParts(msg),
+        mentions: Array.isArray(rm.mentions) ? rm.mentions.map(String) : [],
+        quote_id: typeof rm.quote_id === "string" ? rm.quote_id : null,
+        node_id: typeof rm.node_id === "string" ? rm.node_id : null,
+        task_id: typeof msg.taskId === "string" ? msg.taskId : null,
+        created_at: "",
+      });
+    }
+    const meta = metaOf(result);
+    let nodes = view.nodes;
+    const stateJson = meta[STATE_JSON_KEY];
+    if (typeof stateJson === "string") {
+      try {
+        const parsed = JSON.parse(stateJson) as ProtoStruct;
+        const nodesMeta = (parsed.nodes as ProtoStruct[] | undefined) ?? [];
+        nodes = nodesMeta.map((n) => ({
+          id: String(n.id ?? ""),
+          name: String(n.name ?? ""),
+          agent_name: String(n.agent_name ?? ""),
+          status: String(n.status ?? "pending"),
+          output: typeof n.output === "string" ? n.output : undefined,
+          error: typeof n.error === "string" ? n.error : undefined,
+        }));
+      } catch { /* ignore invalid JSON */ }
+    }
+    return {
+      ...view,
+      taskId,
+      state,
+      messages: [...view.messages, ...newMessages],
+      nodes,
+      contextId: String(result.contextId ?? view.contextId),
+      lastSeq: Math.max(view.lastSeq, seq),
+    };
   }
 
   // Status update

@@ -19,7 +19,7 @@ export default function App() {
   );
   const [banner, setBanner] = useState<string | null>(null);
 
-  const { view, rawEvents, error, send, setOnTaskCreated } = useConversation(activeId);
+  const { view, rawEvents, error, send } = useConversation(activeId);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -48,17 +48,14 @@ export default function App() {
   const handleSend = useCallback(
     async (input: ConversationSendInput) => {
       setBanner(null);
-      setOnTaskCreated((id) => navigate(id));
       try {
         await send(input);
         await refreshConversations();
       } catch (exc) {
         setBanner(messageOf(exc));
-      } finally {
-        setOnTaskCreated(null);
       }
     },
-    [send, navigate, refreshConversations, setOnTaskCreated],
+    [send, refreshConversations],
   );
 
   return (

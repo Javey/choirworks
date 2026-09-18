@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -15,7 +14,7 @@ from a2a.server.routes import (
 from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
 from a2a.server.tasks.database_task_store import DatabaseTaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, TaskState
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from google.protobuf.json_format import MessageToDict
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -166,6 +165,7 @@ async def create_app(
 
     @app.post("/v1/conversations")
     async def create_conversation(body: dict) -> dict:
+        import uuid
         conversation_id = uuid.uuid4().hex
         title = body.get("title", "新对话")
         return {"conversation_id": conversation_id, "title": title}
@@ -174,24 +174,50 @@ async def create_app(
     async def list_conversations(request: Request) -> list[dict]:
         task_store = request.app.state.task_store
         ctx = ServerCallContext()
-        params = ListTasksRequest()
-        response = await task_store.list(params, ctx)
-        conversations = []
+        response = await task_store.list(ListTasksRequest(), ctx)
+        sessions: dict[str, dict[str, Any]] = {}
         for task in response.tasks:
-            task_dict = MessageToDict(task, preserving_proto_field_name=True)
-            title = "新对话"
-            meta = task_dict.get("metadata", {})
-            if meta.get("title"):
-                title = meta["title"]
+            ctx_id = task.context_id or task.id
             state_name = TaskState.Name(task.status.state).replace("TASK_STATE_", "").lower()
-            conversations.append({
-                "id": task.id,
-                "title": title,
-                "created_at": "",
-                "updated_at": "",
-                "task_count": 1,
-                "last_status": state_name,
-            })
-        return conversations
+            if ctx_id not in sessions:
+                title = "新对话"
+                if task.metadata.fields:
+                    meta = MessageToDict(
+                        task.metadata, preserving_proto_field_name=True
+                    )
+                    if meta.get("title"):
+                        title = meta["title"]
+                sessions[ctx_id] = {
+                    "id": ctx_id,
+                    "title": title,
+                    "created_at": "",
+                    "updated_at": "",
+                    "task_count": 0,
+                    "last_status": state_name,
+                    "_latest_state": task.status.state,
+                }
+            session = sessions[ctx_id]
+            session["task_count"] += 1
+            if task.status.state > session["_latest_state"]:
+                session["_latest_state"] = task.status.state
+                session["last_status"] = state_name
+        for s in sessions.values():
+            s.pop("_latest_state", None)
+        return list(sessions.values())
+
+    @app.get("/v1/conversations/{context_id}")
+    async def get_conversation(context_id: str, request: Request) -> dict:
+        task_store = request.app.state.task_store
+        ctx = ServerCallContext()
+        params = ListTasksRequest()
+        params.context_id = context_id
+        response = await task_store.list(params, ctx)
+        if not response.tasks:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        tasks = [
+            MessageToDict(t, preserving_proto_field_name=True)
+            for t in response.tasks
+        ]
+        return {"id": context_id, "tasks": tasks}
 
     return app

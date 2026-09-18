@@ -45,7 +45,6 @@ def node(node_id: str, agent: str, deps: list[str] | None = None, skill: str | N
 
 def test_valid_plan_passes():
     draft = PlanDraft(
-        rationale="two steps",
         nodes=[
             node("n1", "research", skill="search"),
             node("n2", "writer", deps=["n1"], skill="write"),
@@ -55,26 +54,25 @@ def test_valid_plan_passes():
 
 
 def test_unknown_skill_rejected():
-    draft = PlanDraft(rationale="x", nodes=[node("n1", "research", skill="nope")])
+    draft = PlanDraft(nodes=[node("n1", "research", skill="nope")])
     with pytest.raises(PlanValidationError, match="unknown skill"):
         validate_plan(draft, AGENTS, max_nodes=10)
 
 
 def test_duplicate_node_id_rejected():
-    draft = PlanDraft(rationale="x", nodes=[node("n1", "research"), node("n1", "writer")])
+    draft = PlanDraft(nodes=[node("n1", "research"), node("n1", "writer")])
     with pytest.raises(PlanValidationError, match="duplicate node id"):
         validate_plan(draft, AGENTS, max_nodes=10)
 
 
 def test_missing_dependency_rejected():
-    draft = PlanDraft(rationale="x", nodes=[node("n1", "research", deps=["n9"])])
+    draft = PlanDraft(nodes=[node("n1", "research", deps=["n9"])])
     with pytest.raises(PlanValidationError, match="unknown dependency"):
         validate_plan(draft, AGENTS, max_nodes=10)
 
 
 def test_cycle_rejected():
     draft = PlanDraft(
-        rationale="x",
         nodes=[node("n1", "research", deps=["n2"]), node("n2", "writer", deps=["n1"])],
     )
     with pytest.raises(PlanValidationError, match="cycle"):
@@ -82,13 +80,13 @@ def test_cycle_rejected():
 
 
 def test_too_many_nodes_rejected():
-    draft = PlanDraft(rationale="x", nodes=[node(f"n{i}", "research") for i in range(4)])
+    draft = PlanDraft(nodes=[node(f"n{i}", "research") for i in range(4)])
     with pytest.raises(PlanValidationError, match="too many nodes"):
         validate_plan(draft, AGENTS, max_nodes=3)
 
 
 def test_empty_plan_rejected():
-    draft = PlanDraft(rationale="x", nodes=[])
+    draft = PlanDraft(nodes=[])
     with pytest.raises(PlanValidationError, match="no nodes"):
         validate_plan(draft, AGENTS, max_nodes=10)
 
@@ -125,7 +123,7 @@ async def collect_plan(planner: Planner, request: str, **kwargs):
 async def test_planner_streams_thinking(tmp_path):
     llm = FakeLLM(
         structured_results=[
-            PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
+            PlanDraft(nodes=[node("n1", "research", skill="search")])
         ]
     )
     db, remote, registry = await make_registry(tmp_path, AGENTS)
@@ -141,14 +139,13 @@ async def test_planner_streams_thinking(tmp_path):
 
 
 async def test_planner_retries_with_feedback(tmp_path):
-    bad = PlanDraft(rationale="bad", nodes=[node("n1", "research", skill="nope")])
-    good = PlanDraft(rationale="good", nodes=[node("n1", "research", skill="search")])
+    bad = PlanDraft(nodes=[node("n1", "research", skill="nope")])
+    good = PlanDraft(nodes=[node("n1", "research", skill="search")])
     llm = FakeLLM(structured_results=[bad, good])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(llm, registry, max_nodes=10, max_retries=2)
         thinking, draft = await collect_plan(planner, "x")
-        assert draft.rationale == "good"
         assert "unknown skill" in llm.stream_calls[1]["user"]
         assert "正在重试" in thinking
     finally:
@@ -157,7 +154,7 @@ async def test_planner_retries_with_feedback(tmp_path):
 
 
 async def test_planner_fails_after_retries(tmp_path):
-    bad = PlanDraft(rationale="bad", nodes=[node("n1", "research", skill="nope")])
+    bad = PlanDraft(nodes=[node("n1", "research", skill="nope")])
     llm = FakeLLM(structured_results=[bad, bad, bad])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
@@ -184,7 +181,7 @@ async def test_planner_rejects_when_no_agents(tmp_path):
 async def test_planner_passes_constrained_schema_to_tool(tmp_path):
     llm = FakeLLM(
         structured_results=[
-            PlanDraft(rationale="ok", nodes=[node("n1", "research", skill="search")])
+            PlanDraft(nodes=[node("n1", "research", skill="search")])
         ]
     )
     db, remote, registry = await make_registry(tmp_path, AGENTS)

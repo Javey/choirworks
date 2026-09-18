@@ -186,7 +186,6 @@ class OrchestrationState:
 
     plan_id: str = ""
     plan_version: int = 1
-    rationale: str = ""
     nodes: dict[str, NodeState] = field(default_factory=dict)
     members: dict[str, Member] = field(default_factory=dict)
     interventions: dict[str, Intervention] = field(default_factory=dict)

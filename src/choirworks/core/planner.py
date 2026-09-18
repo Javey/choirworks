@@ -21,7 +21,6 @@ class PlanNodeDraft(BaseModel):
 
 
 class PlanDraft(BaseModel):
-    rationale: str
     nodes: list[PlanNodeDraft]
 
 

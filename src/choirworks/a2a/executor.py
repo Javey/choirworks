@@ -249,7 +249,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
-        state.rationale = draft.rationale
         for node_draft in draft.nodes:
             node = NodeState(
                 id=node_draft.id,
@@ -266,7 +265,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             "plan.created", TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
             plan_version=state.plan_version,
-            rationale=state.rationale,
             nodes=[
                 {
                     "id": n.id,
@@ -463,7 +461,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
         state.plan_id = self._new_plan_id()
-        state.rationale = draft.rationale
 
         for node_draft in draft.nodes:
             node = NodeState(
@@ -481,7 +478,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             "plan.created", TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
             plan_version=state.plan_version,
-            rationale=state.rationale,
             nodes=[
                 {
                     "id": n.id,
@@ -1424,7 +1420,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         nodes = state.nodes.values()
         try:
             draft, _thinking = await self._stream_plan(
-                state.rationale or "继续完成任务",
+                "继续完成任务",
                 task_id,
                 context_id,
                 queue,
@@ -1454,7 +1450,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
             plan_version=state.plan_version,
-            rationale=draft.rationale,
             nodes=[
                 {
                     "id": n.id,

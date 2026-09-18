@@ -2,13 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Role, TaskState, taskStateToJSON } from "@a2a-js/sdk";
 
-import type { Task } from "@a2a-js/sdk";
 import type { StreamResponse } from "@a2a-js/sdk";
 
 import { getClient } from "../api/a2a-client";
 import {
   applyStreamEvent,
-  conversationFromTask,
+  conversationFromTasks,
   emptyConversation,
   type ConversationView,
 } from "../lib/conversationView";
@@ -32,11 +31,10 @@ function isSettled(state: string | undefined): boolean {
   return state !== undefined && SETTLED_STATES.has(state);
 }
 
-export function useConversation(conversationId: string | null) {
+export function useConversation(contextId: string | null) {
   const [view, setView] = useState<ConversationView>(emptyConversation);
   const [rawEvents, setRawEvents] = useState<unknown[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const navigateRef = useRef<((id: string) => void) | null>(null);
   const viewRef = useRef(view);
   const seqRef = useRef(0);
   const genRef = useRef(0);
@@ -81,31 +79,29 @@ export function useConversation(conversationId: string | null) {
   );
 
   useEffect(() => {
-    if (viewRef.current.taskId === conversationId) return;
+    if (viewRef.current.contextId === contextId) return;
 
     genRef.current += 1;
     seqRef.current = 0;
     setRawEvents([]);
-    if (!conversationId) {
+    if (!contextId) {
       commit(emptyConversation);
       return;
     }
     const generation = genRef.current;
     void (async () => {
-      const client = await getClient();
       try {
-        const task = (await client.getTask({
-          tenant: "",
-          id: conversationId,
-        })) as unknown as Task;
+        const resp = await fetch(`/v1/conversations/${contextId}`);
+        if (!resp.ok) throw new Error("加载会话失败");
+        const data = await resp.json() as { id: string; tasks: Record<string, unknown>[] };
         if (generation !== genRef.current) return;
-        const snapshot = conversationFromTask(
-          task as unknown as Record<string, unknown>,
-          conversationId,
+        const snapshot = conversationFromTasks(
+          data.tasks as Record<string, unknown>[],
+          data.id,
         );
         commit(snapshot);
-        if (!isSettled(snapshot.state)) {
-          await follow(conversationId);
+        if (snapshot.taskId && !isSettled(snapshot.state)) {
+          await follow(snapshot.taskId);
         }
       } catch (exc) {
         if (generation === genRef.current) {
@@ -113,17 +109,15 @@ export function useConversation(conversationId: string | null) {
         }
       }
     })();
-  }, [conversationId, follow, commit]);
+  }, [contextId, follow, commit]);
 
   const send = useCallback(
     async (input: ConversationSendInput) => {
       const client = await getClient();
       const current = viewRef.current;
       const settled = isSettled(current.state);
-      const taskId = settled
-        ? ""
-        : current.taskId || conversationId || "";
-      const contextId = current.contextId || conversationId || "";
+      const taskId = settled ? "" : current.taskId;
+      const contextId = current.contextId;
       const message = {
         messageId: crypto.randomUUID(),
         role: Role.ROLE_USER,
@@ -152,11 +146,7 @@ export function useConversation(conversationId: string | null) {
         apply(event);
         const payload = (event as StreamResponse).payload;
         if (payload?.$case === "task" && payload.value?.id) {
-          createdTaskId = payload.value.id;
-          if (navigateRef.current) {
-            navigateRef.current(payload.value.id);
-            navigateRef.current = null;
-          }
+          createdTaskId = payload.value.id as string;
         }
       }
       const latest = viewRef.current;
@@ -164,12 +154,8 @@ export function useConversation(conversationId: string | null) {
         await follow(createdTaskId);
       }
     },
-    [conversationId, apply, follow],
+    [apply, follow],
   );
 
-  const setOnTaskCreated = useCallback((fn: ((id: string) => void) | null) => {
-    navigateRef.current = fn;
-  }, []);
-
-  return { view, rawEvents, error, send, setOnTaskCreated };
+  return { view, rawEvents, error, send };
 }

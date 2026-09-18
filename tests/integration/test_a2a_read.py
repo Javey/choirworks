@@ -18,7 +18,6 @@ from tests.support.sdk import sdk_hub, task_metadata, wait_for_task
 
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
-        rationale="single",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}

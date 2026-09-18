@@ -35,7 +35,6 @@ def _send(text: str) -> SendMessageRequest:
 
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
-        rationale="single",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}

@@ -28,7 +28,6 @@ def _settings(port: int, db: str) -> Settings:
 
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
-        rationale="nested",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}

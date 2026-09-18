@@ -25,7 +25,6 @@ from tests.support.sdk import (
 
 def _plan(agent_name: str, text: str = "问题") -> PlanDraft:
     return PlanDraft(
-        rationale="single",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": text}

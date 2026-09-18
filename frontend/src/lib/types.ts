@@ -78,8 +78,8 @@ export interface ConversationSummaryDto {
 }
 
 export interface ConversationDetailDto {
-  conversation: ConversationSummaryDto;
-  tasks: TaskSnapshotDto[];
+  id: string;
+  tasks: Record<string, unknown>[];
 }
 
 export interface CreateTaskOutDto {

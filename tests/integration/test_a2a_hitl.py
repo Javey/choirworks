@@ -19,7 +19,6 @@ pytestmark = pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不�
 
 def _plan(agent_name: str, text: str = "任务") -> PlanDraft:
     return PlanDraft(
-        rationale="single",
         nodes=[
             PlanNodeDraft(
                 id="n1", name=agent_name, agent_name=agent_name, input={"text": text}

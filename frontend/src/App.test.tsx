@@ -36,22 +36,15 @@ function setupFetch() {
     if (url.endsWith("/v1/message:send") && method === "POST") {
       return json({
         id: "task-1",
-        contextId: "task-1",
+        contextId: "ctx-1",
         status: { state: 3 },
         history: [],
         artifacts: [],
       });
     }
 
-    if (url.includes("/v1/tasks/") && method === "GET") {
-      const id = url.split("/v1/tasks/")[1].split("?")[0];
-      return json({
-        id,
-        contextId: id,
-        status: { state: 3 },
-        history: [],
-        artifacts: [],
-      });
+    if (url.includes("/v1/conversations/") && method === "GET") {
+      return json({ id: "ctx-1", tasks: [] });
     }
 
     return json({ detail: `unhandled ${method} ${url}` }, 500);
