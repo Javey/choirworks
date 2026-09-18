@@ -19,6 +19,7 @@ from tests.support.sdk import (
     sdk_hub,
     task_metadata,
     task_nodes,
+    task_state,
     wait_for_task,
 )
 
@@ -71,10 +72,11 @@ async def test_send_creates_task_with_plan(tmp_path, echo_agent):
 async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
     async with sdk_hub(
         tmp_path, "send.db", plans=[_plan("echo")] * 4
-    ) as (_app, http, client):
+    ) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一个任务"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
+        assert app.state.executor._sessions == {}
         second_id = await _send_once(
             client, _message("第二个任务", context_id=first.context_id)
         )
@@ -83,6 +85,13 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         )
         assert second.id != first.id
         assert second.context_id == first.context_id
+        assert app.state.executor._sessions == {}
+        # The second turn reloads the session snapshot, so the plan version
+        # continues from the first turn instead of restarting at 1.
+        assert (
+            task_state(second)["plan_version"]
+            == task_state(first)["plan_version"] + 1
+        )
 
 
 @pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不处理干预")

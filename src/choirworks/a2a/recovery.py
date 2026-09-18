@@ -30,13 +30,15 @@ TERMINAL_STATES = {
 async def recover_tasks(
     request_handler: DefaultRequestHandler, task_store: TaskStore
 ) -> int:
-    """Re-attach to non-terminal tasks after a process restart.
+    """Re-attach to non-terminal work after a process restart.
 
-    Each recovered task receives a synthetic resume message. The executor
-    reloads the plan from the persisted Task metadata and re-subscribes to
-    remote work that was in flight.
+    Tasks are grouped by conversation (context_id); each conversation receives
+    one synthetic resume message on its newest non-terminal task. The executor
+    reloads the session state from the persisted Task metadata and re-subscribes
+    to remote work that was in flight.
     """
     recovered = 0
+    seen_contexts: set[str] = set()
     page_token = ""
     while True:
         page = await task_store.list(
@@ -46,8 +48,12 @@ async def recover_tasks(
         for task in page.tasks:
             if task.status.state in TERMINAL_STATES:
                 continue
+            context_id = task.context_id or task.id
+            if context_id in seen_contexts:
+                continue
             if load_state(task) is None:
                 continue
+            seen_contexts.add(context_id)
             message = new_data_message(
                 {"kind": "resume"},
                 role=Role.ROLE_USER,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -80,13 +81,20 @@ def task_metadata(task) -> dict:
 
 
 def task_nodes(task) -> dict[str, dict]:
-    import json
     meta = task_metadata(task)
     raw = meta.get("choirworks.state")
     if raw is None:
         return {}
     state = json.loads(raw) if isinstance(raw, str) else raw
     return {node["id"]: node for node in state.get("nodes", [])}
+
+
+def task_state(task) -> dict:
+    meta = task_metadata(task)
+    raw = meta.get("choirworks.state")
+    if raw is None:
+        return {}
+    return json.loads(raw) if isinstance(raw, str) else raw
 
 
 def task_artifact_text(task) -> str:

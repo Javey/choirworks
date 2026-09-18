@@ -17,11 +17,11 @@ def _resume_message():
     return message
 
 
-def _persisted_task() -> Task:
+def _persisted_task(task_id: str = "t1", context_id: str = "c1") -> Task:
     state = OrchestrationState(plan_id="p1")
     task = Task(
-        id="t1",
-        context_id="c1",
+        id=task_id,
+        context_id=context_id,
         status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
     )
     ParseDict({"choirworks.state": state.to_minimal_json()}, task.metadata)
@@ -63,3 +63,21 @@ async def test_recover_tasks_sends_structured_resume_message():
     assert "choirworks.resume" in message.metadata.fields
     assert message.parts
     assert all(not part.HasField("text") for part in message.parts)
+
+
+async def test_recover_tasks_resumes_once_per_context():
+    handler = RecordingHandler()
+    recovered = await recover_tasks(
+        handler,
+        FakeTaskStore(
+            [
+                _persisted_task("t2", "c1"),
+                _persisted_task("t1", "c1"),
+                _persisted_task("t3", "c2"),
+            ]
+        ),
+    )
+
+    assert recovered == 2
+    assert [r.message.context_id for r in handler.requests] == ["c1", "c2"]
+    assert [r.message.task_id for r in handler.requests] == ["t2", "t3"]

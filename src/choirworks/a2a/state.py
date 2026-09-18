@@ -293,11 +293,25 @@ class OrchestrationState:
     def take_queued(self, node_id: str) -> list[QueuedMessage]:
         return self.queue.pop(node_id, [])
 
+    # ------------------------------------------------------------------ plan
+
+    def start_new_plan(self, plan_id: str) -> None:
+        """Reset plan-scoped state for a new turn, keeping session members."""
+        self.plan_id = plan_id
+        self.plan_version += 1
+        self.nodes = {}
+        self.interventions = {}
+        self.queue = {}
+        self.derived_count = 0
+        self.next_intervention = 1
+        self.next_message = 1
+
     # ------------------------------------------------------- serialization
 
     def to_minimal_json(self) -> str:
         """Minimal snapshot for crash recovery: only node DAG + members."""
         return json.dumps({
+            "plan_version": self.plan_version,
             "nodes": [
                 {
                     "id": n.id,
@@ -325,6 +339,7 @@ class OrchestrationState:
     def from_minimal_json(cls, raw: str) -> OrchestrationState:
         data = json.loads(raw)
         state = cls()
+        state.plan_version = int(data.get("plan_version", 1))
         for n in data.get("nodes", []):
             node = NodeState(
                 id=str(n["id"]),
