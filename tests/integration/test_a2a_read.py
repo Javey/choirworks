@@ -57,8 +57,9 @@ async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
         metadata = task_metadata(task)
         assert task.id == task_id
         assert task.context_id
-        assert metadata["plan"]["version"] == 1
-        assert metadata["nodes"][0]["status"] == "pending"
+        import json
+        state = json.loads(metadata["choirworks.state"])
+        assert state["nodes"][0]["status"] == "pending"
 
 
 async def test_get_task_unknown_raises(tmp_path):

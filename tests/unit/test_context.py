@@ -11,7 +11,6 @@ from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
-    build_followup_input,
     build_peer_fallback_input,
     build_planner_capabilities,
     build_planner_user_message,
@@ -112,15 +111,6 @@ def test_build_replan_reason_and_context():
     assert build_replan_reason(nodes) == "nodes failed: boom, n3"
     context = build_replan_context(nodes)
     assert context == "- @n1: " + "ok" * 150
-
-
-def test_build_followup_input():
-    assert build_followup_input("a", None, "新要求") == "新要求"
-    fenced = build_followup_input("a", "产出", "新要求")
-    assert "引用 @a 此前产出：" in fenced
-    assert QUOTED_CONTENT_BEGIN in fenced and QUOTED_CONTENT_END in fenced
-    assert "新要求：新要求" in fenced
-
 
 def test_build_assist_input_and_peer_fallback():
     assist = build_assist_input("a", "产出")

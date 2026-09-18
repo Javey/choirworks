@@ -31,6 +31,7 @@ from choirworks.a2a.registry import AgentRegistry
 from choirworks.a2a.room import A2A_ROOM_URI, RoomOptions
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
+    STATE_JSON_KEY,
     NodeState,
     OrchestrationState,
 )
@@ -38,7 +39,6 @@ from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
-    build_followup_input,
     build_peer_fallback_input,
     build_replan_context,
     build_replan_reason,
@@ -103,7 +103,6 @@ def _status_update(
     state: TaskState,
     *,
     kind: str | None = None,
-    orch_state: OrchestrationState | None = None,
     message: Message | None = None,
     **metadata: Any,
 ) -> TaskStatusUpdateEvent:
@@ -111,8 +110,6 @@ def _status_update(
     if kind:
         meta["kind"] = kind
     meta.update(metadata)
-    if orch_state is not None:
-        meta.update(orch_state.to_dict())
     return TaskStatusUpdateEvent(
         task_id=task_id,
         context_id=context_id,
@@ -245,7 +242,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 context_id=context_id,
             )
             await self._emit(
-                event_queue, state, task_id, context_id,
+                event_queue, task_id, context_id,
                 "plan.failed", TaskState.TASK_STATE_FAILED, message=message,
             )
             return
@@ -265,7 +262,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             state.nodes[node.id] = node
 
         await self._emit(
-            event_queue, state, task_id, context_id,
+            event_queue, task_id, context_id,
             "plan.created", TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
             plan_version=state.plan_version,
@@ -284,8 +281,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             f"- @{n.agent_name or n.id} 负责 {n.name}" for n in state.nodes.values()
         )
         await self._emit_room_message(
-            event_queue, state, task_id, context_id, "plan.announced", plan_text
+            event_queue, task_id, context_id, "plan.announced", plan_text
         )
+        await self._persist(event_queue, state, task_id, context_id)
         await updater.complete()
 
     async def cancel(
@@ -306,7 +304,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 # queue as soon as the cancelled producer unwinds.
                 await self._emit(
                     event_queue,
-                    state,
                     task_id,
                     context_id,
                     "task.canceled",
@@ -350,7 +347,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         for node in state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
                 node.status = "resume" if node.a2a_task_id else "pending"
-        await self._persist(event_queue, state, task_id, context_id)
+        await self._persist(event_queue, task_id, context_id)
         self._start_runner(task_id)
 
     # ---------------------------------------------------------------- plan
@@ -439,7 +436,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
         *,
         room: RoomOptions | None = None,
-        follow_up: bool = False,
     ) -> None:
         context_brief = await self._brief_builder.build(
             context_id, exclude_task_id=task_id
@@ -459,19 +455,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 task_id=task_id, context_id=context_id,
             )
             await self._emit(
-                event_queue, state, task_id, context_id,
+                event_queue, task_id, context_id,
                 "plan.failed", TaskState.TASK_STATE_FAILED, message=message,
             )
             return
 
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
-        if follow_up:
-            state.plan_version += 1
-            # Keep terminal nodes for history; start a fresh node set for the
-            # follow-up so deps never point at removed nodes.
-            state.nodes = {}
-            state.queue = {}
         state.plan_id = self._new_plan_id()
         state.rationale = draft.rationale
 
@@ -487,7 +477,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             state.nodes[node.id] = node
 
         await self._emit(
-            event_queue, state, task_id, context_id,
+            event_queue, task_id, context_id,
             "plan.created", TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
             plan_version=state.plan_version,
@@ -506,7 +496,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             f"- @{n.agent_name or n.id} 负责 {n.name}" for n in state.nodes.values()
         )
         await self._emit_room_message(
-            event_queue, state, task_id, context_id, "plan.announced", plan_text
+            event_queue, task_id, context_id, "plan.announced", plan_text
         )
         await self._join_members(
             state,
@@ -525,7 +515,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await self._join_members(
                 state, mention_targets, "human_mention", task_id, context_id, event_queue
             )
-        await self._persist(event_queue, state, task_id, context_id)
+        await self._persist(event_queue, task_id, context_id)
         self._start_runner(task_id)
 
     # --------------------------------------------------------------- runner
@@ -557,7 +547,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                             node.status = "pending"
                             node.error = None
                             await self._emit(
-                                queue, state, task_id, context_id,
+                                queue, task_id, context_id,
                                 "node.retry_scheduled",
                                 node_id=node.id,
                                 attempt=node.attempt,
@@ -593,7 +583,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                             node.status = "failed"
                             node.error = str(exception)
                             await self._emit(
-                                queue, state, task_id, context_id,
+                                queue, task_id, context_id,
                                 "node.failed", node_id=node.id, error=node.error,
                             )
                     if self._retry_backoff > 0 and any(
@@ -620,14 +610,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         if progress:
                             continue
                         await self._emit(
-                            queue, state, task_id, context_id,
+                            queue, task_id, context_id,
                             "task.requires_input",
                             TaskState.TASK_STATE_INPUT_REQUIRED,
                         )
                         return
                     if state.all_completed():
                         await self._emit(
-                            queue, state, task_id, context_id,
+                            queue, task_id, context_id,
                             "task.completed", TaskState.TASK_STATE_COMPLETED,
                         )
                         self._states.pop(task_id, None)
@@ -645,7 +635,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                             task_id=task_id, context_id=context_id,
                         )
                         await self._emit(
-                            queue, state, task_id, context_id,
+                            queue, task_id, context_id,
                             "task.failed", TaskState.TASK_STATE_FAILED,
                             message=failed,
                         )
@@ -670,7 +660,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         task_id=task_id, context_id=context_id,
                     )
                     await self._emit(
-                        queue, state, task_id, context_id,
+                        queue, task_id, context_id,
                         "task.failed", TaskState.TASK_STATE_FAILED,
                         message=failed,
                     )
@@ -689,7 +679,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 )
                 try:
                     await self._emit(
-                        queue, state, task_id, self._context_ids.get(task_id, ""),
+                        queue, task_id, self._context_ids.get(task_id, ""),
                         "task.failed", TaskState.TASK_STATE_FAILED,
                         message=failed,
                     )
@@ -719,14 +709,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             node.attempt += 1
         if mode == "dispatch":
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "node.dispatch_intent",
                 node_id=node.id,
                 attempt=node.attempt,
             )
         elif mode == "resume":
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "node.resumed",
                 node_id=node.id,
                 a2a_task_id=node.a2a_task_id,
@@ -760,7 +750,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if current == "completed":
             node.status = "completed"
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "node.completed",
                 node_id=node.id,
                 agent_name=node.agent_name,
@@ -771,7 +761,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         elif current == "input_required":
             node.status = "input_required"
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "node.input_required",
                 TaskState.TASK_STATE_INPUT_REQUIRED,
                 node_id=node.id,
@@ -784,11 +774,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 "Node %s (%s) failed: %s", node.id, node.agent_name, node.error
             )
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "node.failed",
                 node_id=node.id,
                 error=node.error or "unknown error",
             )
+
+        await self._persist(queue, state, task_id, context_id)
 
     async def _stream_remote(
         self,
@@ -917,7 +909,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     ]
                 node.status = "dispatched" if current == "dispatched" else node.status
                 await self._emit(
-                    queue, state, task_id, context_id,
+                    queue, task_id, context_id,
                     "node.dispatched",
                     node_id=node.id,
                     a2a_task_id=node.a2a_task_id,
@@ -1040,7 +1032,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node.status = "ready"
                 node.question = None
                 await self._emit(
-                    queue, state, task_id, context_id,
+                    queue, task_id, context_id,
                     "intervention.resolved",
                     intervention_id=intervention.id,
                     node_id=node.id,
@@ -1099,7 +1091,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             question_msg.metadata,
         )
         await self._emit(
-            queue, state, task_id, context_id,
+            queue, task_id, context_id,
             "intervention.requested",
             TaskState.TASK_STATE_INPUT_REQUIRED,
             message=question_msg,
@@ -1174,13 +1166,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         await self._emit_room_message(
             queue,
-            state,
             task_id,
             context_id,
             "assist.dispatched",
             f"@{node.agent_name} 请求 @{agent.name} 协助，已加入工作",
         )
-        await self._persist(queue, state, task_id, context_id)
+        await self._persist(queue, task_id, context_id)
         return True
 
     async def _answer_intervention(
@@ -1204,7 +1195,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             node.question = None
             node.status = "ready"
         await self._emit(
-            event_queue, state, task_id, context_id,
+            event_queue, task_id, context_id,
             "intervention.resolved",
             node_id=intervention.node_id,
             intervention_id=intervention.id,
@@ -1244,7 +1235,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 )
                 await self._emit_room_message(
                     event_queue,
-                    state,
                     task_id,
                     context_id,
                     "message.queued",
@@ -1267,14 +1257,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             for blocked in state.blocked_nodes():
                 blocked.status = "invalidated"
             await self._emit(
-                event_queue, state, task_id, context_id,
+                event_queue, task_id, context_id,
                 "node.canceled",
                 node_id=node.id,
                 agent_name=node.agent_name,
             )
             await self._emit_room_message(
                 event_queue,
-                state,
                 task_id,
                 context_id,
                 "task.interrupted",
@@ -1298,7 +1287,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
             await self._emit_room_message(
                 event_queue,
-                state,
                 task_id,
                 context_id,
                 "message.queued",
@@ -1308,9 +1296,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
             return
 
-        # No plan left to attach to: start a follow-up plan in place.
         await self._plan_and_launch(
-            state, text, task_id, context_id, event_queue, follow_up=True
+            state, text, task_id, context_id, event_queue
         )
 
     async def _spawn_followup_node(
@@ -1328,26 +1315,24 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             return
         state.derived_count += 1
         node_id = f"{anchor.id}-f{state.derived_count}"
-        input_text = build_followup_input(anchor.agent_name, anchor.output, text)
         followup = NodeState(
             id=node_id,
             name=f"继续 · {anchor.name}",
             agent_name=anchor.agent_name,
             agent_url=anchor.agent_url,
             deps=list(deps if deps is not None else [anchor.id]),
-            input_text=input_text,
+            input_text=text,
             derived=True,
         )
         state.nodes[node_id] = followup
         await self._emit_room_message(
             event_queue,
-            state,
             task_id,
             context_id,
             "followup.dispatched",
             f"已创建 @{anchor.agent_name} 的接续任务",
         )
-        await self._persist(event_queue, state, task_id, context_id)
+        await self._persist(event_queue, task_id, context_id)
         self._start_runner(task_id)
 
     async def _deliver_queued(
@@ -1364,7 +1349,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         text = "\n\n".join(message.text for message in messages)
         for message in messages:
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "message.delivered",
                 node_id=node.id,
                 message_id=message.id,
@@ -1374,7 +1359,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         await self._emit_room_message(
             queue,
-            state,
             task_id,
             context_id,
             "message.delivered",
@@ -1420,13 +1404,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
             await self._emit_room_message(
                 queue,
-                state,
                 task_id,
                 context_id,
                 "mention.arbitrated",
                 f"@{node.agent_name} 请求 @{name} 协助，已加入工作",
             )
-            await self._persist(queue, state, task_id, context_id)
+            await self._persist(queue, task_id, context_id)
             self._start_runner(task_id)
 
     # ---------------------------------------------------------------- retry
@@ -1466,7 +1449,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 input_text=str(node_draft.input.get("text", "")),
             )
         await self._emit(
-            queue, state, task_id, context_id,
+            queue, task_id, context_id,
             "plan.created",
             TaskState.TASK_STATE_WORKING,
             plan_id=state.plan_id,
@@ -1497,7 +1480,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     async def _emit(
         self,
         queue: EventQueue,
-        state: OrchestrationState,
         task_id: str,
         context_id: str,
         kind: str,
@@ -1512,7 +1494,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 context_id,
                 state_name,
                 kind=kind,
-                orch_state=state,
                 message=message,
                 **metadata,
             )
@@ -1525,12 +1506,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id: str,
         context_id: str,
     ) -> None:
-        await self._emit(queue, state, task_id, context_id, "state.updated")
+        await self._emit(
+            queue, task_id, context_id, "state.updated",
+            **{STATE_JSON_KEY: state.to_minimal_json()},
+        )
 
     async def _emit_room_message(
         self,
         queue: EventQueue,
-        state: OrchestrationState,
         task_id: str,
         context_id: str,
         kind: str,
@@ -1549,7 +1532,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         ParseDict({"cw_thought": True}, message.parts[0].metadata)
         await self._emit(
             queue,
-            state,
             task_id,
             context_id,
             kind,
@@ -1576,7 +1558,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if not state.add_member(name, record.card_url, reason):
                 continue
             await self._emit(
-                queue, state, task_id, context_id,
+                queue, task_id, context_id,
                 "room.participant_joined",
                 agent_name=name,
                 agent_url=record.card_url,

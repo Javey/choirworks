@@ -6,15 +6,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from a2a.types.a2a_pb2 import Task
-from google.protobuf import struct_pb2
-from google.protobuf.json_format import MessageToDict, ParseDict
 
 STATE_JSON_KEY = "choirworks.state"
-META_PLAN = "plan"
-META_NODES = "nodes"
-META_MEMBERS = "members"
-META_INTERVENTIONS = "interventions"
-META_QUEUE = "queue"
 
 TERMINAL_NODE_STATUSES = {"completed", "failed", "canceled", "invalidated"}
 ACTIVE_NODE_STATUSES = {"dispatched", "working"}
@@ -303,102 +296,87 @@ class OrchestrationState:
 
     # ------------------------------------------------------- serialization
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "plan": {
-                "id": self.plan_id,
-                "version": self.plan_version,
-                "rationale": self.rationale,
-            },
-            META_NODES: [node.to_dict() for node in self.nodes.values()],
-            META_MEMBERS: [member.to_dict() for member in self.members.values()],
-            META_INTERVENTIONS: [
-                intervention.to_dict() for intervention in self.interventions.values()
+    def to_minimal_json(self) -> str:
+        """Minimal snapshot for crash recovery: only node DAG + members."""
+        return json.dumps({
+            "nodes": [
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "agent_name": n.agent_name,
+                    "agent_url": n.agent_url,
+                    "status": n.status,
+                    "deps": list(n.deps),
+                    "input_text": n.input_text,
+                    "a2a_task_id": n.a2a_task_id,
+                    "attempt": n.attempt,
+                    "derived": n.derived,
+                    "assist_requested_by": n.assist_requested_by,
+                    "question": n.question,
+                }
+                for n in self.nodes.values()
             ],
-            META_QUEUE: {
-                node_id: [message.to_dict() for message in messages]
-                for node_id, messages in self.queue.items()
-            },
-            "choirworks.runtime": {
-                "plan_id": self.plan_id,
-                "plan_version": self.plan_version,
-                "rationale": self.rationale,
-                "derived_count": self.derived_count,
-                "next_intervention": self.next_intervention,
-                "next_message": self.next_message,
-            },
-        }
+            "members": [
+                {"name": m.name, "url": m.url, "reason": m.reason}
+                for m in self.members.values()
+            ],
+        }, ensure_ascii=False)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OrchestrationState:
-        plan = data.get("plan") or {}
-        runtime = data.get("choirworks.runtime") or {}
-        state = cls(
-            plan_id=str(plan.get("id", runtime.get("plan_id", ""))),
-            plan_version=int(plan.get("version", runtime.get("plan_version", 1))),
-            rationale=str(plan.get("rationale", runtime.get("rationale", ""))),
-            derived_count=int(runtime.get("derived_count", 0)),
-            next_intervention=int(runtime.get("next_intervention", 1)),
-            next_message=int(runtime.get("next_message", 1)),
-        )
-        for node_data in data.get(META_NODES, []) or []:
-            node = NodeState.from_dict(node_data)
+    def from_minimal_json(cls, raw: str) -> OrchestrationState:
+        data = json.loads(raw)
+        state = cls()
+        for n in data.get("nodes", []):
+            node = NodeState(
+                id=str(n["id"]),
+                name=str(n.get("name", "")),
+                agent_name=str(n.get("agent_name", "")),
+                agent_url=str(n.get("agent_url", "")),
+                status=str(n.get("status", "pending")),
+                deps=[str(d) for d in n.get("deps", [])],
+                input_text=str(n.get("input_text", "")),
+                a2a_task_id=n.get("a2a_task_id"),
+                attempt=int(n.get("attempt", 0)),
+                derived=bool(n.get("derived", False)),
+                assist_requested_by=n.get("assist_requested_by"),
+                question=n.get("question"),
+            )
             state.nodes[node.id] = node
-        for member_data in data.get(META_MEMBERS, []) or []:
-            member = Member.from_dict(member_data)
+        for m in data.get("members", []):
+            member = Member(
+                name=str(m["name"]),
+                url=str(m.get("url", "")),
+                reason=str(m.get("reason", "")),
+            )
             state.members[member.name] = member
-        for intervention_data in data.get(META_INTERVENTIONS, []) or []:
-            intervention = Intervention.from_dict(intervention_data)
-            state.interventions[intervention.id] = intervention
-        for node_id, messages in (data.get(META_QUEUE) or {}).items():
-            state.queue[node_id] = [
-                QueuedMessage.from_dict(message) for message in messages
-            ]
+        state.derived_count = sum(1 for n in state.nodes.values() if n.derived)
         return state
 
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False)
 
-    @classmethod
-    def from_json(cls, raw: str) -> OrchestrationState:
-        return cls.from_dict(json.loads(raw))
-
-    def metadata(self) -> struct_pb2.Struct:
-        struct = struct_pb2.Struct()
-        ParseDict(_strip_none(self.to_dict()), struct)
-        # Keep a lossless JSON copy for restart recovery (plan ids etc.).
-        struct.fields[STATE_JSON_KEY].string_value = self.to_json()
-        return struct
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-def _strip_none(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _strip_none(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, list):
-        return [_strip_none(item) for item in value]
-    return value
+def _truncate(text: str | None, limit: int = MAX_METADATA_OUTPUT) -> str | None:
+    if text is None:
+        return None
+    if len(text) <= limit:
+        return text
+    return text[:limit]
 
 
 def load_state(task: Task | None) -> OrchestrationState | None:
-    """Rebuild orchestration state from a persisted A2A Task."""
-    if task is None:
-        return None
-    if not task.metadata.fields:
+    """Rebuild orchestration state from a persisted A2A Task.
+
+    Reads only the ``choirworks.state`` JSON string field — a minimal
+    snapshot of the node DAG + members written at key state transitions.
+    """
+    if task is None or not task.metadata.fields:
         return None
     raw = task.metadata.fields.get(STATE_JSON_KEY)
-    if raw is not None and raw.HasField("string_value") and raw.string_value:
-        try:
-            return OrchestrationState.from_json(raw.string_value)
-        except (ValueError, TypeError):
-            return None
-    data = MessageToDict(task.metadata, preserving_proto_field_name=True)
-    if not data.get(META_NODES):
+    if raw is None or not raw.HasField("string_value") or not raw.string_value:
         return None
     try:
-        return OrchestrationState.from_dict(data)
+        return OrchestrationState.from_minimal_json(raw.string_value)
     except (ValueError, TypeError):
         return None

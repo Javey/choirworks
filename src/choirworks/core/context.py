@@ -97,18 +97,6 @@ def build_replan_context(nodes: Iterable[NodeState]) -> str:
     )
 
 
-def build_followup_input(
-    anchor_agent_name: str, anchor_output: str | None, text: str
-) -> str:
-    if not anchor_output:
-        return text
-    return (
-        f"引用 @{anchor_agent_name} 此前产出：\n"
-        f"{quote_untrusted(anchor_output[:MAX_PEER_CONTEXT])}\n\n"
-        f"新要求：{text}"
-    )
-
-
 def build_assist_input(requester_name: str, output: str | None) -> str:
     return (
         f"@{requester_name} 在协作中请求你的协助。\n"

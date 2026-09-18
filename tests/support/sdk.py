@@ -80,7 +80,13 @@ def task_metadata(task) -> dict:
 
 
 def task_nodes(task) -> dict[str, dict]:
-    return {node["id"]: node for node in task_metadata(task).get("nodes", [])}
+    import json
+    meta = task_metadata(task)
+    raw = meta.get("choirworks.state")
+    if raw is None:
+        return {}
+    state = json.loads(raw) if isinstance(raw, str) else raw
+    return {node["id"]: node for node in state.get("nodes", [])}
 
 
 def task_artifact_text(task) -> str:
