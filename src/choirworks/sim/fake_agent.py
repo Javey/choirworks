@@ -40,6 +40,7 @@ class ScriptedExecutor(AgentExecutor):
     - research: 等待 1.2 秒，返回「调研结果…」
     - write:    返回「文稿…」
     - review:   进入 input-required「请确认是否采用？」；收到答复后「已定稿」
+    - needs_info_text: 普通完成后在正文写 [cw:need_info]；收到答复后交付
     - flaky_once:   首次失败，之后成功（自动重试演示）
     - flaky_always: 始终失败（触发重规划演示）
     """
@@ -104,6 +105,8 @@ class ScriptedExecutor(AgentExecutor):
             return f"已基于「{text}」完成接口实现和单元测试。"
         if self._behavior == "assist":
             return "分析结论：测试通过，功能符合预期。"
+        if self._behavior == "needs_info_text":
+            return f"已获得补充信息并交付：{text}"
         return f"echo:{text}"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -126,6 +129,12 @@ class ScriptedExecutor(AgentExecutor):
                 await updater.requires_input(
                     updater.new_agent_message(parts=[Part(text=self._question_text())])
                 )
+                return
+            if self._behavior == "needs_info_text" and self._calls == 1:
+                await self._emit_artifact(
+                    updater, "[cw:need_info] 需要补充需求信息。"
+                )
+                await updater.complete()
                 return
             if self._behavior in ("fail", "flaky_always") or (
                 self._behavior in ("fail_once", "flaky_once") and self._calls == 1
@@ -155,6 +164,8 @@ class ScriptedExecutor(AgentExecutor):
             updater = TaskUpdater(event_queue, task.id, task.context_id)
             if self._behavior == "review":
                 answer = f"已按你的意见定稿：{instruction}"
+            elif self._behavior == "needs_info_text":
+                answer = f"已获得补充信息并交付：{instruction}"
             elif self._behavior == "collaborate":
                 answer = "协作完成：已结合 qa-engineer 的协助，方案确认可行。"
             elif self._behavior == "inquire":

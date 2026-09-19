@@ -13,7 +13,7 @@ from a2a.types import (
 from a2a.utils.errors import TaskNotCancelableError, TaskNotFoundError
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from tests.support.sdk import context_nodes, sdk_hub, task_metadata, wait_for_task
+from tests.support.sdk import context_nodes, sdk_hub, task_nodes, wait_for_task
 
 
 def _plan(agent_name: str) -> PlanDraft:
@@ -56,7 +56,8 @@ async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
         assert task.id == task_id
         assert task.context_id
         nodes = await context_nodes(app, task.context_id)
-        assert nodes["n1"]["status"] == "pending"
+        assert nodes["n1"]["status"] == "completed"
+        assert nodes["n1"]["output"]
 
 
 async def test_conversation_endpoint_returns_context_and_tasks(tmp_path, echo_agent):
@@ -94,7 +95,6 @@ async def test_cancel_unknown_task_raises(tmp_path):
             await client.cancel_task(CancelTaskRequest(id="missing"))
 
 
-@pytest.mark.skip(reason="execute 暂为 plan-only，任务规划后立即完成，无法取消运行中任务")
 async def test_cancel_running_task_marks_canceled(tmp_path):
     from choirworks.sim.fake_agent import start_fake_agent
 
@@ -107,7 +107,7 @@ async def test_cancel_running_task_marks_canceled(tmp_path):
             task_id = await _send_once(client, _send("hi"))
             for _ in range(200):
                 task = await client.get_task(GetTaskRequest(id=task_id))
-                if task_metadata(task)["nodes"][0]["status"] in {
+                if task_nodes(task)["n1"]["status"] in {
                     "dispatched",
                     "working",
                 }:

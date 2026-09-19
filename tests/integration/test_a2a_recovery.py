@@ -1,6 +1,5 @@
 import asyncio
 
-import pytest
 from a2a.server.context import ServerCallContext
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 
@@ -10,8 +9,6 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import task_nodes
-
-pytestmark = pytest.mark.skip(reason="execute 暂为 plan-only，不恢复派发")
 
 
 def _settings(db_path) -> Settings:

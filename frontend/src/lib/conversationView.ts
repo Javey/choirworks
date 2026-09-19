@@ -294,6 +294,55 @@ export function applyStreamEvent(
       };
     }
 
+    if (kind === "plan.revised") {
+      const reason = typeof meta.reason === "string" ? meta.reason : "";
+      const addedNodes = (meta.added_nodes as ProtoStruct[] | undefined) ?? [];
+      const invalidated = Array.isArray(meta.invalidated)
+        ? meta.invalidated.map(String)
+        : [];
+      const added: TaskNodeInfo[] = addedNodes.map((n) => ({
+        id: String(n.id ?? ""),
+        name: String(n.name ?? ""),
+        agent_name: String(n.agent_name ?? ""),
+        status: "pending",
+      }));
+      const existing = new Set(view.nodes.map((n) => n.id));
+      const nodes = [
+        ...view.nodes.map((n) =>
+          invalidated.includes(n.id) ? { ...n, status: "invalidated" } : n,
+        ),
+        ...added.filter((n) => !existing.has(n.id)),
+      ];
+      const parts: string[] = [];
+      if (invalidated.length > 0) parts.push(`作废 ${invalidated.length} 个节点`);
+      if (added.length > 0) parts.push(`新增 ${added.length} 个节点`);
+      const notification: SystemNotification = {
+        id: `sys-revised-${seq}`,
+        kind,
+        text: `计划已修订：${parts.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
+        created_at: new Date().toISOString(),
+      };
+      return {
+        ...view,
+        state,
+        nodes,
+        notifications: [...view.notifications, notification],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    if (kind === "node.invalidated" || kind === "node.canceled") {
+      const nodeId = String(meta.node_id ?? "");
+      const status = kind === "node.invalidated" ? "invalidated" : "canceled";
+      return {
+        ...view,
+        state,
+        nodes: view.nodes.map((n) => (n.id === nodeId ? { ...n, status } : n)),
+        workingBubbles: view.workingBubbles.filter((b) => b.nodeId !== nodeId),
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
     if (kind === "node.dispatched" || kind === "node.dispatch_intent") {
       const nodeId = String(meta.node_id ?? "");
       return {
@@ -363,14 +412,56 @@ export function applyStreamEvent(
       }
     }
 
-    if (kind === "intervention.question" || kind === "node.input_required") {
+    if (
+      kind === "intervention.requested" ||
+      kind === "intervention.question" ||
+      kind === "node.input_required"
+    ) {
       const nodeId = String(meta.node_id ?? "");
+      const question = typeof meta.question === "string" ? meta.question : "";
+      const interventionKind =
+        typeof meta.intervention_kind === "string" ? meta.intervention_kind : "";
+      const isInputRequired = interventionKind !== "confirm_cancel";
+      const notification: SystemNotification = {
+        id: `sys-intervention-${String(meta.intervention_id ?? seq)}`,
+        kind,
+        text:
+          interventionKind === "confirm_cancel"
+            ? `待确认：${question}`
+            : question || "等待人工答复",
+        node_id: nodeId || undefined,
+        created_at: new Date().toISOString(),
+      };
       return {
         ...view,
-        state: taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
-        nodes: view.nodes.map((n) =>
-          n.id === nodeId ? { ...n, status: "input_required" } : n,
-        ),
+        state: isInputRequired
+          ? taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED)
+          : state,
+        nodes: isInputRequired
+          ? view.nodes.map((n) =>
+              n.id === nodeId ? { ...n, status: "input_required" } : n,
+            )
+          : view.nodes,
+        notifications: [...view.notifications, notification],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    if (kind === "intervention.resolved" || kind === "intervention.expired") {
+      const notification: SystemNotification = {
+        id: `sys-intervention-${String(meta.intervention_id ?? seq)}-${kind}`,
+        kind,
+        text:
+          kind === "intervention.resolved"
+            ? "人工答复已回填，任务继续"
+            : "该确认已无需处理",
+        node_id: typeof meta.node_id === "string" ? meta.node_id : undefined,
+        created_at: new Date().toISOString(),
+      };
+      return {
+        ...view,
+        state,
+        notifications: [...view.notifications, notification],
         lastSeq: Math.max(view.lastSeq, seq),
       };
     }

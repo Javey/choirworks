@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import BaseModel
 
-from choirworks.a2a.executor import AssistanceDecision
+from choirworks.a2a.executor import OutcomeDecision
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.models.domain import AgentRecord
@@ -112,12 +112,12 @@ async def test_assistance_decision_routes_to_pm_for_developer():
         client,
         system="assistance",
         user=prompt_text,
-        schema=AssistanceDecision,
-        tool_name="AssistanceDecision",
+        schema=OutcomeDecision,
+        tool_name="OutcomeDecision",
     )
     assert decision is not None
-    assert decision.action == "peer"
-    assert decision.agent_name == "product-manager"
+    assert decision.intent == "need_info"
+    assert decision.target_agent == "product-manager"
     assert "请补充信息" in decision.instruction
     assert "缺少关键信息" in decision.instruction
 
@@ -134,12 +134,12 @@ async def test_assistance_decision_routes_to_qa_for_pm():
         client,
         system="assistance",
         user=prompt_text,
-        schema=AssistanceDecision,
-        tool_name="AssistanceDecision",
+        schema=OutcomeDecision,
+        tool_name="OutcomeDecision",
     )
     assert decision is not None
-    assert decision.action == "peer"
-    assert decision.agent_name == "qa-engineer"
+    assert decision.intent == "need_info"
+    assert decision.target_agent == "qa-engineer"
     assert "需要 qa-engineer" in decision.instruction
 
 
@@ -153,12 +153,12 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         client,
         system="assistance",
         user=prompt_text,
-        schema=AssistanceDecision,
-        tool_name="AssistanceDecision",
+        schema=OutcomeDecision,
+        tool_name="OutcomeDecision",
     )
     assert decision is not None
-    assert decision.action == "human"
-    assert decision.agent_name is None
+    assert decision.intent == "need_info"
+    assert decision.target_agent is None
 
 
 async def test_coordination_plan_runs_pm_and_developer_in_parallel():

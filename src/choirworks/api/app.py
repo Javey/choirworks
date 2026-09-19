@@ -61,7 +61,7 @@ async def create_app(
         engine = create_async_engine(
             f"sqlite+aiosqlite:///{db_path}",
             echo=False,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False, "timeout": 30},
         )
         task_store = DatabaseTaskStore(engine=engine, create_table=True)
         await task_store.initialize()

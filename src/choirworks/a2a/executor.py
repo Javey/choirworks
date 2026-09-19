@@ -22,11 +22,13 @@ from a2a.types.a2a_pb2 import (
     TaskStatus,
     TaskStatusUpdateEvent,
 )
-from google.protobuf import struct_pb2
+from google.protobuf import struct_pb2, timestamp_pb2
 from google.protobuf.json_format import ParseDict
 from pydantic import BaseModel, create_model
 
 from choirworks.a2a.client import RemoteAgentClient
+from choirworks.a2a.markers import parse_marker
+from choirworks.a2a.patch import PatchResult, PlanPatch, apply_patch
 from choirworks.a2a.registry import AgentRegistry
 from choirworks.a2a.room import RoomOptions, room_options
 from choirworks.a2a.state import (
@@ -39,9 +41,11 @@ from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
+    build_continuation_text,
+    build_dispatch_text,
+    build_outcome_user,
     build_peer_fallback_input,
-    build_replan_context,
-    build_replan_reason,
+    build_repair_user,
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
@@ -50,34 +54,52 @@ from choirworks.store.contexts import ContextStore
 logger = logging.getLogger(__name__)
 
 
-class AssistanceDecision(BaseModel):
-    action: Literal["peer", "human"]
-    agent_name: str | None = None
+class OutcomeDecision(BaseModel):
+    """What an agent's final reply means for the plan."""
+
+    intent: Literal["deliver", "need_info", "revise"]
+    question: str = ""
+    target_agent: str | None = None
     instruction: str = ""
+    patch: PlanPatch | None = None
     reasoning: str = ""
 
 
-def assistance_decision_schema(
+def outcome_decision_schema(
     candidate_names: Sequence[str],
-) -> type[AssistanceDecision]:
+) -> type[OutcomeDecision]:
     fields: dict[str, Any] = {}
     if candidate_names:
-        fields["agent_name"] = (Literal[*candidate_names] | None, None)
-    else:
-        fields["action"] = (Literal["human"], ...)
-    return create_model("AssistanceDecision", __base__=AssistanceDecision, **fields)
+        fields["target_agent"] = (Literal[*candidate_names] | None, None)
+    return create_model("OutcomeDecision", __base__=OutcomeDecision, **fields)
 
+
+OUTCOME_SYSTEM = """You are the orchestrator of a multi-agent group.
+Read an agent's final reply and decide what it means for the plan:
+- intent="deliver": the reply is the finished work (default when unsure)
+- intent="need_info": the reply asks for information, help from a member, or a human decision
+- intent="revise": the reply suggests the plan should change (add or remove work)
+
+When intent="need_info", put what is needed into question and set target_agent to the
+listed candidate who can help; leave target_agent empty when a human must answer.
+When intent="deliver" or intent="revise", leave question, target_agent and instruction empty.
+Return only JSON matching the schema."""
 
 ASSISTANCE_SYSTEM = """You are the orchestrator of a multi-agent group.
 An agent is blocked and needs help. Decide how to handle it:
-- action="peer": delegate to another registered agent that can help
-- action="human": escalate to a human
+- set target_agent to another registered agent that can help
+- leave target_agent empty to escalate to a human
 
-Return only JSON matching the schema.
-When action="peer", agent_name must be one of the listed candidates
-and instruction should describe the task.
-When action="human", leave agent_name empty.
+Set intent="need_info". When target_agent is set, instruction should describe the
+task. Return only JSON matching the schema.
 - reasoning: one short sentence explaining your decision."""
+
+REPAIR_SYSTEM = """You are the orchestrator of a multi-agent group.
+Some tasks in the plan failed after retries. Produce an incremental repair patch:
+- intent="revise" with a patch that adds replacement tasks and/or invalidates tasks
+- added tasks may only depend on existing task ids
+- do not repeat work that is already completed; keep the plan minimal
+Return only JSON matching the schema."""
 
 
 def _struct(data: dict[str, Any]) -> struct_pb2.Struct:
@@ -110,10 +132,12 @@ def _status_update(
     if kind:
         meta["kind"] = kind
     meta.update(metadata)
+    timestamp = timestamp_pb2.Timestamp()
+    timestamp.GetCurrentTime()
     return TaskStatusUpdateEvent(
         task_id=task_id,
         context_id=context_id,
-        status=TaskStatus(state=state),
+        status=TaskStatus(state=state, timestamp=timestamp),
         metadata=_struct(meta) if meta else None,
     )
 
@@ -138,6 +162,13 @@ class SessionRuntime:
 
 def _join_text(parts: Any) -> str:
     return "\n".join(p.text for p in parts if p.HasField("text"))
+
+
+_AFFIRMATIVE_ANSWERS = {"确认", "确定", "打断", "是", "yes", "y", "ok"}
+
+
+def _is_affirmative(text: str) -> bool:
+    return text.strip().lower() in _AFFIRMATIVE_ANSWERS
 
 
 def _is_resume_message(message: Message | None) -> bool:
@@ -234,6 +265,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     ) -> SessionRuntime:
         context_id = context.context_id or ""
         task_id = context.task_id or ""
+        loaded = False
         async with self._session_gate:
             runtime = self._sessions.get(context_id)
             if runtime is None:
@@ -246,8 +278,17 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     queue=event_queue,
                 )
                 self._sessions[context_id] = runtime
+                loaded = True
         runtime.task_id = task_id
         runtime.queue = event_queue
+        if loaded:
+            for intervention in runtime.state.normalize_cancel_requests():
+                await self._emit_event(
+                    runtime,
+                    "intervention.expired",
+                    intervention_id=intervention.id,
+                    node_id=intervention.target_node_id or "",
+                )
         return runtime
 
     def _evict_session(self, context_id: str) -> None:
@@ -270,7 +311,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        """Plan-only executor: generate a plan, never dispatch it."""
+        """Route one inbound message; background runners do the actual work."""
         text = (context.get_user_input() or "").strip()
         task_id = context.task_id or ""
         context_id = context.context_id or ""
@@ -291,88 +332,55 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(initial_task)
 
         updater = TaskUpdater(event_queue, task_id, context_id)
-        if not text:
-            await updater.complete()
-            if runtime.runner is None or runtime.runner.done():
-                self._evict_session(context_id)
-            return
+        room = room_options(context.message)
+        mentions = list(room.get("mentions") or [])
+        for name in re.findall(r"@([A-Za-z0-9_-]+)", text):
+            if name not in mentions:
+                mentions.append(name)
+        if mentions:
+            room["mentions"] = mentions
 
         async with runtime.lock:
-            if runtime.runner is not None and not runtime.runner.done():
-                await self._route_message(
-                    runtime, text, room_options(context.message)
-                )
+            state = runtime.state
+            if state.pending_interventions():
+                if text:
+                    await self._answer_intervention(runtime, text)
                 return
 
-            state = runtime.state
-            state.start_new_plan(self._new_plan_id())
-            await updater.start_work()
+            if runtime.runner is not None and not runtime.runner.done():
+                await self._route_message(runtime, text, room)
+                return
 
-            context_brief = await self._brief_builder.build(
-                context_id, exclude_task_id=task_id
-            )
-            try:
-                draft = await self._stream_plan(
-                    runtime, text, context=context_brief or None
-                )
-            except PlanningFailed as exc:
-                logger.warning("Planning failed for task %s: %s", task_id, exc)
-                await self._persist(runtime)
-                await self._emit_event(
-                    runtime,
-                    "plan.failed", TaskState.TASK_STATE_FAILED, error=str(exc),
-                )
+            if state.has_pending_work():
+                await self._route_message(runtime, text, room)
+                self._start_runner(runtime)
+                return
+
+            if not text:
+                await updater.complete()
                 self._evict_session(context_id)
                 return
 
-            agents = await self._registry.list()
-            agent_urls = {agent.name: agent.card_url for agent in agents}
-            for node_draft in draft.nodes:
-                node = NodeState(
-                    id=node_draft.id,
-                    name=node_draft.name,
-                    agent_name=node_draft.agent_name,
-                    agent_url=agent_urls.get(node_draft.agent_name, ""),
-                    deps=list(node_draft.deps),
-                    input_text=str(node_draft.input.get("text", "")),
-                )
-                state.nodes[node.id] = node
-
-            await self._emit_event(
-                runtime,
-                "plan.created",
-                TaskState.TASK_STATE_WORKING,
-                plan_id=state.plan_id,
-                plan_version=state.plan_version,
-                nodes=[
-                    {
-                        "id": n.id,
-                        "name": n.name,
-                        "agent_name": n.agent_name,
-                        "deps": n.deps,
-                    }
-                    for n in state.nodes.values()
-                ],
-            )
-            await self._persist(runtime)
-        await updater.complete()
-        self._evict_session(context_id)
+            await updater.start_work()
+            await self._plan_and_launch(runtime, text, room=room)
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         task_id = context.task_id or ""
         context_id = context.context_id or ""
+        # Emit the terminal event first: the SDK cancels the producer before
+        # calling us and closes the agent queue as soon as it unwinds.
+        await event_queue.enqueue_event(
+            _status_update(
+                task_id,
+                context_id,
+                TaskState.TASK_STATE_CANCELED,
+                kind="task.canceled",
+            )
+        )
         runtime = self._sessions.get(context_id)
         if runtime is None:
-            await event_queue.enqueue_event(
-                _status_update(
-                    task_id,
-                    context_id,
-                    TaskState.TASK_STATE_CANCELED,
-                    kind="task.canceled",
-                )
-            )
             return
         async with runtime.lock:
             runner = runtime.runner
@@ -384,15 +392,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 if node.status in ACTIVE_NODE_STATUSES | {"ready"}:
                     node.status = "canceled"
             await self._persist(runtime)
-            # Emit the terminal event first: the SDK closes the agent event
-            # queue as soon as the cancelled producer unwinds.
-            await self._emit(
-                event_queue,
-                task_id,
-                context_id,
-                "task.canceled",
-                TaskState.TASK_STATE_CANCELED,
-            )
             for node in list(state.nodes.values()):
                 if node.status == "canceled" and node.a2a_task_id:
                     await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
@@ -432,6 +431,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     async def _resume(self, runtime: SessionRuntime) -> None:
         """Re-attach to remote work after a process restart."""
+        for intervention in runtime.state.normalize_cancel_requests():
+            await self._emit_event(
+                runtime,
+                "intervention.expired",
+                intervention_id=intervention.id,
+                node_id=intervention.target_node_id or "",
+            )
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
                 node.status = "resume" if node.a2a_task_id else "pending"
@@ -526,10 +532,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
         except PlanningFailed as exc:
             logger.warning("Planning failed for task %s: %s", runtime.task_id, exc)
+            await self._persist(runtime)
             await self._emit_event(
                 runtime,
                 "plan.failed", TaskState.TASK_STATE_FAILED, error=str(exc),
             )
+            self._evict_session(runtime.context_id)
             return
 
         agents = await self._registry.list()
@@ -605,6 +613,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
                     ready = state.ready_nodes()
                     slots = max(0, self._max_parallel - self._pending_count(runtime))
+                    dispatched = 0
                     for node in ready[:slots]:
                         mode = (
                             "resume"
@@ -618,6 +627,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                             name=f"choirworks-node:{context_id}:{node.id}",
                         )
                         runtime.node_tasks[node_task] = node
+                        dispatched += 1
+                    if dispatched:
+                        await self._persist(runtime)
 
                 pending = dict(runtime.node_tasks)
                 if pending:
@@ -669,7 +681,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     if state.has_failures():
                         recovered = False
                         if self._replan_on_failure:
-                            recovered = await self._replan(runtime)
+                            recovered = await self._repair_plan(runtime)
                         if recovered:
                             continue
                         await self._emit_event(
@@ -733,6 +745,25 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     def _pending_count(self, runtime: SessionRuntime) -> int:
         return len(runtime.node_tasks)
 
+    async def _build_node_text(
+        self, runtime: SessionRuntime, node: NodeState
+    ) -> str:
+        """Assemble the dispatch text, including any resolved Q&A round."""
+        agents = await self._registry.list()
+        by_name = {agent.name: agent for agent in agents}
+        if node.answer_text is not None:
+            text = build_continuation_text(
+                node,
+                runtime.state,
+                by_name,
+                question=node.question or "",
+                answer=node.answer_text,
+            )
+            node.answer_text = None
+            node.question = None
+            return text
+        return build_dispatch_text(node, runtime.state, by_name)
+
     async def _execute_node(
         self,
         runtime: SessionRuntime,
@@ -763,8 +794,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 if mode == "resume":
                     current = await self._resume_remote(runtime, node)
                 else:
+                    text = await self._build_node_text(runtime, node)
                     current = await self._stream_remote(
-                        runtime, node, node.input_text, continuation=continuation
+                        runtime, node, text, continuation=continuation
                     )
         except TimeoutError:
             node.error = f"node timed out after {self._node_timeout}s"
@@ -776,16 +808,37 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             node.status = "failed"
 
         if current == "completed":
-            node.status = "completed"
-            await self._emit_event(
-                runtime,
-                "node.completed",
-                node_id=node.id,
-                agent_name=node.agent_name,
-                output_summary=(node.output or "")[:200],
-            )
-            await self._arbitrate_mentions(runtime, node)
-            await self._deliver_queued(runtime, node)
+            decision = await self._interpret_outcome(runtime, node)
+            if decision.intent == "need_info":
+                node.status = "input_required"
+                node.question = decision.question or node.output
+                # The remote reply was a normal completion, so the remote
+                # task is terminal; answering must re-dispatch a fresh task.
+                node.a2a_task_id = None
+                await self._emit_event(
+                    runtime,
+                    "node.input_required",
+                    TaskState.TASK_STATE_INPUT_REQUIRED,
+                    node_id=node.id,
+                    agent_name=node.agent_name,
+                    question=node.question or "",
+                )
+            else:
+                if decision.intent == "revise" and decision.patch is not None:
+                    async with runtime.lock:
+                        await self._apply_patch_locked(runtime, decision.patch)
+                node.status = "completed"
+                await self._emit_event(
+                    runtime,
+                    "node.completed",
+                    node_id=node.id,
+                    agent_name=node.agent_name,
+                    output_summary=(node.output or "")[:200],
+                )
+                await self._arbitrate_mentions(runtime, node)
+                await self._deliver_queued(runtime, node)
+        elif current == "canceled":
+            node.status = "canceled"
         elif current == "input_required":
             node.status = "input_required"
             await self._emit_event(
@@ -808,6 +861,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 error=node.error or "unknown error",
             )
 
+        for intervention in runtime.state.expire_cancel_requests(node.id):
+            await self._emit_event(
+                runtime,
+                "intervention.expired",
+                intervention_id=intervention.id,
+                node_id=node.id,
+            )
         await self._persist(runtime)
 
     async def _stream_remote(
@@ -1023,9 +1083,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 intervention.status = "resolved"
                 intervention.answer = helper.output
                 intervention.responder = helper.id
-                node.input_text = helper.output or ""
+                node.answer_text = helper.output
                 node.status = "ready"
-                node.question = None
                 await self._emit_event(
                     runtime,
                     "intervention.resolved",
@@ -1046,7 +1105,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 continue
 
             decision = await self._decide_assistance(node)
-            if decision is not None and decision.action == "peer" and decision.agent_name:
+            if decision is not None and decision.target_agent:
                 if await self._spawn_assist(runtime, node, decision):
                     progress = True
                 else:
@@ -1054,6 +1113,37 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             else:
                 await self._request_human(runtime, node)
         return progress
+
+    async def _interpret_outcome(
+        self, runtime: SessionRuntime, node: NodeState
+    ) -> OutcomeDecision:
+        """Decide what a completed node's final reply means for the plan."""
+        marker = parse_marker(node.output)
+        if marker is not None:
+            return OutcomeDecision(intent=marker.intent, question=marker.text)
+        if not node.output:
+            return OutcomeDecision(intent="deliver")
+        agents = await self._registry.list()
+        candidates = [agent for agent in agents if agent.name != node.agent_name]
+        user = build_outcome_user(
+            node.agent_name,
+            node.input_text,
+            node.output,
+            candidates,
+        )
+        schema = outcome_decision_schema([agent.name for agent in candidates])
+        try:
+            async for item in self._llm.stream_structured(
+                system=OUTCOME_SYSTEM,
+                user=user,
+                schema=schema,
+                tool_name="OutcomeDecision",
+            ):
+                if isinstance(item, OutcomeDecision):
+                    return item
+        except Exception:  # noqa: BLE001 - default to delivering the output
+            logger.exception("outcome interpretation failed for %s", node.id)
+        return OutcomeDecision(intent="deliver")
 
     async def _request_human(self, runtime: SessionRuntime, node: NodeState) -> None:
         intervention = runtime.state.add_intervention(
@@ -1071,45 +1161,45 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     async def _decide_assistance(
         self, node: NodeState
-    ) -> AssistanceDecision | None:
+    ) -> OutcomeDecision | None:
         if node.question is None:
             return None
         agents = await self._registry.list()
         candidates = [agent for agent in agents if agent.name != node.agent_name]
         if not candidates:
-            return AssistanceDecision(action="human")
+            return OutcomeDecision(intent="need_info")
         user = build_assistance_decision_user(
             node.agent_name,
             node.question or node.input_text,
             candidates,
         )
-        schema = assistance_decision_schema([agent.name for agent in candidates])
+        schema = outcome_decision_schema([agent.name for agent in candidates])
         try:
             async for item in self._llm.stream_structured(
                 system=ASSISTANCE_SYSTEM,
                 user=user,
                 schema=schema,
-                tool_name="AssistanceDecision",
+                tool_name="OutcomeDecision",
             ):
-                if isinstance(item, AssistanceDecision):
+                if isinstance(item, OutcomeDecision):
                     return item
         except Exception:  # noqa: BLE001 - fall back to human
             logger.exception("assistance decision failed for %s", node.id)
-            return AssistanceDecision(action="human")
-        return AssistanceDecision(action="human")
+            return OutcomeDecision(intent="need_info")
+        return OutcomeDecision(intent="need_info")
 
     async def _spawn_assist(
         self,
         runtime: SessionRuntime,
         node: NodeState,
-        decision: AssistanceDecision,
+        decision: OutcomeDecision,
     ) -> bool:
         state = runtime.state
         if state.derived_count >= self._max_derived_nodes:
             return False
         agents = await self._registry.list()
         agent = next(
-            (item for item in agents if item.name == decision.agent_name), None
+            (item for item in agents if item.name == decision.target_agent), None
         )
         if agent is None:
             return False
@@ -1152,10 +1242,23 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         intervention.status = "resolved"
         intervention.answer = text
         intervention.responder = "human"
+        if intervention.kind == "confirm_cancel":
+            target = state.nodes.get(intervention.target_node_id or "")
+            if target is not None and _is_affirmative(text):
+                await self._cancel_node(runtime, target)
+            await self._emit_event(
+                runtime,
+                "intervention.resolved",
+                node_id=intervention.node_id,
+                intervention_id=intervention.id,
+                responder="human",
+            )
+            await self._persist(runtime)
+            self._start_runner(runtime)
+            return
         node = state.nodes.get(intervention.node_id)
         if node is not None:
-            node.input_text = text
-            node.question = None
+            node.answer_text = text
             node.status = "ready"
         await self._emit_event(
             runtime,
@@ -1202,6 +1305,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     node_id=quoted_node.id,
                     agent_name=quoted_node.agent_name,
                 )
+                await self._persist(runtime)
                 return
             if quoted_node is not None and quoted_node.status == "completed":
                 await self._spawn_followup_node(runtime, text, quoted_node)
@@ -1241,6 +1345,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_id=target.id,
                 agent_name=target.agent_name,
             )
+            await self._persist(runtime)
             return
 
         await self._plan_and_launch(runtime, text)
@@ -1341,52 +1446,116 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     # ---------------------------------------------------------------- retry
 
-    async def _replan(self, runtime: SessionRuntime) -> bool:
+    async def _repair_plan(self, runtime: SessionRuntime) -> bool:
+        """Repair a failed plan with an LLM-produced incremental patch.
+
+        Caller holds ``runtime.lock``; the patch is applied in place so
+        completed work and their outputs survive the repair.
+        """
         state = runtime.state
-        nodes = state.nodes.values()
-        try:
-            draft = await self._stream_plan(
-                runtime,
-                "继续完成任务",
-                reason=build_replan_reason(nodes),
-                context=build_replan_context(nodes) or None,
-            )
-        except PlanningFailed:
+        failed_ids = [node.id for node in state.failed_nodes()]
+        agents = await self._registry.list()
+        if not agents:
             return False
+        user = build_repair_user(state.nodes.values(), agents)
+        decision: OutcomeDecision | None = None
+        try:
+            async for item in self._llm.stream_structured(
+                system=REPAIR_SYSTEM,
+                user=user,
+                schema=outcome_decision_schema([agent.name for agent in agents]),
+                tool_name="OutcomeDecision",
+            ):
+                if isinstance(item, OutcomeDecision):
+                    decision = item
+                    break
+        except Exception:  # noqa: BLE001 - repair is best effort
+            logger.exception("plan repair failed for %s", runtime.context_id)
+            return False
+        if decision is None or decision.patch is None:
+            return False
+        patch = decision.patch
+        patch.invalidate = list(dict.fromkeys([*patch.invalidate, *failed_ids]))
+        result = await self._apply_patch_locked(runtime, patch)
+        return bool(result.added or result.invalidated)
+
+    async def _apply_patch_locked(
+        self, runtime: SessionRuntime, patch: PlanPatch
+    ) -> PatchResult:
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
-        state.start_new_plan(self._new_plan_id())
-        for node_draft in draft.nodes:
-            state.nodes[node_draft.id] = NodeState(
-                id=node_draft.id,
-                name=node_draft.name,
-                agent_name=node_draft.agent_name,
-                agent_url=agent_urls.get(node_draft.agent_name, ""),
-                deps=list(node_draft.deps),
-                input_text=str(node_draft.input.get("text", "")),
+        state = runtime.state
+        result = apply_patch(state, patch, agent_urls)
+        for rejected in result.rejected:
+            logger.warning("Patch rejected for %s: %s", runtime.context_id, rejected)
+        for node_id in result.skipped_in_flight:
+            node = state.nodes.get(node_id)
+            if node is None:
+                continue
+            question = (
+                f"计划修订建议作废进行中的任务 @{node.agent_name}"
+                f"（{patch.reason or '无说明'}）。是否打断？"
+                "回复「确认」打断，回复其他内容则保留。"
+            )
+            intervention = state.add_cancel_request(node_id, question)
+            if intervention is None:
+                continue
+            await self._emit_event(
+                runtime,
+                "intervention.requested",
+                node_id=node_id,
+                agent_name=node.agent_name,
+                intervention_id=intervention.id,
+                intervention_kind="confirm_cancel",
+                question=intervention.question,
+            )
+        added_agents = [
+            draft.agent_name for draft in patch.add if draft.agent_name in agent_urls
+        ]
+        await self._join_members(runtime, added_agents, "plan_revision")
+        added_nodes = [
+            {
+                "id": node_id,
+                "name": state.nodes[node_id].name,
+                "agent_name": state.nodes[node_id].agent_name,
+                "deps": state.nodes[node_id].deps,
+            }
+            for node_id in result.added
+        ]
+        for node_id in result.invalidated:
+            await self._emit_event(
+                runtime,
+                "node.invalidated",
+                node_id=node_id,
+                reason=patch.reason,
             )
         await self._emit_event(
             runtime,
-            "plan.created",
-            TaskState.TASK_STATE_WORKING,
+            "plan.revised",
             plan_id=state.plan_id,
             plan_version=state.plan_version,
-            nodes=[
-                {
-                    "id": n.id,
-                    "name": n.name,
-                    "agent_name": n.agent_name,
-                    "deps": n.deps,
-                }
-                for n in state.nodes.values()
-            ],
+            reason=patch.reason,
+            added=result.added,
+            added_nodes=added_nodes,
+            invalidated=result.invalidated,
+            skipped_in_flight=result.skipped_in_flight,
+            rejected=result.rejected,
         )
-        await self._join_members(
-            runtime,
-            [n.agent_name for n in state.nodes.values() if n.agent_name],
-            "plan",
+        await self._persist(runtime)
+        return result
+
+    async def _cancel_node(self, runtime: SessionRuntime, node: NodeState) -> None:
+        state = runtime.state
+        if node.a2a_task_id and node.agent_url:
+            await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
+        node.status = "canceled"
+        node.a2a_task_id = None
+        for blocked in state.blocked_nodes():
+            blocked.status = "invalidated"
+        await self._emit_event(
+            runtime, "node.canceled", node_id=node.id, agent_name=node.agent_name
         )
-        return True
+        await self._persist(runtime)
 
     # ------------------------------------------------------------ emitting
 

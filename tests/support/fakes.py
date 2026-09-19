@@ -5,6 +5,8 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from choirworks.core.planner import PlanDraft
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -43,7 +45,11 @@ class FakeLLM:
         result = self.structured_results.pop(0)
         if isinstance(result, Exception):
             raise result
-        reasoning = f"思考：将请求拆解为 {len(result.nodes)} 个节点。"
+        reasoning = (
+            f"思考：将请求拆解为 {len(result.nodes)} 个节点。"
+            if isinstance(result, PlanDraft)
+            else "思考：解读产出。"
+        )
         midpoint = len(reasoning) // 2
         yield reasoning[:midpoint]
         yield reasoning[midpoint:]

@@ -43,6 +43,7 @@ class NodeState:
     input_text: str = ""
     derived: bool = False
     question: str | None = None
+    answer_text: str | None = None
     source_message_id: str | None = None
     assist_requested_by: str | None = None
 
@@ -61,6 +62,7 @@ class NodeState:
             "input_text": self.input_text,
             "derived": self.derived,
             "question": self.question,
+            "answer_text": self.answer_text,
             "source_message_id": self.source_message_id,
             "assist_requested_by": self.assist_requested_by,
         }
@@ -81,6 +83,7 @@ class NodeState:
             input_text=str(data.get("input_text", "")),
             derived=bool(data.get("derived", False)),
             question=data.get("question"),
+            answer_text=data.get("answer_text"),
             source_message_id=data.get("source_message_id"),
             assist_requested_by=data.get("assist_requested_by"),
         )
@@ -121,6 +124,8 @@ class Intervention:
     status: str = "pending"
     answer: str | None = None
     responder: str | None = None
+    kind: str = "question"
+    target_node_id: str | None = None
     created_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +137,8 @@ class Intervention:
             "status": self.status,
             "answer": self.answer,
             "responder": self.responder,
+            "kind": self.kind,
+            "target_node_id": self.target_node_id,
             "created_at": self.created_at,
         }
 
@@ -144,6 +151,8 @@ class Intervention:
             status=str(data.get("status", "pending")),
             answer=data.get("answer"),
             responder=data.get("responder"),
+            kind=str(data.get("kind", "question")),
+            target_node_id=data.get("target_node_id"),
             created_at=str(data.get("created_at", _now())),
         )
 
@@ -192,6 +201,7 @@ class OrchestrationState:
     interventions: dict[str, Intervention] = field(default_factory=dict)
     queue: dict[str, list[QueuedMessage]] = field(default_factory=dict)
     derived_count: int = 0
+    patch_count: int = 0
     next_intervention: int = 1
     next_message: int = 1
 
@@ -230,8 +240,11 @@ class OrchestrationState:
         return [n for n in self.nodes.values() if n.status == "failed"]
 
     def all_completed(self) -> bool:
+        """True when every task is settled: completed or canceled."""
         active = [n for n in self.nodes.values() if n.status != "invalidated"]
-        return bool(active) and all(n.status == "completed" for n in active)
+        return bool(active) and all(
+            n.status in {"completed", "canceled"} for n in active
+        )
 
     def has_failures(self) -> bool:
         return any(n.status == "failed" for n in self.nodes.values())
@@ -280,6 +293,55 @@ class OrchestrationState:
         self.interventions[intervention.id] = intervention
         return intervention
 
+    def add_cancel_request(
+        self, target_node_id: str, question: str
+    ) -> Intervention | None:
+        for intervention in self.interventions.values():
+            if (
+                intervention.kind == "confirm_cancel"
+                and intervention.status == "pending"
+                and intervention.target_node_id == target_node_id
+            ):
+                return None
+        intervention = Intervention(
+            id=f"iv{self.next_intervention}",
+            node_id=target_node_id,
+            question=question,
+            kind="confirm_cancel",
+            target_node_id=target_node_id,
+        )
+        self.next_intervention += 1
+        self.interventions[intervention.id] = intervention
+        return intervention
+
+    def expire_cancel_requests(self, node_id: str) -> list[Intervention]:
+        expired = []
+        for intervention in self.interventions.values():
+            if (
+                intervention.kind == "confirm_cancel"
+                and intervention.status == "pending"
+                and intervention.target_node_id == node_id
+            ):
+                intervention.status = "expired"
+                expired.append(intervention)
+        return expired
+
+    def normalize_cancel_requests(self) -> list[Intervention]:
+        """Expire confirmations whose target is no longer in flight."""
+        expired = []
+        for intervention in self.interventions.values():
+            if (
+                intervention.kind != "confirm_cancel"
+                or intervention.status != "pending"
+                or intervention.target_node_id is None
+            ):
+                continue
+            node = self.nodes.get(intervention.target_node_id)
+            if node is None or node.status not in ACTIVE_NODE_STATUSES:
+                intervention.status = "expired"
+                expired.append(intervention)
+        return expired
+
     # ------------------------------------------------------------- queue
 
     def enqueue(self, node_id: str, text: str, sender: str = "user",
@@ -304,6 +366,7 @@ class OrchestrationState:
         self.interventions = {}
         self.queue = {}
         self.derived_count = 0
+        self.patch_count = 0
         self.next_intervention = 1
         self.next_message = 1
 
@@ -322,6 +385,7 @@ class OrchestrationState:
                 for node_id, messages in self.queue.items()
             },
             "derived_count": self.derived_count,
+            "patch_count": self.patch_count,
             "next_intervention": self.next_intervention,
             "next_message": self.next_message,
         }, ensure_ascii=False)
@@ -347,6 +411,7 @@ class OrchestrationState:
                 QueuedMessage.from_dict(message) for message in messages
             ]
         state.derived_count = int(data.get("derived_count", 0))
+        state.patch_count = int(data.get("patch_count", 0))
         state.next_intervention = int(data.get("next_intervention", 1))
         state.next_message = int(data.get("next_message", 1))
         return state

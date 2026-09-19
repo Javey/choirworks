@@ -1,4 +1,3 @@
-import pytest
 from a2a.server.context import ServerCallContext
 from a2a.types import (
     ListTasksRequest,
@@ -14,8 +13,6 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
 from tests.support.hubs import start_hub
 from tests.support.sdk import sdk_hub, wait_for_task
-
-pytestmark = pytest.mark.skip(reason="execute 暂为 plan-only，不派发")
 
 
 def _settings(port: int, db: str) -> Settings:

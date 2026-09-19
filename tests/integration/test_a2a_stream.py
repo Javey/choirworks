@@ -96,7 +96,6 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         assert "".join(thought_chunks[:-1]) == "思考：将请求拆解为 1 个节点。"
 
 
-@pytest.mark.skip(reason="execute 暂为 plan-only，任务规划后立即完成，无 live 节点事件")
 async def test_subscribe_replays_snapshot_then_live(tmp_path):
     delay = await start_fake_agent("delay", chunk_size=3)
     try:

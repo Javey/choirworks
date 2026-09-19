@@ -19,8 +19,8 @@ from tests.support.sdk import (
     context_nodes,
     context_state,
     sdk_hub,
-    task_metadata,
     task_nodes,
+    task_state,
     wait_for_task,
 )
 
@@ -68,7 +68,8 @@ async def test_send_creates_task_with_plan(tmp_path, echo_agent):
         assert task.context_id
         nodes = await context_nodes(app, task.context_id)
         assert nodes["n1"]["agent_name"] == "echo"
-        assert nodes["n1"]["status"] == "pending"
+        assert nodes["n1"]["status"] == "completed"
+        assert "问题" in nodes["n1"]["output"]
 
 
 async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
@@ -97,9 +98,8 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         )["plan_version"] == first_version + 1
 
 
-@pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不处理干预")
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
-    from choirworks.a2a.executor import AssistanceDecision
+    from choirworks.a2a.executor import OutcomeDecision
 
     settings = Settings(
         store={"db_path": tmp_path / "send.db"},
@@ -110,14 +110,14 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         tmp_path,
         "send.db",
         settings=settings,
-        plans=[_plan("ask", "请评估"), AssistanceDecision(action="human")],
+        plans=[_plan("ask", "请评估"), OutcomeDecision(intent="deliver")],
     ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))
         pending = await wait_for_task(
             client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED}
         )
-        interventions = task_metadata(pending).get("interventions", [])
+        interventions = task_state(pending).get("interventions", [])
         assert any(item.get("status") == "pending" for item in interventions)
         resumed_id = await _send_once(
             client, _message("这是答复", task_id=task_id, context_id=pending.context_id)
@@ -133,7 +133,6 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         assert "这是答复" in history_text
 
 
-@pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不排队")
 async def test_send_to_running_task_queues_message(tmp_path):
     slow = await start_fake_agent("slow")
     try:
@@ -152,7 +151,7 @@ async def test_send_to_running_task_queues_message(tmp_path):
             )
             assert second_id == task_id
             task = await client.get_task(GetTaskRequest(id=task_id))
-            queue = task_metadata(task).get("queue", {})
+            queue = task_state(task).get("queue", {})
             assert "补充说明" in queue["n1"][0]["text"]
             await client.cancel_task(CancelTaskRequest(id=task_id))
     finally:
