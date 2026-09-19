@@ -89,12 +89,17 @@ def task_nodes(task) -> dict[str, dict]:
     return {node["id"]: node for node in state.get("nodes", [])}
 
 
-def task_state(task) -> dict:
-    meta = task_metadata(task)
-    raw = meta.get("choirworks.state")
-    if raw is None:
+async def context_state(app, context_id: str) -> dict:
+    """Canonical conversation state from the contexts table."""
+    record = await app.state.context_store.get(context_id)
+    if record is None:
         return {}
-    return json.loads(raw) if isinstance(raw, str) else raw
+    return json.loads(record.state)
+
+
+async def context_nodes(app, context_id: str) -> dict[str, dict]:
+    state = await context_state(app, context_id)
+    return {node["id"]: node for node in state.get("nodes", [])}
 
 
 def task_artifact_text(task) -> str:

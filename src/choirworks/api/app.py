@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,7 +14,7 @@ from a2a.server.routes import (
 )
 from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
 from a2a.server.tasks.database_task_store import DatabaseTaskStore
-from a2a.types.a2a_pb2 import ListTasksRequest, TaskState
+from a2a.types.a2a_pb2 import ListTasksRequest, Task, TaskState
 from fastapi import FastAPI, HTTPException, Request
 from google.protobuf.json_format import MessageToDict
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -22,10 +23,18 @@ from choirworks.a2a.card import build_agent_card
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.executor import ChoirWorksAgentExecutor
 from choirworks.a2a.registry import AgentRegistry
+from choirworks.a2a.rewind import (
+    RewindUnavailable,
+    hidden_task_ids,
+    is_human_turn,
+    parse_markers,
+    restore_state,
+)
 from choirworks.api import agents as agents_routes
 from choirworks.config import Settings
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner
+from choirworks.store.contexts import ContextStore
 from choirworks.store.db import Database
 
 logger = logging.getLogger(__name__)
@@ -60,6 +69,7 @@ async def create_app(
         # Use the existing Database wrapper for agent_registry compatibility
         db = Database(db_path)
         await db.initialize()
+        context_store = ContextStore(db)
 
         remote = RemoteAgentClient()
         registry = AgentRegistry(db, remote)
@@ -85,6 +95,7 @@ async def create_app(
             compaction_retention=settings.llm.compaction_retention,
         )
         executor.set_task_store(task_store)
+        executor.set_context_store(context_store)
 
         agent_card = build_agent_card(settings.a2a.public_url)
         request_handler = DefaultRequestHandler(
@@ -96,6 +107,7 @@ async def create_app(
         app.state.settings = settings
         app.state.engine = engine
         app.state.task_store = task_store
+        app.state.context_store = context_store
         app.state.db = db
         app.state.remote = remote
         app.state.registry = registry
@@ -125,6 +137,8 @@ async def create_app(
                 pass
             async with db.conn.execute("DELETE FROM tasks"):
                 pass
+            async with db.conn.execute("DELETE FROM contexts"):
+                pass
             await db.conn.commit()
             for spec in settings.sim.agents:
                 name = spec["name"]
@@ -142,7 +156,7 @@ async def create_app(
         from choirworks.a2a.recovery import recover_tasks
 
         if settings.recovery.replay_on_startup:
-            await recover_tasks(request_handler, task_store)
+            await recover_tasks(request_handler, task_store, context_store)
 
         try:
             yield
@@ -163,21 +177,85 @@ async def create_app(
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    async def _context_tasks(request: Request, context_id: str) -> list[Task]:
+        """Context tasks ordered oldest first."""
+        params = ListTasksRequest()
+        params.context_id = context_id
+        response = await request.app.state.task_store.list(
+            params, ServerCallContext()
+        )
+        return list(reversed(response.tasks))
+
+    async def _conversation_payload(
+        request: Request, context_id: str
+    ) -> dict[str, Any]:
+        tasks = await _context_tasks(request, context_id)
+        if not tasks:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        record = await request.app.state.context_store.get(context_id)
+        context: dict[str, Any] | None = None
+        markers = parse_markers(record.rewind_markers) if record is not None else []
+        if record is not None:
+            try:
+                context = json.loads(record.state)
+            except ValueError:
+                context = None
+        hidden = hidden_task_ids([task.id for task in tasks], markers)
+        visible = [
+            MessageToDict(task, preserving_proto_field_name=True)
+            for task in tasks
+            if task.id not in hidden
+        ]
+        return {"id": context_id, "context": context, "tasks": visible}
+
     @app.post("/v1/conversations")
-    async def create_conversation(body: dict) -> dict:
+    async def create_conversation(
+        body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
         import uuid
         conversation_id = uuid.uuid4().hex
         title = body.get("title", "")
+        await request.app.state.context_store.create(conversation_id, title=title)
         return {"conversation_id": conversation_id, "title": title}
 
     @app.get("/v1/conversations")
-    async def list_conversations(request: Request) -> list[dict]:
+    async def list_conversations(request: Request) -> list[dict[str, Any]]:
         task_store = request.app.state.task_store
+        context_store = request.app.state.context_store
         ctx = ServerCallContext()
+        records = {
+            record.context_id: record for record in await context_store.list()
+        }
+        sessions: dict[str, dict[str, Any]] = {
+            context_id: {
+                "id": context_id,
+                "title": record.title,
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+                "task_count": 0,
+                "last_status": "",
+                "_latest_state": TaskState.TASK_STATE_UNSPECIFIED,
+            }
+            for context_id, record in records.items()
+        }
         response = await task_store.list(ListTasksRequest(), ctx)
-        sessions: dict[str, dict[str, Any]] = {}
+        tasks_by_context: dict[str, list[str]] = {}
         for task in response.tasks:
             ctx_id = task.context_id or task.id
+            tasks_by_context.setdefault(ctx_id, []).append(task.id)
+        hidden_by_context = {
+            ctx_id: hidden_task_ids(
+                list(reversed(ids)),
+                parse_markers(records[ctx_id].rewind_markers)
+                if ctx_id in records
+                else [],
+            )
+            for ctx_id, ids in tasks_by_context.items()
+        }
+        for task in response.tasks:
+            ctx_id = task.context_id or task.id
+            if task.id in hidden_by_context[ctx_id]:
+                continue
             state_name = TaskState.Name(task.status.state).replace("TASK_STATE_", "").lower()
             if ctx_id not in sessions:
                 title = ""
@@ -206,18 +284,52 @@ async def create_app(
         return list(sessions.values())
 
     @app.get("/v1/conversations/{context_id}")
-    async def get_conversation(context_id: str, request: Request) -> dict:
-        task_store = request.app.state.task_store
-        ctx = ServerCallContext()
-        params = ListTasksRequest()
-        params.context_id = context_id
-        response = await task_store.list(params, ctx)
-        if not response.tasks:
+    async def get_conversation(
+        context_id: str, request: Request
+    ) -> dict[str, Any]:
+        return await _conversation_payload(request, context_id)
+
+    @app.post("/v1/conversations/{context_id}/rewind")
+    async def rewind_conversation(
+        context_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
+        task_id = str(body.get("task_id", ""))
+        if not task_id:
+            raise HTTPException(status_code=400, detail="task_id is required")
+        context_store = request.app.state.context_store
+        executor = request.app.state.executor
+        if executor.session_is_active(context_id):
+            raise HTTPException(
+                status_code=409, detail="会话正在执行中，无法回退"
+            )
+        record = await context_store.get(context_id)
+        if record is None:
             raise HTTPException(status_code=404, detail="conversation not found")
-        tasks = [
-            MessageToDict(t, preserving_proto_field_name=True)
-            for t in response.tasks
-        ]
-        return {"id": context_id, "tasks": tasks}
+        tasks = await _context_tasks(request, context_id)
+        if not tasks:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        index = {task.id: position for position, task in enumerate(tasks)}
+        if task_id not in index:
+            raise HTTPException(status_code=404, detail="task not found")
+        markers = parse_markers(record.rewind_markers)
+        hidden = hidden_task_ids([task.id for task in tasks], markers)
+        if task_id in hidden:
+            raise HTTPException(status_code=409, detail="该回合已被回退")
+        if not is_human_turn(tasks[index[task_id]]):
+            raise HTTPException(
+                status_code=400, detail="只有人类消息开启的回合可以回退"
+            )
+        try:
+            state = restore_state(tasks, markers, task_id)
+        except RewindUnavailable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await context_store.rewind(
+            context_id,
+            state=state.to_json(),
+            before_task_id=task_id,
+            cut_task_id=tasks[-1].id,
+        )
+        executor.drop_session(context_id)
+        return await _conversation_payload(request, context_id)
 
     return app

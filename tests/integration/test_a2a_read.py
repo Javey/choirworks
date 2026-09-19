@@ -13,7 +13,7 @@ from a2a.types import (
 from a2a.utils.errors import TaskNotCancelableError, TaskNotFoundError
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from tests.support.sdk import sdk_hub, task_metadata, wait_for_task
+from tests.support.sdk import context_nodes, sdk_hub, task_metadata, wait_for_task
 
 
 def _plan(agent_name: str) -> PlanDraft:
@@ -49,16 +49,37 @@ async def _send_once(client, request) -> str:
 async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
     async with sdk_hub(
         tmp_path, "read.db", plans=[_plan("echo")] * 2
+    ) as (app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        task_id = await _send_once(client, _send("hello"))
+        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
+        assert task.id == task_id
+        assert task.context_id
+        nodes = await context_nodes(app, task.context_id)
+        assert nodes["n1"]["status"] == "pending"
+
+
+async def test_conversation_endpoint_returns_context_and_tasks(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "read.db", plans=[_plan("echo")] * 2
     ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _send("hello"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
-        metadata = task_metadata(task)
-        assert task.id == task_id
-        assert task.context_id
-        import json
-        state = json.loads(metadata["choirworks.state"])
-        assert state["nodes"][0]["status"] == "pending"
+
+        response = await http.get(f"/v1/conversations/{task.context_id}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == task.context_id
+        assert body["context"]["nodes"][0]["id"] == "n1"
+        assert [item["id"] for item in body["tasks"]] == [task_id]
+
+        listed = (await http.get("/v1/conversations")).json()
+        [session] = [item for item in listed if item["id"] == task.context_id]
+        assert session["task_count"] == 1
+        assert session["last_status"] == "completed"
+        assert session["created_at"]
+        assert session["updated_at"]
 
 
 async def test_get_task_unknown_raises(tmp_path):

@@ -77,8 +77,15 @@ export interface ConversationSummaryDto {
   last_status: TaskStatus;
 }
 
+export interface ConversationContextDto {
+  plan_id?: string;
+  plan_version?: number;
+  nodes?: Record<string, unknown>[];
+}
+
 export interface ConversationDetailDto {
   id: string;
+  context?: ConversationContextDto | null;
   tasks: Record<string, unknown>[];
 }
 

@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS agent_registry (
   last_seen  TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS contexts (
+  context_id     TEXT PRIMARY KEY,
+  state          TEXT NOT NULL DEFAULT '{}',
+  title          TEXT NOT NULL DEFAULT '',
+  rewind_markers TEXT NOT NULL DEFAULT '[]',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
 """
 
 

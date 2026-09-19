@@ -178,10 +178,11 @@ class QueuedMessage:
 
 @dataclass
 class OrchestrationState:
-    """Persisted in the A2A Task metadata under ``choirworks.state``.
+    """Conversation state, canonical in the contexts store by context_id.
 
-    The A2A Task is the aggregate root; every mutation is emitted as an A2A
-    event whose metadata merges into the Task snapshot via DatabaseTaskStore.
+    Every persist also merges a full ``choirworks.state`` snapshot into the
+    active A2A Task; that per-turn snapshot is the rewind checkpoint the
+    contexts row is restored from.
     """
 
     plan_id: str = ""
@@ -308,62 +309,46 @@ class OrchestrationState:
 
     # ------------------------------------------------------- serialization
 
-    def to_minimal_json(self) -> str:
-        """Minimal snapshot for crash recovery: only node DAG + members."""
+    def to_json(self) -> str:
+        """Full snapshot: nodes, members, interventions and queue."""
         return json.dumps({
+            "plan_id": self.plan_id,
             "plan_version": self.plan_version,
-            "nodes": [
-                {
-                    "id": n.id,
-                    "name": n.name,
-                    "agent_name": n.agent_name,
-                    "agent_url": n.agent_url,
-                    "status": n.status,
-                    "deps": list(n.deps),
-                    "input_text": n.input_text,
-                    "a2a_task_id": n.a2a_task_id,
-                    "attempt": n.attempt,
-                    "derived": n.derived,
-                    "assist_requested_by": n.assist_requested_by,
-                    "question": n.question,
-                }
-                for n in self.nodes.values()
-            ],
-            "members": [
-                {"name": m.name, "url": m.url, "reason": m.reason}
-                for m in self.members.values()
-            ],
+            "nodes": [n.to_dict() for n in self.nodes.values()],
+            "members": [m.to_dict() for m in self.members.values()],
+            "interventions": [iv.to_dict() for iv in self.interventions.values()],
+            "queue": {
+                node_id: [qm.to_dict() for qm in messages]
+                for node_id, messages in self.queue.items()
+            },
+            "derived_count": self.derived_count,
+            "next_intervention": self.next_intervention,
+            "next_message": self.next_message,
         }, ensure_ascii=False)
 
     @classmethod
-    def from_minimal_json(cls, raw: str) -> OrchestrationState:
+    def from_json(cls, raw: str) -> OrchestrationState:
+        """Rebuild state from a full snapshot."""
         data = json.loads(raw)
         state = cls()
+        state.plan_id = str(data.get("plan_id", ""))
         state.plan_version = int(data.get("plan_version", 1))
         for n in data.get("nodes", []):
-            node = NodeState(
-                id=str(n["id"]),
-                name=str(n.get("name", "")),
-                agent_name=str(n.get("agent_name", "")),
-                agent_url=str(n.get("agent_url", "")),
-                status=str(n.get("status", "pending")),
-                deps=[str(d) for d in n.get("deps", [])],
-                input_text=str(n.get("input_text", "")),
-                a2a_task_id=n.get("a2a_task_id"),
-                attempt=int(n.get("attempt", 0)),
-                derived=bool(n.get("derived", False)),
-                assist_requested_by=n.get("assist_requested_by"),
-                question=n.get("question"),
-            )
+            node = NodeState.from_dict(n)
             state.nodes[node.id] = node
         for m in data.get("members", []):
-            member = Member(
-                name=str(m["name"]),
-                url=str(m.get("url", "")),
-                reason=str(m.get("reason", "")),
-            )
+            member = Member.from_dict(m)
             state.members[member.name] = member
-        state.derived_count = sum(1 for n in state.nodes.values() if n.derived)
+        for iv in data.get("interventions", []):
+            intervention = Intervention.from_dict(iv)
+            state.interventions[intervention.id] = intervention
+        for node_id, messages in (data.get("queue") or {}).items():
+            state.queue[str(node_id)] = [
+                QueuedMessage.from_dict(message) for message in messages
+            ]
+        state.derived_count = int(data.get("derived_count", 0))
+        state.next_intervention = int(data.get("next_intervention", 1))
+        state.next_message = int(data.get("next_message", 1))
         return state
 
 
@@ -382,8 +367,8 @@ def _truncate(text: str | None, limit: int = MAX_METADATA_OUTPUT) -> str | None:
 def load_state(task: Task | None) -> OrchestrationState | None:
     """Rebuild orchestration state from a persisted A2A Task.
 
-    Reads only the ``choirworks.state`` JSON string field — a minimal
-    snapshot of the node DAG + members written at key state transitions.
+    Reads the ``choirworks.state`` JSON turn checkpoint; the canonical
+    current state lives in the contexts store.
     """
     if task is None or not task.metadata.fields:
         return None
@@ -391,6 +376,6 @@ def load_state(task: Task | None) -> OrchestrationState | None:
     if raw is None or not raw.HasField("string_value") or not raw.string_value:
         return None
     try:
-        return OrchestrationState.from_minimal_json(raw.string_value)
+        return OrchestrationState.from_json(raw.string_value)
     except (ValueError, TypeError):
         return None

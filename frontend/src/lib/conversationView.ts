@@ -64,7 +64,18 @@ export const emptyConversation: ConversationView = {
 type ProtoStruct = Record<string, unknown>;
 
 const ROOM_META_KEY = "https://github.com/Javey/choirworks/extensions/room/v1";
-const STATE_JSON_KEY = "choirworks.state";
+
+function nodesFromContext(context: ProtoStruct | null | undefined): TaskNodeInfo[] {
+  const nodesMeta = (context?.nodes as ProtoStruct[] | undefined) ?? [];
+  return nodesMeta.map((n) => ({
+    id: String(n.id ?? ""),
+    name: String(n.name ?? ""),
+    agent_name: String(n.agent_name ?? ""),
+    status: String(n.status ?? "pending"),
+    output: typeof n.output === "string" ? n.output : undefined,
+    error: typeof n.error === "string" ? n.error : undefined,
+  }));
+}
 
 function stateName(state: unknown): string {
   if (typeof state === "number") return taskStateToJSON(state as TaskState);
@@ -107,6 +118,7 @@ export function conversationFromTask(
 export function conversationFromTasks(
   tasks: ProtoStruct[],
   contextId: string,
+  context?: ProtoStruct | null,
 ): ConversationView {
   const messages: ChatMessage[] = [];
   const seenIds = new Set<string>();
@@ -135,29 +147,13 @@ export function conversationFromTasks(
 
   let lastTaskId = "";
   let lastState = taskStateToJSON(TaskState.TASK_STATE_SUBMITTED);
-  let nodes: TaskNodeInfo[] = [];
+  const nodes = nodesFromContext(context);
   for (const task of tasks) {
     const state = stateName(
       (task.status as ProtoStruct | undefined)?.state,
     );
     lastTaskId = String(task.id ?? "");
     lastState = state;
-    const meta = metaOf(task);
-    const stateJson = meta[STATE_JSON_KEY];
-    if (typeof stateJson === "string") {
-      try {
-        const parsed = JSON.parse(stateJson) as ProtoStruct;
-        const nodesMeta = (parsed.nodes as ProtoStruct[] | undefined) ?? [];
-        nodes = nodesMeta.map((n) => ({
-          id: String(n.id ?? ""),
-          name: String(n.name ?? ""),
-          agent_name: String(n.agent_name ?? ""),
-          status: String(n.status ?? "pending"),
-          output: typeof n.output === "string" ? n.output : undefined,
-          error: typeof n.error === "string" ? n.error : undefined,
-        }));
-      } catch { /* ignore invalid JSON */ }
-    }
   }
 
   const artifacts = (tasks.flatMap(
@@ -225,23 +221,7 @@ export function applyStreamEvent(
         created_at: "",
       });
     }
-    const meta = metaOf(result);
-    let nodes = view.nodes;
-    const stateJson = meta[STATE_JSON_KEY];
-    if (typeof stateJson === "string") {
-      try {
-        const parsed = JSON.parse(stateJson) as ProtoStruct;
-        const nodesMeta = (parsed.nodes as ProtoStruct[] | undefined) ?? [];
-        nodes = nodesMeta.map((n) => ({
-          id: String(n.id ?? ""),
-          name: String(n.name ?? ""),
-          agent_name: String(n.agent_name ?? ""),
-          status: String(n.status ?? "pending"),
-          output: typeof n.output === "string" ? n.output : undefined,
-          error: typeof n.error === "string" ? n.error : undefined,
-        }));
-      } catch { /* ignore invalid JSON */ }
-    }
+    const nodes = view.nodes;
     return {
       ...view,
       taskId,

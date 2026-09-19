@@ -93,11 +93,16 @@ export function useConversation(contextId: string | null) {
       try {
         const resp = await fetch(`/v1/conversations/${contextId}`);
         if (!resp.ok) throw new Error("加载会话失败");
-        const data = await resp.json() as { id: string; tasks: Record<string, unknown>[] };
+        const data = await resp.json() as {
+          id: string;
+          context?: Record<string, unknown> | null;
+          tasks: Record<string, unknown>[];
+        };
         if (generation !== genRef.current) return;
         const snapshot = conversationFromTasks(
           data.tasks as Record<string, unknown>[],
           data.id,
+          data.context,
         );
         commit(snapshot);
         if (snapshot.taskId && !isSettled(snapshot.state)) {

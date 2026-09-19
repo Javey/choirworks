@@ -10,13 +10,11 @@ from typing import Any, Literal
 
 from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks.task_store import TaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
     Artifact,
-    ListTasksRequest,
     Message,
     Part,
     TaskArtifactUpdateEvent,
@@ -36,7 +34,6 @@ from choirworks.a2a.state import (
     STATE_JSON_KEY,
     NodeState,
     OrchestrationState,
-    load_state,
 )
 from choirworks.core.context import (
     ContextBriefBuilder,
@@ -48,6 +45,7 @@ from choirworks.core.context import (
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
+from choirworks.store.contexts import ContextStore
 
 logger = logging.getLogger(__name__)
 
@@ -206,26 +204,30 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         self._sessions: dict[str, SessionRuntime] = {}
         self._session_gate = asyncio.Lock()
-        self._task_store: TaskStore | None = None
+        self._context_store: ContextStore | None = None
 
     # ------------------------------------------------------------- lifecycle
 
     def set_task_store(self, task_store: TaskStore) -> None:
         """Injected by the app so plans can read and reload session history."""
-        self._task_store = task_store
         self._brief_builder.set_task_store(task_store)
 
+    def set_context_store(self, context_store: ContextStore) -> None:
+        """Injected by the app as the canonical conversation state store."""
+        self._context_store = context_store
+
     async def _load_session_state(self, context_id: str) -> OrchestrationState | None:
-        """Load the newest persisted snapshot of a conversation, if any."""
-        if self._task_store is None:
+        """Load conversation state from the canonical contexts row."""
+        if self._context_store is None:
             return None
-        page = await self._task_store.list(
-            ListTasksRequest(context_id=context_id, page_size=1),
-            ServerCallContext(),
-        )
-        if not page.tasks:
+        record = await self._context_store.get(context_id)
+        if record is None:
             return None
-        return load_state(page.tasks[0])
+        try:
+            return OrchestrationState.from_json(record.state)
+        except (ValueError, TypeError):
+            logger.warning("Invalid context state for %s", context_id)
+            return None
 
     async def _ensure_session(
         self, context: RequestContext, event_queue: EventQueue
@@ -253,6 +255,17 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if runtime is not None:
             runtime.runner = None
             runtime.node_tasks.clear()
+
+    def session_is_active(self, context_id: str) -> bool:
+        runtime = self._sessions.get(context_id)
+        return (
+            runtime is not None
+            and runtime.runner is not None
+            and not runtime.runner.done()
+        )
+
+    def drop_session(self, context_id: str) -> None:
+        self._evict_session(context_id)
 
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
@@ -304,6 +317,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 )
             except PlanningFailed as exc:
                 logger.warning("Planning failed for task %s: %s", task_id, exc)
+                await self._persist(runtime)
                 await self._emit_event(
                     runtime,
                     "plan.failed", TaskState.TASK_STATE_FAILED, error=str(exc),
@@ -369,6 +383,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             for node in list(state.nodes.values()):
                 if node.status in ACTIVE_NODE_STATUSES | {"ready"}:
                     node.status = "canceled"
+            await self._persist(runtime)
             # Emit the terminal event first: the SDK closes the agent event
             # queue as soon as the cancelled producer unwinds.
             await self._emit(
@@ -402,7 +417,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         runtime = await self._ensure_session(context, event_queue)
-        state = load_state(context.current_task)
+        state = await self._load_session_state(runtime.context_id)
         if state is None:
             await self._emit_event(
                 runtime,
@@ -637,6 +652,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         progress = await self._settle_input(runtime)
                         if progress:
                             continue
+                        await self._persist(runtime)
                         await self._emit_event(
                             runtime,
                             "task.requires_input",
@@ -698,6 +714,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             logger.exception("Runner failed for task %s", task_id)
             if context_id in self._sessions:
                 try:
+                    await self._persist(runtime)
                     await self._emit_event(
                         runtime,
                         "task.failed", TaskState.TASK_STATE_FAILED,
@@ -1409,9 +1426,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
 
     async def _persist(self, runtime: SessionRuntime) -> None:
+        snapshot = runtime.state.to_json()
+        if self._context_store is not None:
+            await self._context_store.upsert_state(runtime.context_id, snapshot)
         await self._emit_event(
             runtime, "state.updated",
-            **{STATE_JSON_KEY: runtime.state.to_minimal_json()},
+            **{STATE_JSON_KEY: snapshot},
         )
 
     async def _join_members(

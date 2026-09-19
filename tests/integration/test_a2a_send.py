@@ -16,10 +16,11 @@ from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.sdk import (
+    context_nodes,
+    context_state,
     sdk_hub,
     task_metadata,
     task_nodes,
-    task_state,
     wait_for_task,
 )
 
@@ -59,14 +60,15 @@ async def _send_once(client, request) -> str:
 async def test_send_creates_task_with_plan(tmp_path, echo_agent):
     async with sdk_hub(
         tmp_path, "send.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    ) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _message("请评估这个问题"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert task.id == task_id
         assert task.context_id
-        assert task_nodes(task)["n1"]["agent_name"] == "echo"
-        assert task_nodes(task)["n1"]["status"] == "pending"
+        nodes = await context_nodes(app, task.context_id)
+        assert nodes["n1"]["agent_name"] == "echo"
+        assert nodes["n1"]["status"] == "pending"
 
 
 async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
@@ -77,6 +79,8 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         first_id = await _send_once(client, _message("第一个任务"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
         assert app.state.executor._sessions == {}
+        first_version = (await context_state(app, first.context_id))["plan_version"]
+        assert first_version == 2
         second_id = await _send_once(
             client, _message("第二个任务", context_id=first.context_id)
         )
@@ -86,12 +90,11 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         assert second.id != first.id
         assert second.context_id == first.context_id
         assert app.state.executor._sessions == {}
-        # The second turn reloads the session snapshot, so the plan version
-        # continues from the first turn instead of restarting at 1.
+        # The second turn reloads the canonical contexts row, so the plan
+        # version continues from the first turn instead of restarting at 1.
         assert (
-            task_state(second)["plan_version"]
-            == task_state(first)["plan_version"] + 1
-        )
+            await context_state(app, second.context_id)
+        )["plan_version"] == first_version + 1
 
 
 @pytest.mark.skip(reason="execute 暂为 plan-only，不派发/不处理干预")
@@ -154,6 +157,23 @@ async def test_send_to_running_task_queues_message(tmp_path):
             await client.cancel_task(CancelTaskRequest(id=task_id))
     finally:
         await slow.stop()
+
+
+async def test_plan_failure_persists_context_state(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path,
+        "send.db",
+        plans=[ValueError("bad plan")] * 3,
+    ) as (app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        task_id = await _send_once(client, _message("无法规划"))
+        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_FAILED})
+        assert app.state.executor._sessions == {}
+
+        state = await context_state(app, task.context_id)
+        assert state["nodes"] == []
+        # start_new_plan bumped the version before planning failed.
+        assert state["plan_version"] == 2
 
 
 async def test_send_empty_text_raises(tmp_path, echo_agent):
