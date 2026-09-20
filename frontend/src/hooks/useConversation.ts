@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Role, TaskState, taskStateToJSON } from "@a2a-js/sdk";
-
-import type { StreamResponse } from "@a2a-js/sdk";
+import { Role, StreamResponse, TaskState, taskStateToJSON } from "@a2a-js/sdk";
 
 import { getClient } from "../api/a2a-client";
 import { api } from "../api/client";
@@ -93,8 +91,8 @@ export function useConversation(contextId: string | null) {
       try {
         const events = await api.getConversationEvents(contextId);
         if (generation !== genRef.current) return;
-        for (const event of events) {
-          apply(event);
+        for (const raw of events) {
+          apply(StreamResponse.fromJSON(raw));
         }
         const snapshot = viewRef.current;
         if (snapshot.taskId && !isSettled(snapshot.state)) {

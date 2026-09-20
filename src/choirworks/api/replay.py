@@ -6,38 +6,6 @@ from a2a.types.a2a_pb2 import Task
 from google.protobuf.json_format import MessageToDict
 
 
-def _part_to_wire(part: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    if part.get("text"):
-        result["content"] = {"$case": "text", "value": part["text"]}
-    elif part.get("raw"):
-        result["content"] = {"$case": "raw", "value": part["raw"]}
-    elif part.get("url"):
-        result["content"] = {"$case": "url", "value": part["url"]}
-    elif "data" in part:
-        result["content"] = {"$case": "data", "value": part["data"]}
-    else:
-        result["content"] = {"$case": "text", "value": ""}
-    if "metadata" in part:
-        result["metadata"] = part["metadata"]
-    if "filename" in part:
-        result["filename"] = part["filename"]
-    if "mediaType" in part:
-        result["mediaType"] = part["mediaType"]
-    return result
-
-
-def _convert_parts_in_place(container: dict[str, Any]) -> None:
-    if "parts" in container:
-        container["parts"] = [_part_to_wire(p) for p in container["parts"]]
-    for msg in container.get("history", []):
-        if "parts" in msg:
-            msg["parts"] = [_part_to_wire(p) for p in msg["parts"]]
-    for art in container.get("artifacts", []):
-        if "parts" in art:
-            art["parts"] = [_part_to_wire(p) for p in art["parts"]]
-
-
 def _state_delta_event(
     context: dict[str, Any],
     context_id: str,
@@ -72,20 +40,15 @@ def _state_delta_event(
         }
 
     return {
-        "payload": {
-            "$case": "statusUpdate",
-            "value": {
-                "taskId": task_id,
-                "contextId": context_id,
-                "status": {"state": task_state},
-                "metadata": {
-                    "kind": "state_delta",
-                    "nodes": nodes,
-                    "members": members,
-                    "interventions": interventions,
-                },
-            },
-        }
+        "taskId": task_id,
+        "contextId": context_id,
+        "status": {"state": task_state},
+        "metadata": {
+            "kind": "state_delta",
+            "nodes": nodes,
+            "members": members,
+            "interventions": interventions,
+        },
     }
 
 
@@ -103,13 +66,13 @@ def synthesize_replay_events(
     task_dicts: list[dict[str, Any]] = []
     for task in visible:
         task_dict = MessageToDict(task, use_integers_for_enums=True)
-        _convert_parts_in_place(task_dict)
         task_dicts.append(task_dict)
 
     events: list[dict[str, Any]] = []
 
     for task_dict in task_dicts:
-        events.append({"payload": {"$case": "task", "value": task_dict}})
+        task_only = {k: v for k, v in task_dict.items() if k != "artifacts"}
+        events.append({"task": task_only})
 
     for task_dict in task_dicts:
         task_id = task_dict.get("id", "")
@@ -122,51 +85,45 @@ def synthesize_replay_events(
             is_fc = p_meta.get("cw_type") == "function_call"
             if is_thought or is_fc:
                 events.append({
-                    "payload": {
-                        "$case": "artifactUpdate",
-                        "value": {
-                            "taskId": task_id,
-                            "contextId": context_id,
-                            "artifact": art,
-                            "append": False,
-                            "lastChunk": True,
-                            "metadata": {},
-                        },
+                    "artifactUpdate": {
+                        "taskId": task_id,
+                        "contextId": context_id,
+                        "artifact": art,
+                        "append": False,
+                        "lastChunk": True,
+                        "metadata": {},
                     }
                 })
             else:
                 merged_text = "".join(
-                    p.get("content", {}).get("value", "")
+                    p.get("text", "")
                     for p in parts
-                    if p.get("content", {}).get("$case") == "text"
+                    if "text" in p
                 )
                 if merged_text:
                     merged_art = {
                         "artifactId": art.get("artifactId", ""),
                         "name": art.get("name", ""),
-                        "parts": [{"content": {"$case": "text", "value": merged_text}}],
+                        "parts": [{"text": merged_text}],
                     }
                     events.append({
-                        "payload": {
-                            "$case": "artifactUpdate",
-                            "value": {
-                                "taskId": task_id,
-                                "contextId": context_id,
-                                "artifact": merged_art,
-                                "append": False,
-                                "lastChunk": True,
-                                "metadata": {},
-                            },
+                        "artifactUpdate": {
+                            "taskId": task_id,
+                            "contextId": context_id,
+                            "artifact": merged_art,
+                            "append": False,
+                            "lastChunk": True,
+                            "metadata": {},
                         }
                     })
 
     if context and task_dicts:
         last_dict = task_dicts[-1]
         task_state = last_dict.get("status", {}).get("state", 0)
-        events.append(
-            _state_delta_event(
+        events.append({
+            "statusUpdate": _state_delta_event(
                 context, context_id, last_dict.get("id", ""), task_state
             )
-        )
+        })
 
     return events
