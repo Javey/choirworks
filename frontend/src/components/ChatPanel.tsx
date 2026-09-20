@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -49,18 +49,27 @@ function UserBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-function AssistantBubble({ msg }: { msg: ChatMessage }) {
-  const sender = msg.sender || "规划大脑";
+function ThinkingBubble({ msg }: { msg: ChatMessage }) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="flex gap-2.5">
-      <Avatar name={sender} />
+      <Avatar name="规划大脑" />
       <div className="flex-1 max-w-[70%]">
-        <div className="text-[11px] text-feishu-muted mb-1 ml-1">{sender}</div>
-        <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-agent-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {msg.text}
-          </ReactMarkdown>
-        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1.5 mb-1 ml-1 text-[11px] text-feishu-muted hover:text-feishu-text transition-colors"
+        >
+          <span className="text-[10px]">{expanded ? "▾" : "▸"}</span>
+          思考
+        </button>
+        {expanded ? (
+          <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-agent-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {msg.text}
+            </ReactMarkdown>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -112,7 +121,7 @@ function WorkingItem({ bubble }: { bubble: WorkingBubble }) {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   if (msg.role === "user") return <UserBubble msg={msg} />;
-  if (msg.role === "assistant") return <AssistantBubble msg={msg} />;
+  if (msg.role === "assistant") return <ThinkingBubble msg={msg} />;
   return <AgentBubble msg={msg} />;
 }
 
