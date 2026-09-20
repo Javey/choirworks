@@ -537,12 +537,33 @@ export function applyStreamEvent(
       }
     }
 
-    // Thought part in artifact (planner / agent reasoning stream)
-    if (pMeta.cw_thought === true && text) {
+    // Streaming assistant message (planner thought or direct text reply)
+    const isThought = pMeta.cw_thought === true;
+    const isAssistantText = !isThought && author === "assistant" && !nodeId;
+    if ((isThought || isAssistantText) && text) {
+      const existing = view.messages.find((m) => m.id === artifactId);
+      const activeArtifactIds = new Set(view.activeArtifactIds);
+      if (!append && !lastChunk) {
+        activeArtifactIds.add(artifactId);
+      }
+      if (lastChunk) {
+        activeArtifactIds.delete(artifactId);
+      }
+      if (existing) {
+        const newText = append ? existing.text + text : text;
+        return {
+          ...view,
+          activeArtifactIds,
+          messages: view.messages.map((m) =>
+            m.id === artifactId ? { ...m, text: newText } : m,
+          ),
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
       const chatMsg: ChatMessage = {
         id: artifactId,
         role: "assistant",
-        sender: author,
+        sender: isThought ? author : null,
         text,
         mentions: [],
         quote_id: null,
@@ -550,19 +571,17 @@ export function applyStreamEvent(
         task_id: view.taskId,
         created_at: new Date().toISOString(),
         seq,
-        thinking: true,
+        thinking: isThought,
       };
-      if (view.messages.some((m) => m.id === chatMsg.id)) {
-        return view;
-      }
       return {
         ...view,
+        activeArtifactIds,
         messages: [...view.messages, chatMsg],
         lastSeq: Math.max(view.lastSeq, seq),
       };
     }
 
-    // One-shot complete message (append=false + lastChunk=true, not part of a streaming sequence)
+    // One-shot complete agent message (replay: append=false + lastChunk=true)
     const isStreaming = view.activeArtifactIds.has(artifactId);
     if (lastChunk && !isStreaming && text) {
       const chatMsg: ChatMessage = {

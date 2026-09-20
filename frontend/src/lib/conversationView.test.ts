@@ -352,7 +352,7 @@ describe("applyStreamEvent", () => {
     expect(view.nodes.find((n) => n.id === "n1")?.output).toBe("Hello world!");
   });
 
-  it("two concurrent streams without node_id create distinct bubbles", () => {
+  it("two concurrent streams with node_id create distinct bubbles", () => {
     let view = emptyConversation;
     view = applyStreamEvent(
       view,
@@ -361,6 +361,7 @@ describe("applyStreamEvent", () => {
           $case: "artifactUpdate",
           value: {
             artifact: { artifactId: "art-a", parts: [{ content: { $case: "text", value: "A1" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
             append: false,
             lastChunk: false,
           },
@@ -375,6 +376,7 @@ describe("applyStreamEvent", () => {
           $case: "artifactUpdate",
           value: {
             artifact: { artifactId: "art-b", parts: [{ content: { $case: "text", value: "B1" } }] },
+            metadata: { node_id: "n2", agent_name: "writer" },
             append: false,
             lastChunk: false,
           },
@@ -385,5 +387,141 @@ describe("applyStreamEvent", () => {
     expect(view.workingBubbles).toHaveLength(2);
     expect(view.workingBubbles.find((b) => b.artifactId === "art-a")?.text).toBe("A1");
     expect(view.workingBubbles.find((b) => b.artifactId === "art-b")?.text).toBe("B1");
+  });
+
+  it("streaming thought accumulates across chunks", () => {
+    let view = emptyConversation;
+    const id = "thought-1";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{
+                content: { $case: "text", value: "The" },
+                metadata: { cw_thought: true },
+              }],
+            },
+            metadata: { author: "assistant" },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{
+                content: { $case: "text", value: " user" },
+                metadata: { cw_thought: true },
+              }],
+            },
+            metadata: { author: "assistant" },
+            append: true,
+            lastChunk: false,
+          },
+        },
+      },
+      2,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{
+                content: { $case: "text", value: " said hello" },
+                metadata: { cw_thought: true },
+              }],
+            },
+            metadata: { author: "assistant" },
+            append: true,
+            lastChunk: true,
+          },
+        },
+      },
+      3,
+    );
+    const msg = view.messages.find((m) => m.id === id);
+    expect(msg?.text).toBe("The user said hello");
+    expect(msg?.thinking).toBe(true);
+    expect(view.activeArtifactIds.has(id)).toBe(false);
+  });
+
+  it("streaming assistant text response accumulates across chunks", () => {
+    let view = emptyConversation;
+    const id = "text-1";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{ content: { $case: "text", value: "你好" } }],
+              metadata: { author: "assistant" },
+            },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{ content: { $case: "text", value: "！我是" } }],
+              metadata: { author: "assistant" },
+            },
+            append: true,
+            lastChunk: false,
+          },
+        },
+      },
+      2,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: id,
+              parts: [{ content: { $case: "text", value: "规划大脑" } }],
+              metadata: { author: "assistant" },
+            },
+            append: true,
+            lastChunk: true,
+          },
+        },
+      },
+      3,
+    );
+    const msg = view.messages.find((m) => m.id === id);
+    expect(msg?.text).toBe("你好！我是规划大脑");
+    expect(msg?.thinking).toBe(false);
+    expect(view.activeArtifactIds.has(id)).toBe(false);
+    expect(view.workingBubbles).toHaveLength(0);
   });
 });
