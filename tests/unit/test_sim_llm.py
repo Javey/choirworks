@@ -191,6 +191,11 @@ async def test_stream_structured_with_sim_yields_valid_plan():
     assert agents_of(drafts[0]) == ["product-manager", "developer"]
 
 
+async def test_greeting_returns_empty_plan():
+    draft = await plan_for("你好")
+    assert draft.nodes == []
+
+
 async def test_sim_stream_returns_custom_stream_wrapper():
     from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 

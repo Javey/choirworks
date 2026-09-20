@@ -613,6 +613,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             self._evict_session(runtime.context_id)
             return
 
+        if not draft.nodes:
+            await self._persist(runtime)
+            await self._emit_event(
+                runtime, "", TaskState.TASK_STATE_COMPLETED,
+            )
+            self._evict_session(runtime.context_id)
+            return
+
         result = await create_plan.execute(ctx, draft)
         await emit_function_call(
             self, runtime, create_plan, draft, result,

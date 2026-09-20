@@ -165,6 +165,9 @@ def _make_plan(user: str) -> tuple[str, PlanDraft]:
     agents = sorted(_registered(user))
     agents_text = ", ".join(agents) if agents else "(无)"
 
+    if request in ("你好", "hello", "hi", "嗨", "在吗"):
+        return "用户只是打了个招呼，直接回复即可。", PlanDraft(nodes=[])
+
     if "Reason for replanning:" in user:
         draft = PlanDraft(
             nodes=[_node("n1", "developer", request, deps=[])],

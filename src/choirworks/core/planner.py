@@ -51,8 +51,6 @@ class PlanValidationError(ValueError):
 def validate_plan(
     draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: int = 20
 ) -> None:
-    if not draft.nodes:
-        raise PlanValidationError("plan has no nodes")
     if len(draft.nodes) > max_nodes:
         raise PlanValidationError(f"too many nodes: {len(draft.nodes)} > {max_nodes}")
 
@@ -110,7 +108,10 @@ Rules:
 - skill_id, when set, must be an existing skill id of the assigned agent.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.
-- Put the exact instruction for the agent in each node's input.text."""
+- Put the exact instruction for the agent in each node's input.text.
+- If the request is a greeting, chitchat, or anything that does not need
+  multi-agent decomposition, reply directly in your response text and call
+  PlanDraft with an empty nodes list."""
 
 
 class Planner:

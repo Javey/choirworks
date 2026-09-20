@@ -175,6 +175,16 @@ async def test_plan_failure_persists_context_state(tmp_path, echo_agent):
         assert state["plan_version"] == 2
 
 
+async def test_send_greeting_direct_reply(tmp_path, echo_agent):
+    async with sdk_hub(
+        tmp_path, "send.db", plans=[PlanDraft(nodes=[])]
+    ) as (app, http, client):
+        await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
+        task_id = await _send_once(client, _message("你好"))
+        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
+        assert task_nodes(task) == {}
+
+
 async def test_send_empty_text_raises(tmp_path, echo_agent):
     async with sdk_hub(
         tmp_path, "send.db", plans=[_plan("echo")] * 2

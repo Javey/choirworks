@@ -85,10 +85,9 @@ def test_too_many_nodes_rejected():
         validate_plan(draft, AGENTS, max_nodes=3)
 
 
-def test_empty_plan_rejected():
+def test_empty_plan_accepted():
     draft = PlanDraft(nodes=[])
-    with pytest.raises(PlanValidationError, match="no nodes"):
-        validate_plan(draft, AGENTS, max_nodes=10)
+    validate_plan(draft, AGENTS, max_nodes=10)
 
 
 async def make_registry(tmp_path, agents):
