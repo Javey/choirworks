@@ -5,9 +5,9 @@ import { Role, TaskState, taskStateToJSON } from "@a2a-js/sdk";
 import type { StreamResponse } from "@a2a-js/sdk";
 
 import { getClient } from "../api/a2a-client";
+import { api } from "../api/client";
 import {
   applyStreamEvent,
-  conversationFromTasks,
   emptyConversation,
   type ConversationView,
 } from "../lib/conversationView";
@@ -91,20 +91,12 @@ export function useConversation(contextId: string | null) {
     const generation = genRef.current;
     void (async () => {
       try {
-        const resp = await fetch(`/v1/conversations/${contextId}`);
-        if (!resp.ok) throw new Error("加载会话失败");
-        const data = await resp.json() as {
-          id: string;
-          context?: Record<string, unknown> | null;
-          tasks: Record<string, unknown>[];
-        };
+        const events = await api.getConversationEvents(contextId);
         if (generation !== genRef.current) return;
-        const snapshot = conversationFromTasks(
-          data.tasks as Record<string, unknown>[],
-          data.id,
-          data.context,
-        );
-        commit(snapshot);
+        for (const event of events) {
+          apply(event);
+        }
+        const snapshot = viewRef.current;
         if (snapshot.taskId && !isSettled(snapshot.state)) {
           await follow(snapshot.taskId);
         }

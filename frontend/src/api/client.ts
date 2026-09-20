@@ -47,6 +47,8 @@ export const api = {
     ),
   getConversation: (conversationId: string) =>
     request<ConversationDetailDto>("GET", `/v1/conversations/${conversationId}`),
+  getConversationEvents: (conversationId: string) =>
+    request<unknown[]>("GET", `/v1/conversations/${conversationId}/replay`),
   createTask: (text: string, conversationId?: string | null) =>
     request<CreateTaskOutDto>("POST", "/v1/tasks", {
       request: text,

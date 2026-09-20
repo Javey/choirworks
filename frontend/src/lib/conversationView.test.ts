@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyStreamEvent,
-  conversationFromTasks,
+  emptyConversation,
   type ConversationView,
 } from "./conversationView";
 
@@ -24,12 +24,18 @@ function statusUpdate(
 }
 
 function viewWithNodes(): ConversationView {
-  return conversationFromTasks([], "c1", {
-    nodes: [
-      { id: "n1", name: "n1", agent_name: "echo", status: "pending" },
-      { id: "n2", name: "n2", agent_name: "writer", status: "dispatched" },
-    ],
-  });
+  let view = emptyConversation;
+  view = applyStreamEvent(
+    view,
+    statusUpdate("state_delta", {
+      nodes: {
+        n1: { name: "n1", agent_name: "echo", status: "pending" },
+        n2: { name: "n2", agent_name: "writer", status: "dispatched" },
+      },
+    }),
+    0,
+  );
+  return view;
 }
 
 function functionCallEvent(
@@ -57,7 +63,7 @@ function functionCallEvent(
 describe("applyStreamEvent", () => {
   it("renders create_plan function call as a plan", () => {
     const view = applyStreamEvent(
-      conversationFromTasks([], "c1"),
+      emptyConversation,
       functionCallEvent("create_plan", {
         nodes: [
           { id: "n1", name: "task1", agent_name: "echo", deps: [] },
@@ -75,7 +81,7 @@ describe("applyStreamEvent", () => {
 
   it("renders create_plan function call failure", () => {
     const view = applyStreamEvent(
-      conversationFromTasks([], "c1"),
+      emptyConversation,
       functionCallEvent(
         "create_plan",
         {},
@@ -238,7 +244,7 @@ describe("applyStreamEvent", () => {
 
   it("applies state_delta: adds new members with notification", () => {
     const view = applyStreamEvent(
-      conversationFromTasks([], "c1"),
+      emptyConversation,
       statusUpdate("state_delta", {
         members: [
           { agent_name: "writer", agent_url: "http://x", reason: "plan" },
@@ -250,54 +256,32 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("writer");
     expect(view.notifications.at(-1)?.text).toContain("加入了群聊");
   });
-});
 
-describe("conversationFromTasks context restoration", () => {
-  it("restores members from context", () => {
-    const view = conversationFromTasks([], "c1", {
-      members: [
-        { agent_name: "echo", agent_url: "http://echo", reason: "plan", joined_at: "2025-01-01T00:00:00Z" },
-        { agent_name: "writer", agent_url: "http://writer", reason: "plan", joined_at: "2025-01-01T00:00:00Z" },
-      ],
-    });
+  it("replay: state_delta restores members, nodes and interventions", () => {
+    const view = applyStreamEvent(
+      emptyConversation,
+      statusUpdate("state_delta", {
+        nodes: {
+          n1: { name: "task1", agent_name: "echo", status: "completed", output: "done" },
+        },
+        members: [
+          { agent_name: "echo", agent_url: "http://echo", reason: "plan" },
+          { agent_name: "writer", agent_url: "http://writer", reason: "plan" },
+        ],
+        interventions: {
+          iv1: { status: "pending", node_id: "n1", kind: "confirm_cancel", question: "预算口径？" },
+        },
+      }),
+      0,
+    );
     expect(view.members.map((m) => m.agent_name)).toEqual(["echo", "writer"]);
-    expect(view.members[0]?.agent_url).toBe("http://echo");
-    expect(view.members[0]?.reason).toBe("plan");
-    expect(view.members[0]?.joined_at).toBe("2025-01-01T00:00:00Z");
-  });
-
-  it("restores interventions from context", () => {
-    const view = conversationFromTasks([], "c1", {
-      interventions: [
-        { id: "iv1", node_id: "n1", question: "预算口径？", status: "pending", kind: "confirm_cancel" },
-        { id: "iv2", node_id: "n2", question: "选择哪个？", status: "resolved", kind: "question" },
-      ],
-    });
-    expect(Object.keys(view.interventions)).toEqual(["iv1", "iv2"]);
+    expect(view.nodes.map((n) => n.id)).toEqual(["n1"]);
+    expect(view.nodes[0].status).toBe("completed");
+    expect(view.nodes[0].output).toBe("done");
+    expect(Object.keys(view.interventions)).toEqual(["iv1"]);
     expect(view.interventions.iv1.status).toBe("pending");
     expect(view.interventions.iv1.kind).toBe("confirm_cancel");
-    expect(view.interventions.iv1.question).toBe("预算口径？");
-    expect(view.interventions.iv2.status).toBe("resolved");
-  });
-
-  it("derives notifications from pending confirm_cancel interventions", () => {
-    const view = conversationFromTasks([], "c1", {
-      interventions: [
-        { id: "iv1", node_id: "n1", question: "预算口径？", status: "pending", kind: "confirm_cancel" },
-        { id: "iv2", node_id: "n2", question: "选择哪个？", status: "resolved", kind: "confirm_cancel" },
-      ],
-    });
-    expect(view.notifications).toHaveLength(1);
-    expect(view.notifications[0].kind).toBe("intervention.requested");
-    expect(view.notifications[0].text).toContain("待确认");
-    expect(view.notifications[0].text).toContain("预算口径？");
-    expect(view.notifications[0].node_id).toBe("n1");
-  });
-
-  it("restores empty members and interventions when context is null", () => {
-    const view = conversationFromTasks([], "c1", null);
-    expect(view.members).toEqual([]);
-    expect(view.interventions).toEqual({});
-    expect(view.notifications).toEqual([]);
+    expect(view.notifications.some((n) => n.text.includes("加入了群聊"))).toBe(true);
+    expect(view.notifications.some((n) => n.kind === "intervention.requested")).toBe(true);
   });
 });

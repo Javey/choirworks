@@ -31,6 +31,7 @@ from choirworks.a2a.rewind import (
     restore_state,
 )
 from choirworks.api import agents as agents_routes
+from choirworks.api.replay import synthesize_replay_events
 from choirworks.config import Settings
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import Planner
@@ -288,6 +289,24 @@ async def create_app(
         context_id: str, request: Request
     ) -> dict[str, Any]:
         return await _conversation_payload(request, context_id)
+
+    @app.get("/v1/conversations/{context_id}/replay")
+    async def replay_conversation(
+        context_id: str, request: Request
+    ) -> list[dict[str, Any]]:
+        tasks = await _context_tasks(request, context_id)
+        if not tasks:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        record = await request.app.state.context_store.get(context_id)
+        context: dict[str, Any] | None = None
+        markers = parse_markers(record.rewind_markers) if record is not None else []
+        if record is not None:
+            try:
+                context = json.loads(record.state)
+            except ValueError:
+                context = None
+        hidden = hidden_task_ids([task.id for task in tasks], markers)
+        return synthesize_replay_events(tasks, context_id, context, hidden)
 
     @app.post("/v1/conversations/{context_id}/rewind")
     async def rewind_conversation(
