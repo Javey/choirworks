@@ -1,13 +1,43 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
-from a2a.types.a2a_pb2 import TaskState
+from a2a.types.a2a_pb2 import (
+    Artifact,
+    Part,
+    TaskArtifactUpdateEvent,
+    TaskState,
+)
+from google.protobuf import struct_pb2
+from google.protobuf.json_format import ParseDict
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from choirworks.a2a.executor import ChoirWorksAgentExecutor, SessionRuntime
     from choirworks.tools.base import AgentFunction, FunctionResult
+
+
+def _function_call_part(
+    func_name: str,
+    args: dict[str, Any],
+    result: dict[str, Any],
+) -> Part:
+    data_value = struct_pb2.Value()
+    ParseDict(
+        {
+            "function_name": func_name,
+            "function_args": args,
+            "function_result": result,
+        },
+        data_value,
+    )
+    part_meta = struct_pb2.Struct()
+    part_meta.update({"cw_type": "function_call"})
+    part = Part()
+    part.data.CopyFrom(data_value)
+    part.metadata.CopyFrom(part_meta)
+    return part
 
 
 async def emit_function_call(
@@ -19,20 +49,23 @@ async def emit_function_call(
     *,
     state_name: int = TaskState.TASK_STATE_WORKING,
 ) -> None:
-    """Emit a ``function_call`` wire event on the A2A event queue.
-
-    This replaces the previous pattern of one ``kind`` string per semantic
-    event.  The frontend dispatches on ``function_name`` and reads typed
-    ``function_args`` / ``function_result`` payloads.
-    """
-    await executor._emit_event(
-        runtime,
-        "function_call",
-        state_name,
-        function_name=func.name,
-        function_args=args.model_dump(),
-        function_result=result.model_dump(),
+    part = _function_call_part(
+        func.name, args.model_dump(), result.model_dump()
     )
+    artifact = Artifact(
+        artifact_id=uuid.uuid4().hex,
+        parts=[part],
+    )
+    await runtime.queue.enqueue_event(
+        TaskArtifactUpdateEvent(
+            task_id=runtime.task_id,
+            context_id=runtime.context_id,
+            artifact=artifact,
+            append=False,
+            last_chunk=True,
+        )
+    )
+    await executor._emit_event(runtime, "", state_name)
 
 
 async def emit_function_error(
@@ -43,15 +76,23 @@ async def emit_function_error(
     *,
     state_name: int = TaskState.TASK_STATE_FAILED,
 ) -> None:
-    """Emit a failed ``function_call`` event (e.g. planning failed)."""
-    await executor._emit_event(
-        runtime,
-        "function_call",
-        state_name,
-        function_name=func.name,
-        function_args={},
-        function_result={"success": False, "error": error},
+    part = _function_call_part(
+        func.name, {}, {"success": False, "error": error}
     )
+    artifact = Artifact(
+        artifact_id=uuid.uuid4().hex,
+        parts=[part],
+    )
+    await runtime.queue.enqueue_event(
+        TaskArtifactUpdateEvent(
+            task_id=runtime.task_id,
+            context_id=runtime.context_id,
+            artifact=artifact,
+            append=False,
+            last_chunk=True,
+        )
+    )
+    await executor._emit_event(runtime, "", state_name)
 
 
 async def emit_state_delta(
@@ -63,18 +104,6 @@ async def emit_state_delta(
     interventions: dict[str, dict[str, Any]] | None = None,
     state_name: int = TaskState.TASK_STATE_WORKING,
 ) -> None:
-    """Emit a ``state_delta`` wire event carrying typed state changes.
-
-    Replaces B-class ``kind`` events (node.completed, intervention.expired,
-    room.participant_joined, …) with a single unified delta.  The frontend
-    merges the delta into its view and derives notifications from the changes.
-
-    * ``nodes`` — ``{node_id: {status, output?, error?, …}}``; new node ids
-      are added to the view.
-    * ``members`` — list of new member dicts to append.
-    * ``interventions`` — ``{intervention_id: {status, node_id, kind, …}}``;
-      the frontend derives lifecycle notifications from status transitions.
-    """
     delta: dict[str, Any] = {}
     if nodes:
         delta["nodes"] = nodes

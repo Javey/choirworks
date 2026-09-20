@@ -115,7 +115,10 @@ def synthesize_replay_events(
         task_id = task_dict.get("id", "")
         for art in task_dict.get("artifacts", []):
             parts = art.get("parts", [])
-            if parts and parts[0].get("metadata", {}).get("cw_thought") is True:
+            if not parts:
+                continue
+            p_meta = parts[0].get("metadata", {})
+            if p_meta.get("cw_thought") is True or p_meta.get("cw_type") == "function_call":
                 events.append({
                     "payload": {
                         "$case": "artifactUpdate",

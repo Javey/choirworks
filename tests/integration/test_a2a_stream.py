@@ -69,27 +69,39 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
             for su in status_updates
             if "kind" in su.metadata.fields
         ]
-        assert "function_call" in kinds
+        assert "state_delta" in kinds
+        assert "function_call" not in kinds
         assert "plan.announced" not in kinds
         assert all(not su.status.HasField("message") for su in status_updates)
-        create_plan_call = next(
-            su
-            for su in status_updates
-            if su.metadata.fields["kind"].string_value == "function_call"
-            and su.metadata.fields["function_name"].string_value == "create_plan"
-        )
-        nodes = create_plan_call.metadata.fields["function_args"].struct_value.fields[
-            "nodes"
-        ].list_value.values
-        assert nodes[0].struct_value.fields["agent_name"].string_value == "echo"
-        func_result = create_plan_call.metadata.fields["function_result"].struct_value
-        assert func_result.fields["success"].bool_value is True
-        thought_updates = [
+        artifact_updates = [
             r.artifact_update
             for r in responses
             if r.WhichOneof("payload") == "artifact_update"
-            and r.artifact_update.artifact.parts
-            and "cw_thought" in r.artifact_update.artifact.parts[0].metadata.fields
+        ]
+        function_call_updates = [
+            u
+            for u in artifact_updates
+            if u.artifact.parts
+            and "cw_type" in u.artifact.parts[0].metadata.fields
+            and u.artifact.parts[0].metadata.fields["cw_type"].string_value
+            == "function_call"
+        ]
+        assert len(function_call_updates) > 0
+        create_plan_call = next(
+            u for u in function_call_updates
+            if u.artifact.parts[0].data.struct_value.fields["function_name"].string_value
+            == "create_plan"
+        )
+        fc_data = create_plan_call.artifact.parts[0].data.struct_value.fields
+        nodes = fc_data["function_args"].struct_value.fields["nodes"].list_value.values
+        assert nodes[0].struct_value.fields["agent_name"].string_value == "echo"
+        func_result = fc_data["function_result"].struct_value
+        assert func_result.fields["success"].bool_value is True
+        thought_updates = [
+            u
+            for u in artifact_updates
+            if u.artifact.parts
+            and "cw_thought" in u.artifact.parts[0].metadata.fields
         ]
         thought_chunks = [u.artifact.parts[0].text for u in thought_updates]
         authors = {

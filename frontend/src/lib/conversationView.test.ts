@@ -42,19 +42,27 @@ function functionCallEvent(
   name: string,
   args: Record<string, unknown> = {},
   result: Record<string, unknown> = { success: true },
-  state: TaskState = TaskState.TASK_STATE_WORKING,
 ) {
   return {
     payload: {
-      $case: "statusUpdate",
+      $case: "artifactUpdate",
       value: {
-        status: { state },
-        metadata: {
-          kind: "function_call",
-          function_name: name,
-          function_args: args,
-          function_result: result,
+        artifact: {
+          artifactId: `fc-${name}`,
+          parts: [{
+            content: {
+              $case: "data",
+              value: {
+                function_name: name,
+                function_args: args,
+                function_result: result,
+              },
+            },
+            metadata: { cw_type: "function_call" },
+          }],
         },
+        append: false,
+        lastChunk: true,
       },
     },
   };
@@ -86,7 +94,6 @@ describe("applyStreamEvent", () => {
         "create_plan",
         {},
         { success: false, error: "no agents registered" },
-        TaskState.TASK_STATE_FAILED,
       ),
       1,
     );
@@ -132,7 +139,6 @@ describe("applyStreamEvent", () => {
           node_id: "n1",
           question: "预算口径？",
         },
-        TaskState.TASK_STATE_INPUT_REQUIRED,
       ),
       1,
     );

@@ -339,143 +339,6 @@ export function applyStreamEvent(
       return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };
     }
 
-    if (kind === "function_call") {
-      const funcName = typeof meta.function_name === "string" ? meta.function_name : "";
-      const funcArgs = (meta.function_args as ProtoStruct | undefined) ?? {};
-      const funcResult = (meta.function_result as ProtoStruct | undefined) ?? {};
-      const success = funcResult.success !== false;
-
-      if (funcName === "create_plan") {
-        if (!success) {
-          const error = typeof funcResult.error === "string" ? funcResult.error : "计划失败";
-          const notification: SystemNotification = {
-            id: `sys-plan-fail-${seq}`,
-            kind: "plan.failed",
-            text: `计划失败：${error}`,
-            created_at: new Date().toISOString(),
-          };
-          return {
-            ...view,
-            state,
-            notifications: [...view.notifications, notification],
-            lastSeq: Math.max(view.lastSeq, seq),
-          };
-        }
-        const nodesMeta = (funcArgs.nodes as ProtoStruct[] | undefined) ?? [];
-        const nodes: TaskNodeInfo[] = nodesMeta.map((n: ProtoStruct) => ({
-          id: String(n.id ?? ""),
-          name: String(n.name ?? ""),
-          agent_name: String(n.agent_name ?? ""),
-          status: "pending",
-        }));
-        const notification: SystemNotification = {
-          id: `sys-plan-${seq}`,
-          kind: "plan.created",
-          text: `执行计划：${nodes.length} 个节点`,
-          created_at: new Date().toISOString(),
-        };
-        return {
-          ...view,
-          state,
-          nodes,
-          notifications: [...view.notifications, notification],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-
-      if (funcName === "revise_plan") {
-        const reason = typeof funcArgs.reason === "string" ? funcArgs.reason : "";
-        const addedNodes = (funcResult.added_nodes as ProtoStruct[] | undefined) ?? [];
-        const invalidated = Array.isArray(funcResult.invalidated)
-          ? (funcResult.invalidated as unknown[]).map(String)
-          : [];
-        const added: TaskNodeInfo[] = addedNodes.map((n: ProtoStruct) => ({
-          id: String(n.id ?? ""),
-          name: String(n.name ?? ""),
-          agent_name: String(n.agent_name ?? ""),
-          status: "pending",
-        }));
-        const existing = new Set(view.nodes.map((n) => n.id));
-        const nodes = [
-          ...view.nodes.map((n) =>
-            invalidated.includes(n.id) ? { ...n, status: "invalidated" } : n,
-          ),
-          ...added.filter((n) => !existing.has(n.id)),
-        ];
-        const parts: string[] = [];
-        if (invalidated.length > 0) parts.push(`作废 ${invalidated.length} 个节点`);
-        if (added.length > 0) parts.push(`新增 ${added.length} 个节点`);
-        const notification: SystemNotification = {
-          id: `sys-revised-${seq}`,
-          kind: "plan.revised",
-          text: `计划已修订：${parts.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
-          created_at: new Date().toISOString(),
-        };
-        return {
-          ...view,
-          state,
-          nodes,
-          notifications: [...view.notifications, notification],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-
-      if (funcName === "ask_user") {
-        const nodeId = String(funcArgs.node_id ?? funcResult.node_id ?? "");
-        const question = typeof (funcResult.question ?? funcArgs.question) === "string"
-          ? String(funcResult.question ?? funcArgs.question)
-          : "";
-        const interventionId = String(funcResult.intervention_id ?? seq);
-        const notification: SystemNotification = {
-          id: `sys-intervention-${interventionId}`,
-          kind: "intervention.requested",
-          text: question || "等待人工答复",
-          node_id: nodeId || undefined,
-          created_at: new Date().toISOString(),
-        };
-        return {
-          ...view,
-          state: taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
-          nodes: view.nodes.map((n) =>
-            n.id === nodeId ? { ...n, status: "input_required" } : n,
-          ),
-          notifications: [...view.notifications, notification],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-
-      if (funcName === "call_subagent") {
-        const helper = typeof funcResult.helper === "string" ? funcResult.helper : "";
-        const requester = typeof funcResult.requester === "string" ? funcResult.requester : "";
-        const helperNodeId = String(funcResult.helper_node_id ?? "");
-        const node: TaskNodeInfo = {
-          id: helperNodeId,
-          name: helper,
-          agent_name: helper,
-          status: "pending",
-        };
-        const existing = new Set(view.nodes.map((n) => n.id));
-        const nodes = existing.has(helperNodeId)
-          ? view.nodes
-          : [...view.nodes, node];
-        const notification: SystemNotification = {
-          id: `sys-assist-${seq}`,
-          kind: "assist.dispatched",
-          text: `${requester} 请求 ${helper} 协助`,
-          created_at: new Date().toISOString(),
-        };
-        return {
-          ...view,
-          state,
-          nodes,
-          notifications: [...view.notifications, notification],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-
-      return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };
-    }
-
     if (kind === "state_delta") {
       return applyStateDelta(view, meta, state, seq);
     }
@@ -530,8 +393,138 @@ export function applyStreamEvent(
         ? artifactMeta.author
         : agentName || "assistant";
 
+    // Function call data part (Part.data with cw_type discriminator)
+    const parts = (artifact.parts as ProtoStruct[] | undefined) ?? [];
+    const pMeta = parts.length > 0 ? metaOf(parts[0]) : {};
+    const firstPartContent = parts[0]?.content as { $case?: string; value?: unknown } | undefined;
+    if (firstPartContent?.$case === "data" && pMeta.cw_type === "function_call") {
+      const fcData = firstPartContent.value as ProtoStruct;
+      const funcName = typeof fcData.function_name === "string" ? fcData.function_name : "";
+      const funcArgs = (fcData.function_args as ProtoStruct | undefined) ?? {};
+      const funcResult = (fcData.function_result as ProtoStruct | undefined) ?? {};
+      const success = funcResult.success !== false;
+
+      if (funcName === "create_plan") {
+        if (!success) {
+          const error = typeof funcResult.error === "string" ? funcResult.error : "计划失败";
+          return {
+            ...view,
+            notifications: [...view.notifications, {
+              id: `sys-plan-fail-${seq}`,
+              kind: "plan.failed",
+              text: `计划失败：${error}`,
+              created_at: new Date().toISOString(),
+            }],
+            lastSeq: Math.max(view.lastSeq, seq),
+          };
+        }
+        const nodesMeta = (funcArgs.nodes as ProtoStruct[] | undefined) ?? [];
+        const nodes: TaskNodeInfo[] = nodesMeta.map((n: ProtoStruct) => ({
+          id: String(n.id ?? ""),
+          name: String(n.name ?? ""),
+          agent_name: String(n.agent_name ?? ""),
+          status: "pending",
+        }));
+        return {
+          ...view,
+          nodes,
+          notifications: [...view.notifications, {
+            id: `sys-plan-${seq}`,
+            kind: "plan.created",
+            text: `执行计划：${nodes.length} 个节点`,
+            created_at: new Date().toISOString(),
+          }],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
+
+      if (funcName === "revise_plan") {
+        const reason = typeof funcArgs.reason === "string" ? funcArgs.reason : "";
+        const addedNodes = (funcResult.added_nodes as ProtoStruct[] | undefined) ?? [];
+        const invalidated = Array.isArray(funcResult.invalidated)
+          ? (funcResult.invalidated as unknown[]).map(String)
+          : [];
+        const added: TaskNodeInfo[] = addedNodes.map((n: ProtoStruct) => ({
+          id: String(n.id ?? ""),
+          name: String(n.name ?? ""),
+          agent_name: String(n.agent_name ?? ""),
+          status: "pending",
+        }));
+        const existing = new Set(view.nodes.map((n) => n.id));
+        const nodes = [
+          ...view.nodes.map((n) =>
+            invalidated.includes(n.id) ? { ...n, status: "invalidated" } : n,
+          ),
+          ...added.filter((n) => !existing.has(n.id)),
+        ];
+        const partsText: string[] = [];
+        if (invalidated.length > 0) partsText.push(`作废 ${invalidated.length} 个节点`);
+        if (added.length > 0) partsText.push(`新增 ${added.length} 个节点`);
+        return {
+          ...view,
+          nodes,
+          notifications: [...view.notifications, {
+            id: `sys-revised-${seq}`,
+            kind: "plan.revised",
+            text: `计划已修订：${partsText.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
+            created_at: new Date().toISOString(),
+          }],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
+
+      if (funcName === "ask_user") {
+        const nodeId = String(funcArgs.node_id ?? funcResult.node_id ?? "");
+        const question = typeof (funcResult.question ?? funcArgs.question) === "string"
+          ? String(funcResult.question ?? funcArgs.question)
+          : "";
+        const interventionId = String(funcResult.intervention_id ?? seq);
+        return {
+          ...view,
+          state: taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
+          nodes: view.nodes.map((n) =>
+            n.id === nodeId ? { ...n, status: "input_required" } : n,
+          ),
+          notifications: [...view.notifications, {
+            id: `sys-intervention-${interventionId}`,
+            kind: "intervention.requested",
+            text: question || "等待人工答复",
+            node_id: nodeId || undefined,
+            created_at: new Date().toISOString(),
+          }],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
+
+      if (funcName === "call_subagent") {
+        const helper = typeof funcResult.helper === "string" ? funcResult.helper : "";
+        const requester = typeof funcResult.requester === "string" ? funcResult.requester : "";
+        const helperNodeId = String(funcResult.helper_node_id ?? "");
+        const node: TaskNodeInfo = {
+          id: helperNodeId,
+          name: helper,
+          agent_name: helper,
+          status: "pending",
+        };
+        const existing = new Set(view.nodes.map((n) => n.id));
+        const nodes = existing.has(helperNodeId)
+          ? view.nodes
+          : [...view.nodes, node];
+        return {
+          ...view,
+          nodes,
+          notifications: [...view.notifications, {
+            id: `sys-assist-${seq}`,
+            kind: "assist.dispatched",
+            text: `${requester} 请求 ${helper} 协助`,
+            created_at: new Date().toISOString(),
+          }],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
+    }
+
     // Thought part in artifact (planner / agent reasoning stream)
-    const pMeta = partMetaOf(artifact);
     if (pMeta.cw_thought === true && text) {
       const chatMsg: ChatMessage = {
         id: artifactId,
