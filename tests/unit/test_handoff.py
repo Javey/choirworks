@@ -51,7 +51,7 @@ def test_dispatch_text_includes_direct_dep_output():
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(dep, target)
     text = build_dispatch_text(target, state, agents={})
-    assert "@researcher" in text
+    assert "researcher" in text
     assert "调研结果" in text
     assert QUOTED_CONTENT_BEGIN in text
     assert QUOTED_CONTENT_END in text

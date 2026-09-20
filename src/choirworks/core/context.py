@@ -71,7 +71,7 @@ def build_dispatch_text(
             continue
         label = dep_node.name or dep_node.id
         handoffs.append(
-            f"@{dep_node.agent_name}（{label}）的产出：\n"
+            f"{dep_node.agent_name}（{label}）的产出：\n"
             f"{quote_untrusted(_truncate_handoff(dep_node.output))}"
         )
     if handoffs:
@@ -227,7 +227,7 @@ def build_replan_context(nodes: Iterable[NodeState]) -> str:
 
 def build_assist_input(requester_name: str, output: str | None) -> str:
     return (
-        f"@{requester_name} 在协作中请求你的协助。\n"
+        f"{requester_name} 在协作中请求你的协助。\n"
         f"参考上下文：\n{quote_untrusted((output or '')[:MAX_PEER_CONTEXT])}\n\n"
         f"请提供你的专业协助。"
     )

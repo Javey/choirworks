@@ -114,7 +114,7 @@ def test_build_replan_reason_and_context():
 
 def test_build_assist_input_and_peer_fallback():
     assist = build_assist_input("a", "产出")
-    assert "@a 在协作中请求你的协助。" in assist
+    assert "a 在协作中请求你的协助。" in assist
     assert QUOTED_CONTENT_BEGIN in assist
     assert build_peer_fallback_input("问题") == "请协助回答以下问题：\n问题"
 
