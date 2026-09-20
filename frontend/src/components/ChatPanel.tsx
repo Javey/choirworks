@@ -206,7 +206,7 @@ export function ChatPanel({ view }: { view: ConversationView }) {
       pendingThinking = null;
     } else {
       rendered.push(
-        <div key={`working-${item.data.nodeId}`} className="animate-[fade-in_0.3s_ease-out]">
+        <div key={`working-${item.data.artifactId}`} className="animate-[fade-in_0.3s_ease-out]">
           <WorkingItem bubble={item.data} thinking={pendingThinking} />
         </div>,
       );

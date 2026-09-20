@@ -26,6 +26,7 @@ export interface SystemNotification {
 }
 
 export interface WorkingBubble {
+  artifactId: string;
   nodeId: string;
   agentName: string;
   text: string;
@@ -589,7 +590,7 @@ export function applyStreamEvent(
 
     // Streaming working bubble (node output chunks)
     if (text) {
-      const existing = view.workingBubbles.find((b) => b.nodeId === nodeId);
+      const existing = view.workingBubbles.find((b) => b.artifactId === artifactId);
       const newText = append && existing ? existing.text + text : text;
       const activeArtifactIds = new Set(view.activeArtifactIds);
       if (!append && !lastChunk) {
@@ -603,15 +604,15 @@ export function applyStreamEvent(
         activeArtifactIds,
         workingBubbles: existing
           ? view.workingBubbles.map((b) =>
-            b.nodeId === nodeId ? { ...b, text: newText } : b,
+            b.artifactId === artifactId ? { ...b, text: newText } : b,
           )
-          : [...view.workingBubbles, { nodeId: nodeId ?? "", agentName, text: newText }],
+          : [...view.workingBubbles, { artifactId, nodeId: nodeId ?? "", agentName, text: newText }],
         lastSeq: Math.max(view.lastSeq, seq),
       };
       if (lastChunk) {
         return {
           ...updated,
-          workingBubbles: updated.workingBubbles.filter((b) => b.nodeId !== nodeId),
+          workingBubbles: updated.workingBubbles.filter((b) => b.artifactId !== artifactId),
           nodes: view.nodes.map((n) =>
             n.id === nodeId ? { ...n, status: "working", output: newText } : n,
           ),

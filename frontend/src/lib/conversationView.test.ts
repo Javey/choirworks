@@ -290,4 +290,100 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.some((n) => n.text.includes("加入了群聊"))).toBe(true);
     expect(view.notifications.some((n) => n.kind === "intervention.requested")).toBe(true);
   });
+
+  it("streaming artifact: append chunk updates same bubble, lastChunk removes it", () => {
+    let view = viewWithNodes();
+    const artifactId = "art-stream-1";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    expect(view.workingBubbles).toHaveLength(1);
+    expect(view.workingBubbles[0].artifactId).toBe(artifactId);
+    expect(view.workingBubbles[0].text).toBe("Hello");
+    expect(view.activeArtifactIds.has(artifactId)).toBe(true);
+
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: true,
+            lastChunk: false,
+          },
+        },
+      },
+      2,
+    );
+    expect(view.workingBubbles).toHaveLength(1);
+    expect(view.workingBubbles[0].text).toBe("Hello world");
+
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "!" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: true,
+            lastChunk: true,
+          },
+        },
+      },
+      3,
+    );
+    expect(view.workingBubbles).toHaveLength(0);
+    expect(view.activeArtifactIds.has(artifactId)).toBe(false);
+    expect(view.nodes.find((n) => n.id === "n1")?.output).toBe("Hello world!");
+  });
+
+  it("two concurrent streams without node_id create distinct bubbles", () => {
+    let view = emptyConversation;
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId: "art-a", parts: [{ content: { $case: "text", value: "A1" } }] },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId: "art-b", parts: [{ content: { $case: "text", value: "B1" } }] },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      2,
+    );
+    expect(view.workingBubbles).toHaveLength(2);
+    expect(view.workingBubbles.find((b) => b.artifactId === "art-a")?.text).toBe("A1");
+    expect(view.workingBubbles.find((b) => b.artifactId === "art-b")?.text).toBe("B1");
+  });
 });
