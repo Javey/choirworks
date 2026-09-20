@@ -11,7 +11,7 @@ from choirworks.tools.call_subagent import (
     CallSubagentFunction,
 )
 from choirworks.tools.create_plan import CreatePlanFunction
-from choirworks.tools.emitter import emit_function_call, emit_function_error
+from choirworks.tools.emitter import emit_function_call, emit_function_error, emit_state_delta
 from choirworks.tools.registry import FunctionRegistry
 from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanFunction
 
@@ -29,4 +29,5 @@ __all__ = [
     "RevisePlanFunction",
     "emit_function_call",
     "emit_function_error",
+    "emit_state_delta",
 ]

@@ -155,65 +155,47 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("writer");
   });
 
-  it("applies plan revisions: adds and invalidates nodes", () => {
-    const view = applyStreamEvent(
-      viewWithNodes(),
-      statusUpdate("plan.revised", {
-        reason: "换人",
-        added_nodes: [
-          { id: "x1", name: "designer", agent_name: "designer", deps: ["n1"] },
-        ],
-        invalidated: ["n2"],
-      }),
-      1,
-    );
-    expect(view.nodes.map((n) => [n.id, n.status])).toEqual([
-      ["n1", "pending"],
-      ["n2", "invalidated"],
-      ["x1", "pending"],
-    ]);
-    expect(view.nodes[2].agent_name).toBe("designer");
-    expect(view.notifications.at(-1)?.text).toContain("计划已修订");
-  });
-
-  it("marks invalidated and canceled nodes", () => {
+  it("applies state_delta: invalidates and cancels nodes", () => {
     let view = applyStreamEvent(
       viewWithNodes(),
-      statusUpdate("node.invalidated", { node_id: "n1" }),
+      statusUpdate("state_delta", { nodes: { n1: { status: "invalidated" } } }),
       1,
     );
     expect(view.nodes[0].status).toBe("invalidated");
     view = applyStreamEvent(
       view,
-      statusUpdate("node.canceled", { node_id: "n2" }),
+      statusUpdate("state_delta", { nodes: { n2: { status: "canceled" } } }),
       2,
     );
     expect(view.nodes[1].status).toBe("canceled");
   });
 
-  it("shows intervention questions and marks the node waiting", () => {
+  it("applies state_delta: marks node input_required", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
-      statusUpdate("intervention.requested", {
-        node_id: "n1",
-        intervention_id: "iv1",
-        question: "预算口径？",
-      }),
+      statusUpdate(
+        "state_delta",
+        { nodes: { n1: { status: "input_required", question: "预算口径？" } } },
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+      ),
       1,
     );
     expect(view.nodes[0].status).toBe("input_required");
     expect(view.state).toBe(taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED));
-    expect(view.notifications.at(-1)?.text).toBe("预算口径？");
   });
 
-  it("shows confirm_cancel requests without pausing the task", () => {
+  it("applies state_delta: confirm_cancel intervention notification", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
-      statusUpdate("intervention.requested", {
-        node_id: "n2",
-        intervention_id: "iv1",
-        intervention_kind: "confirm_cancel",
-        question: "是否打断？",
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: {
+            status: "pending",
+            node_id: "n2",
+            kind: "confirm_cancel",
+            question: "是否打断？",
+          },
+        },
       }),
       1,
     );
@@ -222,18 +204,50 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("待确认");
   });
 
-  it("notifies resolved and expired interventions", () => {
+  it("applies state_delta: resolved and expired intervention notifications", () => {
     let view = applyStreamEvent(
       viewWithNodes(),
-      statusUpdate("intervention.resolved", { intervention_id: "iv1" }),
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: { status: "pending", node_id: "n1", kind: "question" },
+        },
+      }),
       1,
+    );
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: { status: "resolved", node_id: "n1", kind: "question" },
+        },
+      }),
+      2,
     );
     expect(view.notifications.at(-1)?.text).toContain("任务继续");
     view = applyStreamEvent(
       view,
-      statusUpdate("intervention.expired", { intervention_id: "iv2" }),
-      2,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv2: { status: "expired", node_id: "n1", kind: "confirm_cancel" },
+        },
+      }),
+      3,
     );
     expect(view.notifications.at(-1)?.text).toContain("无需处理");
+  });
+
+  it("applies state_delta: adds new members with notification", () => {
+    const view = applyStreamEvent(
+      conversationFromTasks([], "c1"),
+      statusUpdate("state_delta", {
+        members: [
+          { agent_name: "writer", agent_url: "http://x", reason: "plan" },
+        ],
+      }),
+      1,
+    );
+    expect(view.members.map((m) => m.agent_name)).toContain("writer");
+    expect(view.notifications.at(-1)?.text).toContain("writer");
+    expect(view.notifications.at(-1)?.text).toContain("加入了群聊");
   });
 });

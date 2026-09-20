@@ -37,6 +37,14 @@ export interface TaskNodeInfo {
   error?: string;
 }
 
+export interface InterventionInfo {
+  id: string;
+  status: string;
+  node_id: string;
+  kind: string;
+  question?: string;
+}
+
 export interface ConversationView {
   taskId: string;
   contextId: string;
@@ -45,6 +53,7 @@ export interface ConversationView {
   notifications: SystemNotification[];
   members: RoomMemberDto[];
   nodes: TaskNodeInfo[];
+  interventions: Record<string, InterventionInfo>;
   workingBubbles: WorkingBubble[];
   lastSeq: number;
 }
@@ -57,6 +66,7 @@ export const emptyConversation: ConversationView = {
   notifications: [],
   members: [],
   nodes: [],
+  interventions: {},
   workingBubbles: [],
   lastSeq: 0,
 };
@@ -179,8 +189,151 @@ export function conversationFromTasks(
     notifications: [],
     members: [],
     nodes,
+    interventions: {},
     workingBubbles: [],
     lastSeq: 0,
+  };
+}
+
+const TERMINAL_NODE_STATUSES = new Set(["completed", "failed", "canceled", "invalidated"]);
+
+function applyStateDelta(
+  view: ConversationView,
+  meta: ProtoStruct,
+  state: string,
+  seq: number,
+): ConversationView {
+  const notifications: SystemNotification[] = [];
+  let nodes = view.nodes;
+  let members = view.members;
+  let interventions = view.interventions;
+
+  // --- nodes ---
+  const nodesDelta = meta.nodes as Record<string, ProtoStruct> | undefined;
+  if (nodesDelta) {
+    for (const [id, changes] of Object.entries(nodesDelta)) {
+      const status = typeof changes.status === "string" ? changes.status : undefined;
+      const existing = nodes.find((n) => n.id === id);
+      if (existing) {
+        nodes = nodes.map((n) => {
+          if (n.id !== id) return n;
+          return {
+            ...n,
+            status: status ?? n.status,
+            output: typeof changes.output === "string" ? changes.output : n.output,
+            error: typeof changes.error === "string" ? changes.error : n.error,
+          };
+        });
+      } else {
+        const newNode: TaskNodeInfo = {
+          id,
+          name: String(changes.name ?? changes.agent_name ?? ""),
+          agent_name: String(changes.agent_name ?? ""),
+          status: status ?? "pending",
+        };
+        nodes = [...nodes, newNode];
+      }
+      if (status && TERMINAL_NODE_STATUSES.has(status)) {
+        // workingBubbles filtered below
+      }
+    }
+  }
+
+  // Clear working bubbles for any terminal nodes
+  const terminalIds = new Set(
+    nodes.filter((n) => TERMINAL_NODE_STATUSES.has(n.status)).map((n) => n.id),
+  );
+  const workingBubbles = terminalIds.size
+    ? view.workingBubbles.filter((b) => !terminalIds.has(b.nodeId))
+    : view.workingBubbles;
+
+  // --- members ---
+  const membersDelta = meta.members as ProtoStruct[] | undefined;
+  if (membersDelta && membersDelta.length > 0) {
+    const newMembers: RoomMemberDto[] = [];
+    for (const m of membersDelta) {
+      const agentName = String(m.agent_name ?? "");
+      if (!agentName || members.some((mem) => mem.agent_name === agentName)) continue;
+      newMembers.push({
+        conversation_id: view.contextId,
+        agent_name: agentName,
+        agent_url: String(m.agent_url ?? ""),
+        reason: typeof m.reason === "string" ? m.reason : null,
+        joined_at: new Date().toISOString(),
+      });
+      notifications.push({
+        id: `sys-join-${agentName}-${seq}`,
+        kind: "room.participant_joined",
+        text: `${agentName} 加入了群聊`,
+        agent_name: agentName,
+        created_at: new Date().toISOString(),
+      });
+    }
+    if (newMembers.length) {
+      members = [...members, ...newMembers];
+    }
+  }
+
+  // --- interventions ---
+  const interventionsDelta = meta.interventions as Record<string, ProtoStruct> | undefined;
+  if (interventionsDelta) {
+    const newInterventions = { ...interventions };
+    for (const [id, changes] of Object.entries(interventionsDelta)) {
+      const status = typeof changes.status === "string" ? changes.status : "";
+      const ivKind = typeof changes.kind === "string" ? changes.kind : "";
+      const nodeId = typeof changes.node_id === "string" ? changes.node_id : "";
+      const question = typeof changes.question === "string" ? changes.question : "";
+      const prev = interventions[id];
+
+      newInterventions[id] = {
+        id,
+        status: status || prev?.status || "pending",
+        node_id: nodeId || prev?.node_id || "",
+        kind: ivKind || prev?.kind || "question",
+        question: question || prev?.question,
+      };
+
+      // Derive notification from state transition
+      if (!prev && status === "pending" && ivKind === "confirm_cancel") {
+        notifications.push({
+          id: `sys-intervention-${id}`,
+          kind: "intervention.requested",
+          text: `待确认：${question}`,
+          node_id: nodeId || undefined,
+          created_at: new Date().toISOString(),
+        });
+      } else if (status === "resolved" && (!prev || prev.status === "pending")) {
+        notifications.push({
+          id: `sys-intervention-${id}-resolved`,
+          kind: "intervention.resolved",
+          text: "人工答复已回填，任务继续",
+          node_id: nodeId || prev?.node_id || undefined,
+          created_at: new Date().toISOString(),
+        });
+      } else if (status === "expired" && (!prev || prev.status === "pending")) {
+        notifications.push({
+          id: `sys-intervention-${id}-expired`,
+          kind: "intervention.expired",
+          text: "该确认已无需处理",
+          node_id: nodeId || prev?.node_id || undefined,
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+    interventions = newInterventions;
+  }
+
+  return {
+    ...view,
+    state,
+    nodes,
+    members,
+    interventions,
+    workingBubbles,
+    notifications: notifications.length
+      ? [...view.notifications, ...notifications]
+      : view.notifications,
+    lastSeq: Math.max(view.lastSeq, seq),
   };
 }
 
@@ -408,116 +561,8 @@ export function applyStreamEvent(
       return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };
     }
 
-    if (kind === "plan.created") {
-      const nodesMeta = (meta.nodes as ProtoStruct[] | undefined) ?? [];
-      const nodes: TaskNodeInfo[] = nodesMeta.map((n) => ({
-        id: String(n.id ?? ""),
-        name: String(n.name ?? ""),
-        agent_name: String(n.agent_name ?? ""),
-        status: "pending",
-      }));
-      const notification: SystemNotification = {
-        id: `sys-plan-${seq}`,
-        kind,
-        text: `执行计划：${nodes.length} 个节点`,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state,
-        nodes,
-        notifications: [...view.notifications, notification],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "plan.revised") {
-      const reason = typeof meta.reason === "string" ? meta.reason : "";
-      const addedNodes = (meta.added_nodes as ProtoStruct[] | undefined) ?? [];
-      const invalidated = Array.isArray(meta.invalidated)
-        ? meta.invalidated.map(String)
-        : [];
-      const added: TaskNodeInfo[] = addedNodes.map((n) => ({
-        id: String(n.id ?? ""),
-        name: String(n.name ?? ""),
-        agent_name: String(n.agent_name ?? ""),
-        status: "pending",
-      }));
-      const existing = new Set(view.nodes.map((n) => n.id));
-      const nodes = [
-        ...view.nodes.map((n) =>
-          invalidated.includes(n.id) ? { ...n, status: "invalidated" } : n,
-        ),
-        ...added.filter((n) => !existing.has(n.id)),
-      ];
-      const parts: string[] = [];
-      if (invalidated.length > 0) parts.push(`作废 ${invalidated.length} 个节点`);
-      if (added.length > 0) parts.push(`新增 ${added.length} 个节点`);
-      const notification: SystemNotification = {
-        id: `sys-revised-${seq}`,
-        kind,
-        text: `计划已修订：${parts.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state,
-        nodes,
-        notifications: [...view.notifications, notification],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "node.invalidated" || kind === "node.canceled") {
-      const nodeId = String(meta.node_id ?? "");
-      const status = kind === "node.invalidated" ? "invalidated" : "canceled";
-      return {
-        ...view,
-        state,
-        nodes: view.nodes.map((n) => (n.id === nodeId ? { ...n, status } : n)),
-        workingBubbles: view.workingBubbles.filter((b) => b.nodeId !== nodeId),
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "node.dispatched" || kind === "node.dispatch_intent") {
-      const nodeId = String(meta.node_id ?? "");
-      return {
-        ...view,
-        state,
-        nodes: view.nodes.map((n) =>
-          n.id === nodeId ? { ...n, status: "dispatched" } : n,
-        ),
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "node.completed") {
-      const nodeId = String(meta.node_id ?? "");
-      const output = typeof meta.output_summary === "string" ? meta.output_summary : undefined;
-      return {
-        ...view,
-        state,
-        nodes: view.nodes.map((n) =>
-          n.id === nodeId ? { ...n, status: "completed", output: output ?? n.output } : n,
-        ),
-        workingBubbles: view.workingBubbles.filter((b) => b.nodeId !== nodeId),
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "node.failed") {
-      const nodeId = String(meta.node_id ?? "");
-      const error = typeof meta.error === "string" ? meta.error : "failed";
-      return {
-        ...view,
-        state,
-        nodes: view.nodes.map((n) =>
-          n.id === nodeId ? { ...n, status: "failed", error } : n,
-        ),
-        workingBubbles: view.workingBubbles.filter((b) => b.nodeId !== nodeId),
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
+    if (kind === "state_delta") {
+      return applyStateDelta(view, meta, state, seq);
     }
 
     // StatusUpdate with message = thinking (assistant reasoning, plan.announced, etc.)
@@ -547,60 +592,6 @@ export function applyStreamEvent(
           lastSeq: Math.max(view.lastSeq, seq),
         };
       }
-    }
-
-    if (
-      kind === "intervention.requested" ||
-      kind === "intervention.question" ||
-      kind === "node.input_required"
-    ) {
-      const nodeId = String(meta.node_id ?? "");
-      const question = typeof meta.question === "string" ? meta.question : "";
-      const interventionKind =
-        typeof meta.intervention_kind === "string" ? meta.intervention_kind : "";
-      const isInputRequired = interventionKind !== "confirm_cancel";
-      const notification: SystemNotification = {
-        id: `sys-intervention-${String(meta.intervention_id ?? seq)}`,
-        kind,
-        text:
-          interventionKind === "confirm_cancel"
-            ? `待确认：${question}`
-            : question || "等待人工答复",
-        node_id: nodeId || undefined,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state: isInputRequired
-          ? taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED)
-          : state,
-        nodes: isInputRequired
-          ? view.nodes.map((n) =>
-              n.id === nodeId ? { ...n, status: "input_required" } : n,
-            )
-          : view.nodes,
-        notifications: [...view.notifications, notification],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
-    if (kind === "intervention.resolved" || kind === "intervention.expired") {
-      const notification: SystemNotification = {
-        id: `sys-intervention-${String(meta.intervention_id ?? seq)}-${kind}`,
-        kind,
-        text:
-          kind === "intervention.resolved"
-            ? "人工答复已回填，任务继续"
-            : "该确认已无需处理",
-        node_id: typeof meta.node_id === "string" ? meta.node_id : undefined,
-        created_at: new Date().toISOString(),
-      };
-      return {
-        ...view,
-        state,
-        notifications: [...view.notifications, notification],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
     }
 
     // Generic status update

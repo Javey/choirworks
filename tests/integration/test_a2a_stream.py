@@ -128,7 +128,7 @@ async def test_subscribe_replays_snapshot_then_live(tmp_path):
         if event.WhichOneof("payload") == "status_update"
         and "kind" in event.status_update.metadata.fields
     ]
-    assert any(kind.startswith("node.") for kind in live_kinds)
+    assert "state_delta" in live_kinds
     last = events[-1]
     if last.WhichOneof("payload") == "status_update":
         assert last.status_update.status.state in {

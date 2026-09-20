@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from a2a.types.a2a_pb2 import TaskState
 from pydantic import BaseModel
@@ -51,4 +51,42 @@ async def emit_function_error(
         function_name=func.name,
         function_args={},
         function_result={"success": False, "error": error},
+    )
+
+
+async def emit_state_delta(
+    executor: ChoirWorksAgentExecutor,
+    runtime: SessionRuntime,
+    *,
+    nodes: dict[str, dict[str, Any]] | None = None,
+    members: list[dict[str, Any]] | None = None,
+    interventions: dict[str, dict[str, Any]] | None = None,
+    state_name: int = TaskState.TASK_STATE_WORKING,
+) -> None:
+    """Emit a ``state_delta`` wire event carrying typed state changes.
+
+    Replaces B-class ``kind`` events (node.completed, intervention.expired,
+    room.participant_joined, …) with a single unified delta.  The frontend
+    merges the delta into its view and derives notifications from the changes.
+
+    * ``nodes`` — ``{node_id: {status, output?, error?, …}}``; new node ids
+      are added to the view.
+    * ``members`` — list of new member dicts to append.
+    * ``interventions`` — ``{intervention_id: {status, node_id, kind, …}}``;
+      the frontend derives lifecycle notifications from status transitions.
+    """
+    delta: dict[str, Any] = {}
+    if nodes:
+        delta["nodes"] = nodes
+    if members:
+        delta["members"] = members
+    if interventions:
+        delta["interventions"] = interventions
+    if not delta:
+        return
+    await executor._emit_event(
+        runtime,
+        "state_delta",
+        state_name,
+        **delta,
     )
