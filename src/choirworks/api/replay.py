@@ -1,182 +1,90 @@
 from __future__ import annotations
 
-from typing import TypedDict
-
-from a2a.types.a2a_pb2 import Task
-from google.protobuf.json_format import MessageToDict
-
-
-class MetadataJson(TypedDict, total=False):
-    cw_thought: bool
-    cw_type: str
-    author: str
-
-
-class PartJson(TypedDict, total=False):
-    text: str
-    raw: str
-    url: str
-    data: object
-    metadata: MetadataJson
-    filename: str
-    mediaType: str
+from a2a.types.a2a_pb2 import (
+    Artifact,
+    Part,
+    StreamResponse,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+)
+from google.protobuf import struct_pb2
+from google.protobuf.json_format import MessageToDict, ParseDict
 
 
-class ArtifactJson(TypedDict, total=False):
-    artifactId: str
-    name: str
-    description: str
-    parts: list[PartJson]
-    metadata: MetadataJson
-    extensions: list[str]
-
-
-class MessageJson(TypedDict, total=False):
-    messageId: str
-    contextId: str
-    taskId: str
-    role: int
-    parts: list[PartJson]
-    metadata: dict[str, object]
-    extensions: list[str]
-    referenceTaskIds: list[str]
-
-
-class StatusJson(TypedDict, total=False):
-    state: int
-    message: MessageJson
-    timestamp: str
-
-
-class TaskJson(TypedDict, total=False):
-    id: str
-    contextId: str
-    status: StatusJson
-    artifacts: list[ArtifactJson]
-    history: list[MessageJson]
-    metadata: dict[str, object]
-
-
-class NodeStateJson(TypedDict, total=False):
-    id: str
-    name: str
-    agent_name: str
-    agent_url: str
-    status: str
-    attempt: int
-    a2a_task_id: str | None
-    output: str | None
-    error: str | None
-    deps: list[str]
-    input_text: str
-    derived: bool
-    question: str | None
-    answer_text: str | None
-    source_message_id: str | None
-    assist_requested_by: str | None
-
-
-class MemberJson(TypedDict, total=False):
-    name: str
-    agent_name: str
-    url: str
-    agent_url: str
-    reason: str
-    joined_at: str
-
-
-class InterventionJson(TypedDict, total=False):
-    id: str
-    intervention_id: str
-    node_id: str
-    question: str
-    status: str
-    answer: str | None
-    responder: str | None
-    kind: str
-    target_node_id: str | None
-    created_at: str
-
-
-class ContextJson(TypedDict, total=False):
-    plan_id: str
-    plan_version: int
-    nodes: list[NodeStateJson]
-    members: list[MemberJson]
-    interventions: list[InterventionJson]
-    queue: dict[str, list[object]]
-    derived_count: int
-    patch_count: int
-    next_intervention: int
-    next_message: int
-
-
-class StatusUpdateJson(TypedDict, total=False):
-    taskId: str
-    contextId: str
-    status: StatusJson
-    metadata: dict[str, object]
-
-
-class ArtifactUpdateJson(TypedDict, total=False):
-    taskId: str
-    contextId: str
-    artifact: ArtifactJson
-    append: bool
-    lastChunk: bool
-    metadata: dict[str, object]
+def _struct(d: dict[str, object]) -> struct_pb2.Struct:
+    s = struct_pb2.Struct()
+    ParseDict(d, s)
+    return s
 
 
 def _state_delta_event(
-    context: ContextJson,
+    context: dict[str, object],
     context_id: str,
     task_id: str,
     task_state: int,
-) -> StatusUpdateJson:
+) -> TaskStatusUpdateEvent:
     nodes: dict[str, object] = {}
     for n in context.get("nodes", []):
-        node_id = n.get("id", "")
+        node = n if isinstance(n, dict) else {}
+        node_id = node.get("id", "")
         if not node_id:
             continue
         nodes[node_id] = {
-            "status": n.get("status", "pending"),
-            "output": n.get("output") or "",
-            "error": n.get("error") or "",
-            "name": n.get("name", ""),
-            "agent_name": n.get("agent_name", ""),
+            "status": node.get("status", "pending"),
+            "output": node.get("output") or "",
+            "error": node.get("error") or "",
+            "name": node.get("name", ""),
+            "agent_name": node.get("agent_name", ""),
         }
 
-    members: list[object] = list(context.get("members", []))
+    members = list(context.get("members", []))
 
     interventions: dict[str, object] = {}
     for iv in context.get("interventions", []):
-        iv_id = iv.get("id") or iv.get("intervention_id") or ""
+        iv_dict = iv if isinstance(iv, dict) else {}
+        iv_id = iv_dict.get("id") or iv_dict.get("intervention_id") or ""
         if not iv_id:
             continue
         interventions[iv_id] = {
-            "status": iv.get("status", "pending"),
-            "node_id": iv.get("node_id", ""),
-            "kind": iv.get("kind", "question"),
-            "question": iv.get("question", ""),
+            "status": iv_dict.get("status", "pending"),
+            "node_id": iv_dict.get("node_id", ""),
+            "kind": iv_dict.get("kind", "question"),
+            "question": iv_dict.get("question", ""),
         }
 
-    return {
-        "taskId": task_id,
-        "contextId": context_id,
-        "status": {"state": task_state},
-        "metadata": {
+    return TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=task_state),
+        metadata=_struct({
             "kind": "state_delta",
             "nodes": nodes,
             "members": members,
             "interventions": interventions,
-        },
-    }
+        }),
+    )
+
+
+def _artifact_update(
+    task_id: str,
+    context_id: str,
+    artifact: Artifact,
+) -> TaskArtifactUpdateEvent:
+    return TaskArtifactUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        artifact=artifact,
+        append=False,
+        last_chunk=True,
+    )
 
 
 def synthesize_replay_events(
     tasks: list[Task],
     context_id: str,
-    context: ContextJson | None,
+    context: dict[str, object] | None,
     hidden_ids: set[str] | None = None,
 ) -> list[dict[str, object]]:
     hidden = hidden_ids or set()
@@ -184,67 +92,48 @@ def synthesize_replay_events(
     if not visible:
         return []
 
-    task_dicts: list[TaskJson] = [
-        MessageToDict(task, use_integers_for_enums=True) for task in visible
-    ]
+    events: list[StreamResponse] = []
 
-    events: list[dict[str, object]] = []
+    for task in visible:
+        task_copy = Task()
+        task_copy.CopyFrom(task)
+        del task_copy.artifacts[:]
+        events.append(StreamResponse(task=task_copy))
 
-    for task_dict in task_dicts:
-        task_only: dict[str, object] = {
-            k: v for k, v in task_dict.items() if k != "artifacts"
-        }
-        events.append({"task": task_only})
-
-    for task_dict in task_dicts:
-        task_id = task_dict.get("id", "")
-        for art in task_dict.get("artifacts", []):
-            parts = art.get("parts", [])
+    for task in visible:
+        for art in task.artifacts:
+            parts = list(art.parts)
             if not parts:
                 continue
-            p_meta = parts[0].get("metadata", {})
-            is_thought = p_meta.get("cw_thought") is True
-            is_fc = p_meta.get("cw_type") == "function_call"
+            p_meta = parts[0].metadata
+            has_thought = "cw_thought" in p_meta.fields
+            has_fc = "cw_type" in p_meta.fields
+            is_thought = has_thought and p_meta.fields["cw_thought"].bool_value is True
+            is_fc = has_fc and p_meta.fields["cw_type"].string_value == "function_call"
+
             if is_thought or is_fc:
-                events.append({
-                    "artifactUpdate": {
-                        "taskId": task_id,
-                        "contextId": context_id,
-                        "artifact": art,
-                        "append": False,
-                        "lastChunk": True,
-                        "metadata": {},
-                    }
-                })
+                events.append(StreamResponse(artifact_update=_artifact_update(
+                    task.id, context_id, art,
+                )))
             else:
                 merged_text = "".join(
-                    p.get("text", "")
-                    for p in parts
-                    if "text" in p
+                    p.text for p in parts if p.text
                 )
                 if merged_text:
-                    events.append({
-                        "artifactUpdate": {
-                            "taskId": task_id,
-                            "contextId": context_id,
-                            "artifact": {
-                                "artifactId": art.get("artifactId", ""),
-                                "name": art.get("name", ""),
-                                "parts": [{"text": merged_text}],
-                            },
-                            "append": False,
-                            "lastChunk": True,
-                            "metadata": {},
-                        }
-                    })
+                    merged = Artifact(
+                        artifact_id=art.artifact_id,
+                        name=art.name,
+                        parts=[Part(text=merged_text)],
+                    )
+                    events.append(StreamResponse(artifact_update=_artifact_update(
+                        task.id, context_id, merged,
+                    )))
 
-    if context and task_dicts:
-        last_dict = task_dicts[-1]
-        task_state = last_dict.get("status", {}).get("state", 0)
-        events.append({
-            "statusUpdate": _state_delta_event(
-                context, context_id, last_dict.get("id", ""), task_state
-            )
-        })
+    if context and visible:
+        last_task = visible[-1]
+        task_state = last_task.status.state
+        events.append(StreamResponse(status_update=_state_delta_event(
+            context, context_id, last_task.id, task_state,
+        )))
 
-    return events
+    return [MessageToDict(e, use_integers_for_enums=True) for e in events]
