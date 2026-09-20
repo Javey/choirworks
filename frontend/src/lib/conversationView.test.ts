@@ -147,17 +147,15 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toBe("预算口径？");
   });
 
-  it("renders call_subagent function call: adds helper node", () => {
+  it("renders call_subagent assist: helper node, notification and requester bubble", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
       functionCallEvent(
         "call_subagent",
-        { requester_node_id: "n1", target_agent: "writer", instruction: "帮忙写" },
+        { requested_by: "n1", target_agent: "writer", instruction: "帮忙写" },
         {
           success: true,
-          helper_node_id: "n1-h1",
-          helper: "writer",
-          requester: "echo",
+          data: { helper_node_id: "n1-h1", helper: "writer", requester: "echo" },
         },
       ),
       1,
@@ -165,6 +163,94 @@ describe("applyStreamEvent", () => {
     expect(view.nodes.map((n) => n.id)).toContain("n1-h1");
     expect(view.notifications.at(-1)?.text).toContain("echo");
     expect(view.notifications.at(-1)?.text).toContain("writer");
+    const msg = view.messages.at(-1);
+    expect(msg?.role).toBe("agent");
+    expect(msg?.sender).toBe("echo");
+    expect(msg?.text).toBe("@writer 帮忙写");
+  });
+
+  it("merges consecutive orchestrator dispatches into one bubble", () => {
+    let view = viewWithNodes();
+    view = applyStreamEvent(
+      view,
+      functionCallEvent(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { success: true },
+      ),
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      functionCallEvent(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "writer", instruction: "任务乙" },
+        { success: true },
+      ),
+      2,
+    );
+    expect(view.messages).toHaveLength(1);
+    expect(view.messages[0].role).toBe("assistant");
+    expect(view.messages[0].group).toBe("dispatch");
+    expect(view.messages[0].text).toBe("- @echo 任务甲\n- @writer 任务乙");
+    expect(view.notifications).toHaveLength(0);
+  });
+
+  it("starts a new dispatch bubble after an intervening message", () => {
+    let view = viewWithNodes();
+    view = applyStreamEvent(
+      view,
+      functionCallEvent(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { success: true },
+      ),
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: "text-1",
+              parts: [{ content: { $case: "text", value: "下一步" } }],
+              metadata: { author: "assistant" },
+            },
+            append: false,
+            lastChunk: true,
+          },
+        },
+      },
+      2,
+    );
+    view = applyStreamEvent(
+      view,
+      functionCallEvent(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "writer", instruction: "任务丙" },
+        { success: true },
+      ),
+      3,
+    );
+    expect(view.messages).toHaveLength(3);
+    expect(view.messages[0].text).toBe("- @echo 任务甲");
+    expect(view.messages[2].text).toBe("- @writer 任务丙");
+    expect(view.messages[2].group).toBe("dispatch");
+  });
+
+  it("does not duplicate a replayed dispatch line", () => {
+    let view = viewWithNodes();
+    const event = functionCallEvent(
+      "call_subagent",
+      { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+      { success: true },
+    );
+    view = applyStreamEvent(view, event, 1);
+    view = applyStreamEvent(view, event, 2);
+    expect(view.messages).toHaveLength(1);
+    expect(view.messages[0].text).toBe("- @echo 任务甲");
   });
 
   it("applies state_delta: invalidates and cancels nodes", () => {
@@ -291,7 +377,7 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.some((n) => n.kind === "intervention.requested")).toBe(true);
   });
 
-  it("streaming artifact: append chunk updates same bubble, lastChunk removes it", () => {
+  it("streaming artifact: lastChunk materializes the bubble as an agent message", () => {
     let view = viewWithNodes();
     const artifactId = "art-stream-1";
     view = applyStreamEvent(
@@ -350,6 +436,127 @@ describe("applyStreamEvent", () => {
     expect(view.workingBubbles).toHaveLength(0);
     expect(view.activeArtifactIds.has(artifactId)).toBe(false);
     expect(view.nodes.find((n) => n.id === "n1")?.output).toBe("Hello world!");
+    const msg = view.messages.find((m) => m.id === artifactId);
+    expect(msg?.role).toBe("agent");
+    expect(msg?.sender).toBe("echo");
+    expect(msg?.node_id).toBe("n1");
+    expect(msg?.text).toBe("Hello world!");
+  });
+
+  it("terminal state_delta materializes an unfinished stream as agent bubble", () => {
+    let view = viewWithNodes();
+    const artifactId = "art-unfinished";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "部分产出" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    expect(view.workingBubbles).toHaveLength(1);
+
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        nodes: { n1: { status: "completed", agent_name: "echo", output: "部分产出" } },
+      }),
+      2,
+    );
+
+    expect(view.workingBubbles).toHaveLength(0);
+    expect(view.nodes.find((n) => n.id === "n1")?.status).toBe("completed");
+    const msg = view.messages.find((m) => m.id === artifactId);
+    expect(msg?.role).toBe("agent");
+    expect(msg?.sender).toBe("echo");
+    expect(msg?.text).toBe("部分产出");
+  });
+
+  it("late lastChunk after completed keeps status and appends to the materialized message", () => {
+    let view = viewWithNodes();
+    const artifactId = "art-late";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        nodes: { n1: { status: "completed", agent_name: "echo", output: "Hello" } },
+      }),
+      2,
+    );
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world!" } }] },
+            metadata: { node_id: "n1", agent_name: "echo" },
+            append: true,
+            lastChunk: true,
+          },
+        },
+      },
+      3,
+    );
+
+    expect(view.nodes.find((n) => n.id === "n1")?.status).toBe("completed");
+    expect(view.workingBubbles).toHaveLength(0);
+    expect(view.messages.find((m) => m.id === artifactId)?.text).toBe("Hello world!");
+  });
+
+  it("failed node keeps partially streamed text as agent bubble", () => {
+    let view = viewWithNodes();
+    const artifactId = "art-partial";
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "写到一半" } }] },
+            metadata: { node_id: "n2", agent_name: "writer" },
+            append: false,
+            lastChunk: false,
+          },
+        },
+      },
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        nodes: { n2: { status: "failed", agent_name: "writer", error: "boom" } },
+      }),
+      2,
+    );
+
+    expect(view.workingBubbles).toHaveLength(0);
+    const msg = view.messages.find((m) => m.id === artifactId);
+    expect(msg?.role).toBe("agent");
+    expect(msg?.sender).toBe("writer");
+    expect(msg?.node_id).toBe("n2");
+    expect(msg?.text).toBe("写到一半");
   });
 
   it("two concurrent streams with node_id create distinct bubbles", () => {

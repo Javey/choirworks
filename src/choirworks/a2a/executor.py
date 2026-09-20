@@ -51,10 +51,12 @@ from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
 from choirworks.store.contexts import ContextStore
 from choirworks.tools import (
     AskUserFunction,
+    CallSubagentArgs,
     CallSubagentFunction,
     CreatePlanFunction,
     FunctionContext,
     FunctionRegistry,
+    FunctionResult,
     RevisePlanFunction,
     emit_function_call,
     emit_function_error,
@@ -673,7 +675,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
                     ready = state.ready_nodes()
                     slots = max(0, self._max_parallel - self._pending_count(runtime))
-                    dispatched = 0
+                    batch: list[tuple[NodeState, str]] = []
                     for node in ready[:slots]:
                         mode = (
                             "resume"
@@ -682,13 +684,18 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         )
                         if mode != "resume":
                             node.status = "dispatched"
+                        batch.append((node, mode))
+                    if batch:
+                        # Announce the whole wave before the node tasks start so
+                        # the function-call events stay adjacent (live + replay).
+                        await self._announce_dispatch(runtime, batch)
+                    for node, mode in batch:
                         node_task = asyncio.create_task(
                             self._execute_node(runtime, node, mode=mode),
                             name=f"choirworks-node:{context_id}:{node.id}",
                         )
                         runtime.node_tasks[node_task] = node
-                        dispatched += 1
-                    if dispatched:
+                    if batch:
                         await self._persist(runtime)
 
                 pending = dict(runtime.node_tasks)
@@ -1056,6 +1063,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     artifact_id=update.artifact.artifact_id,
                     name=update.artifact.name or node.name,
                     parts=[Part(text=piece)],
+                    metadata=_struct(
+                        {
+                            "node_id": node.id,
+                            "agent_name": node.agent_name,
+                        }
+                    ),
                 )
                 await runtime.queue.enqueue_event(
                     TaskArtifactUpdateEvent(
@@ -1079,6 +1092,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     artifact_id=uuid.uuid4().hex,
                     name=node.name,
                     parts=[Part(text=msg_text)],
+                    metadata=_struct(
+                        {
+                            "node_id": node.id,
+                            "agent_name": node.agent_name,
+                        }
+                    ),
                 )
                 await runtime.queue.enqueue_event(
                     TaskArtifactUpdateEvent(
@@ -1232,18 +1251,41 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             return OutcomeDecision(intent="need_info")
         return OutcomeDecision(intent="need_info")
 
+    async def _announce_dispatch(
+        self,
+        runtime: SessionRuntime,
+        batch: list[tuple[NodeState, str]],
+    ) -> None:
+        """Emit one ``call_subagent`` event per freshly dispatched plan node.
+
+        Derived helpers (assistance) are skipped — their requester announces
+        them — as are resume/continue re-dispatches and retries.  Nodes in the
+        same runner wave share one user-visible bubble on the frontend.
+        """
+        func = self._functions.get("call_subagent")
+        assert func is not None
+        for node, mode in batch:
+            if mode != "dispatch" or node.derived or node.attempt != 0:
+                continue
+            args = CallSubagentArgs(
+                requested_by="orchestrator",
+                target_agent=node.agent_name,
+                instruction=node.name,
+            )
+            await emit_function_call(
+                self, runtime, func, args, FunctionResult(success=True)
+            )
+
     async def _spawn_assist(
         self,
         runtime: SessionRuntime,
         node: NodeState,
         decision: OutcomeDecision,
     ) -> bool:
-        from choirworks.tools.call_subagent import CallSubagentArgs
-
         func = self._functions.get("call_subagent")
         assert func is not None
         args = CallSubagentArgs(
-            requester_node_id=node.id,
+            requested_by=node.id,
             target_agent=decision.target_agent or "",
             instruction=decision.instruction,
         )

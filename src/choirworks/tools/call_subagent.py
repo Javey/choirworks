@@ -17,9 +17,14 @@ def _call_subagent_schema(candidate_names: list[str]) -> type[BaseModel]:
 
 
 class CallSubagentArgs(BaseModel):
-    """Arguments for ``call_subagent`` — delegate a sub-task to a peer agent."""
+    """Arguments for ``call_subagent`` — delegate a sub-task to a peer agent.
 
-    requester_node_id: str
+    ``requested_by`` is either ``"orchestrator"`` (a plan node is being
+    dispatched) or the id of the node asking for help (a derived helper node
+    is spawned).
+    """
+
+    requested_by: str
     target_agent: str
     instruction: str = ""
 
@@ -53,6 +58,12 @@ class CallSubagentFunction(AgentFunction):
         executor = ctx.executor
         runtime = ctx.runtime
 
+        if call_args.requested_by == "orchestrator":
+            return FunctionResult(
+                success=False,
+                error="orchestrator dispatch does not create helper nodes",
+            )
+
         if state.derived_count >= executor._max_derived_nodes:
             return FunctionResult(success=False, error="max derived nodes reached")
 
@@ -66,8 +77,8 @@ class CallSubagentFunction(AgentFunction):
             )
 
         state.derived_count += 1
-        requester_node = state.nodes.get(call_args.requester_node_id)
-        helper_id = f"{call_args.requester_node_id}-h{state.derived_count}"
+        requester_node = state.nodes.get(call_args.requested_by)
+        helper_id = f"{call_args.requested_by}-h{state.derived_count}"
 
         helper = NodeState(
             id=helper_id,
@@ -80,7 +91,7 @@ class CallSubagentFunction(AgentFunction):
                 requester_node.question if requester_node else ""
             ),
             derived=True,
-            assist_requested_by=call_args.requester_node_id,
+            assist_requested_by=call_args.requested_by,
         )
         state.nodes[helper_id] = helper
         await executor._join_members(runtime, [agent.name], "peer_assist")

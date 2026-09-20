@@ -39,12 +39,17 @@ class Database:
 
     async def connect(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = await aiosqlite.connect(self._path, timeout=30)
+        # isolation_level=None (autocommit): statements never leave an implicit
+        # read transaction open, which would otherwise upgrade to a write while
+        # another connection (the A2A task store) has committed and surface as
+        # "database is locked" (SQLITE_BUSY_SNAPSHOT) under parallel nodes.
+        self._conn = await aiosqlite.connect(
+            self._path, timeout=30, isolation_level=None
+        )
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA busy_timeout=30000")
         await self._conn.execute("PRAGMA foreign_keys=ON")
-        await self._conn.commit()
 
     async def initialize(self) -> None:
         if self._conn is None:

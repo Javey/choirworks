@@ -13,6 +13,7 @@ export interface ChatMessage {
   created_at: string;
   seq: number;
   thinking: boolean;
+  group?: "dispatch";
 }
 
 export interface SystemNotification {
@@ -102,17 +103,44 @@ function metaOf(container: ProtoStruct): ProtoStruct {
   return (container.metadata as ProtoStruct | undefined) ?? {};
 }
 
-function partMetaOf(container: ProtoStruct): ProtoStruct {
-  const parts = (container.parts as ProtoStruct[] | undefined) ?? [];
-  return parts.length > 0 ? metaOf(parts[0]) : {};
-}
-
 function roomMetaOf(container: ProtoStruct): ProtoStruct {
   const meta = metaOf(container);
   return (meta[ROOM_META_KEY] as ProtoStruct | undefined) ?? {};
 }
 
 const TERMINAL_NODE_STATUSES = new Set(["completed", "failed", "canceled", "invalidated"]);
+
+function materializeBubble(
+  view: ConversationView,
+  bubble: WorkingBubble,
+  seq: number,
+): ConversationView {
+  const existing = view.messages.find((m) => m.id === bubble.artifactId);
+  if (existing) {
+    if (existing.text === bubble.text) return view;
+    return {
+      ...view,
+      messages: view.messages.map((m) =>
+        m.id === bubble.artifactId ? { ...m, text: bubble.text } : m,
+      ),
+    };
+  }
+  const message: ChatMessage = {
+    id: bubble.artifactId,
+    role: "agent",
+    sender: bubble.agentName || null,
+    text: bubble.text,
+    mentions: [],
+    quote_id: null,
+    node_id: bubble.nodeId || null,
+    task_id: view.taskId,
+    created_at: new Date().toISOString(),
+    seq,
+    thinking: false,
+  };
+  return { ...view, messages: [...view.messages, message] };
+}
+
 
 function applyStateDelta(
   view: ConversationView,
@@ -158,13 +186,20 @@ function applyStateDelta(
     }
   }
 
-  // Clear working bubbles for any terminal nodes
+  // Materialize working bubbles for any terminal nodes, then clear them.
   const terminalIds = new Set(
     nodes.filter((n) => TERMINAL_NODE_STATUSES.has(n.status)).map((n) => n.id),
   );
-  const workingBubbles = terminalIds.size
-    ? view.workingBubbles.filter((b) => !terminalIds.has(b.nodeId))
-    : view.workingBubbles;
+  let materialized = view;
+  let workingBubbles = view.workingBubbles;
+  if (terminalIds.size) {
+    for (const bubble of view.workingBubbles) {
+      if (terminalIds.has(bubble.nodeId)) {
+        materialized = materializeBubble(materialized, bubble, seq);
+      }
+    }
+    workingBubbles = view.workingBubbles.filter((b) => !terminalIds.has(b.nodeId));
+  }
 
   // --- members ---
   const membersDelta = meta.members as ProtoStruct[] | undefined;
@@ -247,15 +282,15 @@ function applyStateDelta(
   }
 
   return {
-    ...view,
+    ...materialized,
     state,
     nodes,
     members,
     interventions,
     workingBubbles,
     notifications: notifications.length
-      ? [...view.notifications, ...notifications]
-      : view.notifications,
+      ? [...materialized.notifications, ...notifications]
+      : materialized.notifications,
     lastSeq: Math.max(view.lastSeq, seq),
   };
 }
@@ -427,6 +462,7 @@ export function applyStreamEvent(
               kind: "plan.failed",
               text: `计划失败：${error}`,
               created_at: new Date().toISOString(),
+              seq,
             }],
             lastSeq: Math.max(view.lastSeq, seq),
           };
@@ -446,6 +482,7 @@ export function applyStreamEvent(
             kind: "plan.created",
             text: `执行计划：${nodes.length} 个节点`,
             created_at: new Date().toISOString(),
+            seq,
           }],
           lastSeq: Math.max(view.lastSeq, seq),
         };
@@ -481,6 +518,7 @@ export function applyStreamEvent(
             kind: "plan.revised",
             text: `计划已修订：${partsText.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
             created_at: new Date().toISOString(),
+            seq,
           }],
           lastSeq: Math.max(view.lastSeq, seq),
         };
@@ -504,15 +542,74 @@ export function applyStreamEvent(
             text: question || "等待人工答复",
             node_id: nodeId || undefined,
             created_at: new Date().toISOString(),
+            seq,
           }],
           lastSeq: Math.max(view.lastSeq, seq),
         };
       }
 
       if (funcName === "call_subagent") {
-        const helper = typeof funcResult.helper === "string" ? funcResult.helper : "";
-        const requester = typeof funcResult.requester === "string" ? funcResult.requester : "";
-        const helperNodeId = String(funcResult.helper_node_id ?? "");
+        const requestedBy =
+          typeof funcArgs.requested_by === "string" ? funcArgs.requested_by : "";
+        const targetAgent =
+          typeof funcArgs.target_agent === "string" ? funcArgs.target_agent : "";
+        const instruction =
+          typeof funcArgs.instruction === "string" ? funcArgs.instruction : "";
+        const resultData = (funcResult.data as ProtoStruct | undefined) ?? {};
+        const resultText = (key: string): string => {
+          const value = resultData[key] ?? funcResult[key];
+          return typeof value === "string" ? value : "";
+        };
+
+        // Plan dispatch: orchestrator assigns the next nodes to their agents.
+        if (requestedBy === "orchestrator") {
+          const line = `- @${targetAgent}${instruction ? ` ${instruction}` : ""}`;
+          const last = view.messages.at(-1);
+          if (last?.group === "dispatch") {
+            if (last.text.split("\n").includes(line)) {
+              return { ...view, lastSeq: Math.max(view.lastSeq, seq) };
+            }
+            return {
+              ...view,
+              messages: view.messages.map((m) =>
+                m.id === last.id ? { ...m, text: `${m.text}\n${line}` } : m,
+              ),
+              lastSeq: Math.max(view.lastSeq, seq),
+            };
+          }
+          const dispatchMsg: ChatMessage = {
+            id: `dispatch-${artifactId}`,
+            role: "assistant",
+            sender: null,
+            text: line,
+            mentions: [],
+            quote_id: null,
+            node_id: null,
+            task_id: view.taskId,
+            created_at: new Date().toISOString(),
+            seq,
+            thinking: false,
+            group: "dispatch",
+          };
+          return {
+            ...view,
+            messages: [...view.messages, dispatchMsg],
+            lastSeq: Math.max(view.lastSeq, seq),
+          };
+        }
+
+        // Assistance: a node asks a peer for help.
+        if (view.messages.some((m) => m.id === artifactId)) {
+          return view;
+        }
+        const helper = resultText("helper");
+        const requester =
+          resultText("requester") ||
+          view.nodes.find((n) => n.id === requestedBy)?.agent_name ||
+          requestedBy;
+        const helperNodeId = String(
+          resultData.helper_node_id ?? funcResult.helper_node_id ?? "",
+        );
         const node: TaskNodeInfo = {
           id: helperNodeId,
           name: helper,
@@ -523,14 +620,29 @@ export function applyStreamEvent(
         const nodes = existing.has(helperNodeId)
           ? view.nodes
           : [...view.nodes, node];
+        const assistMsg: ChatMessage = {
+          id: artifactId,
+          role: "agent",
+          sender: requester || null,
+          text: `@${helper}${instruction ? ` ${instruction}` : ""}`,
+          mentions: helper ? [helper] : [],
+          quote_id: null,
+          node_id: helperNodeId || null,
+          task_id: view.taskId,
+          created_at: new Date().toISOString(),
+          seq,
+          thinking: false,
+        };
         return {
           ...view,
           nodes,
+          messages: [...view.messages, assistMsg],
           notifications: [...view.notifications, {
             id: `sys-assist-${seq}`,
             kind: "assist.dispatched",
             text: `${requester} 请求 ${helper} 协助`,
             created_at: new Date().toISOString(),
+            seq,
           }],
           lastSeq: Math.max(view.lastSeq, seq),
         };
@@ -609,8 +721,12 @@ export function applyStreamEvent(
 
     // Streaming working bubble (node output chunks)
     if (text) {
+      const node = view.nodes.find((n) => n.id === nodeId);
+      const terminal = Boolean(node && TERMINAL_NODE_STATUSES.has(node.status));
       const existing = view.workingBubbles.find((b) => b.artifactId === artifactId);
-      const newText = append && existing ? existing.text + text : text;
+      const existingMessage = view.messages.find((m) => m.id === artifactId);
+      const base = existing?.text ?? existingMessage?.text ?? "";
+      const newText = append ? base + text : text;
       const activeArtifactIds = new Set(view.activeArtifactIds);
       if (!append && !lastChunk) {
         activeArtifactIds.add(artifactId);
@@ -618,26 +734,40 @@ export function applyStreamEvent(
       if (lastChunk) {
         activeArtifactIds.delete(artifactId);
       }
-      const updated = {
+      const bubble: WorkingBubble = {
+        artifactId,
+        nodeId: nodeId ?? "",
+        agentName,
+        text: newText,
+      };
+      const workingBubbles = existing
+        ? view.workingBubbles.map((b) =>
+          b.artifactId === artifactId ? bubble : b,
+        )
+        : terminal
+          ? view.workingBubbles
+          : [...view.workingBubbles, bubble];
+      let next: ConversationView = {
         ...view,
         activeArtifactIds,
-        workingBubbles: existing
-          ? view.workingBubbles.map((b) =>
-            b.artifactId === artifactId ? { ...b, text: newText } : b,
-          )
-          : [...view.workingBubbles, { artifactId, nodeId: nodeId ?? "", agentName, text: newText }],
+        workingBubbles,
+        nodes: view.nodes.map((n) =>
+          n.id === nodeId
+            ? { ...n, status: terminal ? n.status : "working", output: newText }
+            : n,
+        ),
         lastSeq: Math.max(view.lastSeq, seq),
       };
-      if (lastChunk) {
-        return {
-          ...updated,
-          workingBubbles: updated.workingBubbles.filter((b) => b.artifactId !== artifactId),
-          nodes: view.nodes.map((n) =>
-            n.id === nodeId ? { ...n, status: "working", output: newText } : n,
+      if (lastChunk || terminal) {
+        const sealed = materializeBubble(next, bubble, seq);
+        next = {
+          ...sealed,
+          workingBubbles: sealed.workingBubbles.filter(
+            (b) => b.artifactId !== artifactId,
           ),
         };
       }
-      return updated;
+      return next;
     }
     return { ...view, lastSeq: Math.max(view.lastSeq, seq) };
   }

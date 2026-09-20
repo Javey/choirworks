@@ -78,6 +78,7 @@ def _artifact_update(
         artifact=artifact,
         append=False,
         last_chunk=True,
+        metadata=artifact.metadata,
     )
 
 
@@ -124,6 +125,7 @@ def synthesize_replay_events(
                         artifact_id=art.artifact_id,
                         name=art.name,
                         parts=[Part(text=merged_text)],
+                        metadata=art.metadata,
                     )
                     events.append(StreamResponse(artifact_update=_artifact_update(
                         task.id, context_id, merged,
