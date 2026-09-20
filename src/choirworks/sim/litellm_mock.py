@@ -23,11 +23,15 @@ from litellm.types.utils import (
     ModelResponse,
 )
 
+from choirworks.core.fencing import QUOTED_CONTENT_PREAMBLE
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 
 FLAKY_AGENTS = {"auditor"}
 
-REQUEST_PATTERN = re.compile(r"User request:\n(.*?)(?:\n\nAvailable agents:|\Z)", re.S)
+REQUEST_PATTERN = re.compile(
+    rf"User request:\n(.*?)(?:\n\n(?:{re.escape(QUOTED_CONTENT_PREAMBLE)}|Available agents:)|\Z)",
+    re.S,
+)
 AGENT_PATTERN = re.compile(r"^- (\S+):", re.M)
 WORKER_PATTERN = re.compile(
     r"Requester: (\S+)\nQuestion / blocked work:\n(.*?)(?:\n\nFor context:|\Z)", re.S
@@ -138,6 +142,14 @@ def _make_plan(user: str) -> tuple[str, PlanDraft]:
             ],
         )
     elif any(k in request for k in ("审批", "报销", "采购")):
+        draft = PlanDraft(
+            rationale="计划：审批通过后生成财务报告",
+            nodes=[
+                _node("n1", "approval-manager", request, deps=[]),
+                _node("n2", "finance-analyst", f"根据审批结果生成报告：{request}", deps=["n1"]),
+            ],
+        )
+    elif any(k in request for k in ("财务", "预算", "财报")):
         draft = PlanDraft(
             rationale="计划：财务数据分析",
             nodes=[_node("n1", "finance-analyst", request, deps=[])],

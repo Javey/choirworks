@@ -42,7 +42,7 @@ uv run pytest
 cd frontend && npm install
 npm run dev
 
-# 生产构建（FastAPI 自动托管 frontend/dist，访问 http://127.0.0.1:8567）
+# 构建检查（当前 FastAPI 不托管 frontend/dist，开发时使用 Vite）
 npm run build
 
 # 前端测试
@@ -51,21 +51,36 @@ npm test
 
 ## 模拟运行（离线演示）
 
-无需 API Key、无需真实 Agent，一条命令拉起「假 Agent + 确定性规划器 + Hub + 前端」：
+无需 API Key、无需真实 Agent，一条命令拉起「假 Agent + 确定性规划器 + Hub」：
 
 ```bash
-uv run choirworks-sim --port 8567 --fresh
+uv run choirworks-sim --port 8567 --db data/sim-demo.db --fresh
 ```
 
-启动后自动注册 6 个脚本化 Agent（researcher / writer / critic / analyst / flaky / broken）并打印示例请求，打开 `http://127.0.0.1:8567` 直接对话：
+`--fresh` 会清空指定模拟数据库，仅对可丢弃的演示数据使用。另开终端运行
+`cd frontend && npm run dev`，打开 `http://127.0.0.1:5173`。
+后端地址 `http://127.0.0.1:8567` 提供 API，不提供前端页面。
+
+启动后自动注册 7 个脚本化 Agent：product-manager / developer / code-reviewer /
+qa-engineer / finance-analyst / approval-manager / auditor。模拟规划按用户指令关键词匹配，
+不是实际模型推理。当前前端主区展示原始事件，可展开查看计划、提问、节点状态和产物。
 
 | 请求示例 | 演示场景 |
 |---|---|
-| 请协调多个子代理协作完成这项分析 | researcher/writer 并行暂停 → 编排器拉 analyst 协助 → 回填续跑 |
-| 帮我调研 A2A 协议并写一份摘要 | 调研 → 写作依赖链 |
-| 帮我评审这段文案 | critic 提问 → 人工介入 → 定稿 |
-| 这个任务可能会偶发失败，请自动重试 | 节点自动重试（第 2 次成功） |
-| 模拟失败并降级替换 | 两次失败 → 重规划为 plan v2 |
+| 请协调团队协作完成这个功能的需求分析和开发 | product-manager / developer 并行求助 → 自动安排 peer → 回填续跑 |
+| 帮我调研技术方案并写一份设计文档 | product-manager → developer |
+| 请审查这段代码的安全性和质量 | developer → code-reviewer 提问，等待人工答复 |
+| 帮我分析上季度的财务数据并生成报告 | finance-analyst |
+| 请审批这笔采购申请 | approval-manager → finance-analyst；审批首次失败后重试 |
+| 审批偶发失败，请自动重试 | approval-manager 第 2 次成功 → finance-analyst |
+| 模拟审计失败并降级替换 | auditor 两次失败 → plan v2 改由 developer 完成 |
+
+`flaky_once` 和协作首次求助按模拟 Agent 进程计数；需要复现“首次失败/首次求助”时，
+使用新的演示数据库重启模拟进程。code-reviewer 的答复应通过 A2A 向同一 taskId 发送；
+当前前端人工答复路由尚待重建，不能把直接在输入框回复当成已经验证的续跑操作。
+
+可运行 `uv run pytest tests/integration/test_sim_scenarios.py -q` 自动验证全部 7 个场景；
+该测试为各场景启动独立脚本化 Agent，并验证到任务完成（评审场景包含人工答复）。
 
 `--db` 指定模拟数据库（默认 `data/sim.db`），`--fresh` 启动前清空。模拟 Agent 的产出默认按 **打字机效果** 分块流式返回（`--chunk-size` 每块字符数，默认 2；`--chunk-delay` 块间隔秒数，默认 0.04，设为 0 可关闭延迟）。规划逻辑为确定性规则（`src/choirworks/sim/litellm_mock.py`），全程不访问外部服务；假 Agent 行为定义在 `src/choirworks/sim/fake_agent.py`。
 

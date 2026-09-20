@@ -24,11 +24,13 @@ SIM_AGENTS: list[tuple[str, str]] = [
 ]
 
 EXAMPLES = [
-    "请协调团队完成这个功能的需求分析和开发",
+    "请协调团队协作完成这个功能的需求分析和开发",
     "帮我调研技术方案并写一份设计文档",
     "请审查这段代码的安全性和质量",
     "帮我分析上季度的财务数据并生成报告",
     "请审批这笔采购申请",
+    "审批偶发失败，请自动重试",
+    "模拟审计失败并降级替换",
 ]
 
 
@@ -98,7 +100,8 @@ async def run(
 def _print_banner(host: str, port: int, agents: list[tuple[str, FakeAgent]]) -> None:
     lines = [
         "",
-        f"ChoirWorks 模拟环境已启动：http://{host}:{port}",
+        f"ChoirWorks 模拟后端已启动：http://{host}:{port}",
+        "前端请单独运行：cd frontend && npm run dev（默认 http://127.0.0.1:5173）",
         "模拟 Agent：",
     ]
     lines += [f"  - {name:<11} {agent.url}  ({dict(SIM_AGENTS)[name]})" for name, agent in agents]

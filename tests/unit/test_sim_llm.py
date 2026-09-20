@@ -1,6 +1,9 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from choirworks.a2a.executor import AssistanceDecision
+from choirworks.core.context import build_planner_capabilities, build_planner_user_message
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.models.domain import AgentRecord
@@ -12,7 +15,7 @@ def agent(name: str) -> AgentRecord:
         id=f"id-{name}",
         name=name,
         card_url=f"http://127.0.0.1:1/{name}",
-        card={"description": f"{name} agent", "skills": []},
+        card={"description": f"{name} agent，支持审批、合规审计、代码审查和协作", "skills": []},
         created_at=datetime.now(UTC),
     )
 
@@ -32,8 +35,7 @@ AGENTS = [
 
 
 def prompt(request: str) -> str:
-    lines = "\n".join(f"- {item.name}: {item.card['description']} skills=[]" for item in AGENTS)
-    return f"User request:\n{request}\n\nAvailable agents:\n{lines}"
+    return build_planner_user_message(request, build_planner_capabilities(AGENTS))
 
 
 def make_client() -> LiteLLMClient:
@@ -132,6 +134,47 @@ async def test_coordination_plan_runs_pm_and_developer_in_parallel():
     assert agents_of(draft) == ["product-manager", "developer"]
     assert draft.nodes[0].deps == []
     assert draft.nodes[1].deps == []
+
+
+@pytest.mark.parametrize(
+    ("user_request", "expected"),
+    [
+        ("帮我分析上季度的财务数据并生成报告", ["finance-analyst"]),
+        ("请审批这笔采购申请", ["approval-manager", "finance-analyst"]),
+        ("请审计本季度的合规情况", ["finance-analyst", "auditor"]),
+    ],
+)
+async def test_business_examples_route_to_the_requested_specialists(user_request, expected):
+    assert agents_of(await plan_for(user_request)) == expected
+
+
+async def test_plan_instruction_and_reasoning_exclude_prompt_context():
+    request = "开发查询接口\n\n保留分页和排序要求"
+    user = build_planner_user_message(
+        request,
+        build_planner_capabilities(AGENTS),
+        context="以前的工作：合规审计失败，审批需要重试。",
+    )
+    draft, reasoning = await make_client().structured_with_raw(
+        system="plan", user=user, schema=PlanDraft
+    )
+    assert agents_of(draft) == ["product-manager", "developer"]
+    assert draft.nodes[0].input["text"] == request
+    for node in draft.nodes:
+        assert "Available agents:" not in node.input["text"]
+        assert "以前的工作" not in node.input["text"]
+    assert "For context:" not in reasoning
+
+
+async def test_legacy_unfenced_prompt_still_supported():
+    draft = await make_client().structured(
+        system="plan",
+        user="User request:\n请审查代码\n\nAvailable agents:\n"
+        "- developer: 开发\n- code-reviewer: 审查",
+        schema=PlanDraft,
+    )
+    assert agents_of(draft) == ["developer", "code-reviewer"]
+    assert draft.nodes[0].input["text"] == "请审查代码"
 
 
 async def test_raw_response_has_reasoning_content():
