@@ -118,7 +118,9 @@ def synthesize_replay_events(
             if not parts:
                 continue
             p_meta = parts[0].get("metadata", {})
-            if p_meta.get("cw_thought") is True or p_meta.get("cw_type") == "function_call":
+            is_thought = p_meta.get("cw_thought") is True
+            is_fc = p_meta.get("cw_type") == "function_call"
+            if is_thought or is_fc:
                 events.append({
                     "payload": {
                         "$case": "artifactUpdate",
@@ -132,6 +134,31 @@ def synthesize_replay_events(
                         },
                     }
                 })
+            else:
+                merged_text = "".join(
+                    p.get("content", {}).get("value", "")
+                    for p in parts
+                    if p.get("content", {}).get("$case") == "text"
+                )
+                if merged_text:
+                    merged_art = {
+                        "artifactId": art.get("artifactId", ""),
+                        "name": art.get("name", ""),
+                        "parts": [{"content": {"$case": "text", "value": merged_text}}],
+                    }
+                    events.append({
+                        "payload": {
+                            "$case": "artifactUpdate",
+                            "value": {
+                                "taskId": task_id,
+                                "contextId": context_id,
+                                "artifact": merged_art,
+                                "append": False,
+                                "lastChunk": True,
+                                "metadata": {},
+                            },
+                        }
+                    })
 
     if context and task_dicts:
         last_dict = task_dicts[-1]
