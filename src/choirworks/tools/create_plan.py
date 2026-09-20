@@ -9,6 +9,10 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 
+# Enum-pinned structured output mirrors google-adk's TransferToAgentTool
+# (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0), which
+# constrains agent_name to a JSON-Schema enum so hallucinated names cannot
+# pass validation.
 def _constrained_plan_schema(agent_names: list[str]) -> type[PlanDraft]:
     node = create_model(
         "PlanNodeDraft",
