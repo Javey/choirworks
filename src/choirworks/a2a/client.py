@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 
 import httpx
 from a2a.client import A2ACardResolver, Client, ClientConfig, create_client
+from a2a.client.errors import AgentCardResolutionError
 from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCard,
@@ -17,7 +17,8 @@ from a2a.types import (
     SubscribeToTaskRequest,
     Task,
 )
-from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
+from pydantic import AnyHttpUrl, JsonValue
 
 
 class RemoteAgentClient:
@@ -28,22 +29,52 @@ class RemoteAgentClient:
         self._http = httpx_client or httpx.AsyncClient()
         self._clients: dict[str, Client] = {}
         self._cards: dict[str, AgentCard] = {}
+        self._retired_clients: list[Client] = []
 
     async def resolve_card(self, base_url: str) -> AgentCard:
         resolver = A2ACardResolver(httpx_client=self._http, base_url=base_url)
-        return await resolver.get_agent_card()
+        try:
+            card = await resolver.get_agent_card()
+            if not card.name.strip() or not card.supported_interfaces:
+                raise ValueError("Agent Card requires a name and supported interfaces")
+            interfaces = [
+                interface
+                for interface in card.supported_interfaces
+                if interface.protocol_binding == "JSONRPC" and interface.protocol_version == "1.0"
+            ]
+            if not interfaces:
+                raise ValueError("Agent Card must support JSONRPC with A2A version 1.0")
+            for interface in interfaces:
+                AnyHttpUrl(interface.url)
+            return card
+        except (ValueError, TypeError, AttributeError, ParseError) as exc:
+            raise AgentCardResolutionError(f"invalid agent card: {exc}") from exc
+
+    def cache_card(self, agent_url: str, card: AgentCard) -> None:
+        self.invalidate(agent_url)
+        self._cards[agent_url] = card
+
+    def invalidate(self, agent_url: str) -> None:
+        self._cards.pop(agent_url, None)
+        client = self._clients.pop(agent_url, None)
+        if client is not None:
+            # SDK clients share the HTTP pool; closing one here would also
+            # interrupt other agents and streams already using the old card.
+            self._retired_clients.append(client)
 
     @staticmethod
-    def card_to_dict(card: AgentCard) -> dict[str, Any]:
+    def card_to_dict(card: AgentCard) -> dict[str, JsonValue]:
         return MessageToDict(card)
 
     @staticmethod
-    def card_from_dict(data: dict[str, Any]) -> AgentCard:
+    def card_from_dict(data: dict[str, JsonValue]) -> AgentCard:
         return ParseDict(data, AgentCard())
 
     async def _client_for(self, agent_url: str) -> Client:
         if agent_url not in self._clients:
-            card = await self.resolve_card(agent_url)
+            card = self._cards.get(agent_url)
+            if card is None:
+                card = await self.resolve_card(agent_url)
             self._cards[agent_url] = card
             self._clients[agent_url] = await create_client(
                 agent=card,
@@ -92,8 +123,10 @@ class RemoteAgentClient:
             yield chunk
 
     async def close(self) -> None:
-        for client in self._clients.values():
+        for client in [*self._clients.values(), *self._retired_clients]:
             await client.close()
         self._clients.clear()
+        self._cards.clear()
+        self._retired_clients.clear()
         if self._owns_http:
             await self._http.aclose()
