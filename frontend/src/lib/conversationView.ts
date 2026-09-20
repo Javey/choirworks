@@ -54,6 +54,7 @@ export interface ConversationView {
   members: RoomMemberDto[];
   nodes: TaskNodeInfo[];
   interventions: Record<string, InterventionInfo>;
+  activeArtifactIds: Set<string>;
   workingBubbles: WorkingBubble[];
   lastSeq: number;
 }
@@ -67,6 +68,7 @@ export const emptyConversation: ConversationView = {
   members: [],
   nodes: [],
   interventions: {},
+  activeArtifactIds: new Set(),
   workingBubbles: [],
   lastSeq: 0,
 };
@@ -190,6 +192,7 @@ export function conversationFromTasks(
     members: [],
     nodes,
     interventions: {},
+    activeArtifactIds: new Set(),
     workingBubbles: [],
     lastSeq: 0,
   };
@@ -603,45 +606,23 @@ export function applyStreamEvent(
     const artUpdate = result;
     const artifact = (artUpdate.artifact as ProtoStruct | undefined) ?? {};
     const meta = metaOf(artUpdate);
-    const kind = typeof meta.kind === "string" ? meta.kind : "";
     const nodeId = typeof meta.node_id === "string" ? meta.node_id : null;
     const text = textOfParts(artifact);
     const lastChunk = artUpdate.lastChunk === true;
+    const append = artUpdate.append === true;
     const agentName = typeof meta.agent_name === "string" ? meta.agent_name : "";
+    const artifactId = String(artifact.artifactId ?? `art-${seq}`);
     const artifactMeta = metaOf(artifact);
     const author =
       typeof artifactMeta.author === "string"
         ? artifactMeta.author
         : agentName || "assistant";
 
-    // agent.message as artifact = agent output (final message, not streaming)
-    if (kind === "agent.message" && text) {
-      const chatMsg: ChatMessage = {
-        id: String(artifact.artifactId ?? `agent-msg-${seq}`),
-        role: "agent",
-        sender: agentName || null,
-        text,
-        mentions: [],
-        quote_id: null,
-        node_id: nodeId,
-        task_id: view.taskId,
-        created_at: new Date().toISOString(),
-      };
-      if (view.messages.some((m) => m.id === chatMsg.id)) {
-        return view;
-      }
-      return {
-        ...view,
-        messages: [...view.messages, chatMsg],
-        lastSeq: Math.max(view.lastSeq, seq),
-      };
-    }
-
     // Thought part in artifact (planner / agent reasoning stream)
     const pMeta = partMetaOf(artifact);
     if (pMeta.cw_thought === true && text) {
       const chatMsg: ChatMessage = {
-        id: String(artifact.artifactId ?? `thought-${seq}`),
+        id: artifactId,
         role: "assistant",
         sender: author,
         text,
@@ -661,18 +642,49 @@ export function applyStreamEvent(
       };
     }
 
-    // node.artifact = streaming output (working bubbles → final output)
-    if (nodeId && text) {
+    // One-shot complete message (append=false + lastChunk=true, not part of a streaming sequence)
+    const isStreaming = view.activeArtifactIds.has(artifactId);
+    if (lastChunk && !isStreaming && text) {
+      const chatMsg: ChatMessage = {
+        id: artifactId,
+        role: "agent",
+        sender: agentName || null,
+        text,
+        mentions: [],
+        quote_id: null,
+        node_id: nodeId,
+        task_id: view.taskId,
+        created_at: new Date().toISOString(),
+      };
+      if (view.messages.some((m) => m.id === chatMsg.id)) {
+        return view;
+      }
+      return {
+        ...view,
+        messages: [...view.messages, chatMsg],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    // Streaming working bubble (node output chunks)
+    if (text) {
       const existing = view.workingBubbles.find((b) => b.nodeId === nodeId);
-      const append = artUpdate.append === true;
       const newText = append && existing ? existing.text + text : text;
+      const activeArtifactIds = new Set(view.activeArtifactIds);
+      if (!append && !lastChunk) {
+        activeArtifactIds.add(artifactId);
+      }
+      if (lastChunk) {
+        activeArtifactIds.delete(artifactId);
+      }
       const updated = {
         ...view,
+        activeArtifactIds,
         workingBubbles: existing
           ? view.workingBubbles.map((b) =>
             b.nodeId === nodeId ? { ...b, text: newText } : b,
           )
-          : [...view.workingBubbles, { nodeId, agentName, text: newText }],
+          : [...view.workingBubbles, { nodeId: nodeId ?? "", agentName, text: newText }],
         lastSeq: Math.max(view.lastSeq, seq),
       };
       if (lastChunk) {

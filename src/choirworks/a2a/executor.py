@@ -474,6 +474,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         author: str,
         append: bool,
         last_chunk: bool,
+        artifact_id: str,
     ) -> None:
         part = Part(text=text)
         ParseDict({"cw_thought": True}, part.metadata)
@@ -482,7 +483,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 task_id=runtime.task_id,
                 context_id=runtime.context_id,
                 artifact=Artifact(
-                    artifact_id=f"{author}:thinking",
+                    artifact_id=artifact_id,
                     parts=[part],
                     metadata=_struct({"author": author}),
                 ),
@@ -503,6 +504,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         draft: PlanDraft | None = None
         thinking_parts: list[str] = []
         first_chunk = True
+        thought_id = uuid.uuid4().hex
         async for item in self._planner.plan(
             request, reason=reason, context=context
         ):
@@ -516,6 +518,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 author="assistant",
                 append=not first_chunk,
                 last_chunk=False,
+                artifact_id=thought_id,
             )
             first_chunk = False
         thinking = "".join(thinking_parts)
@@ -526,6 +529,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 author="assistant",
                 append=False,
                 last_chunk=True,
+                artifact_id=thought_id,
             )
         if draft is None:
             raise PlanningFailed("planner stream ended without a plan")
@@ -972,7 +976,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     else:
                         artifacts.append(merged)
                 art = Artifact(
-                    artifact_id=f"{node.id}:{update.artifact.artifact_id}",
+                    artifact_id=update.artifact.artifact_id,
                     name=update.artifact.name or node.name,
                     parts=[Part(text=piece)],
                 )
@@ -985,7 +989,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         last_chunk=bool(update.last_chunk),
                         metadata=_struct(
                             {
-                                "kind": "node.artifact",
                                 "node_id": node.id,
                                 "agent_name": node.agent_name,
                             }
@@ -996,7 +999,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 msg_text = _join_text(chunk.message.parts)
                 artifacts.append({"id": "message", "name": "message", "text": msg_text})
                 art = Artifact(
-                    artifact_id=f"{node.id}:message",
+                    artifact_id=uuid.uuid4().hex,
                     name=node.name,
                     parts=[Part(text=msg_text)],
                 )
@@ -1009,7 +1012,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         last_chunk=True,
                         metadata=_struct(
                             {
-                                "kind": "agent.message",
                                 "node_id": node.id,
                                 "agent_name": node.agent_name,
                             }
