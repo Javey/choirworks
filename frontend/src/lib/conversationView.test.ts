@@ -251,3 +251,53 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("加入了群聊");
   });
 });
+
+describe("conversationFromTasks context restoration", () => {
+  it("restores members from context", () => {
+    const view = conversationFromTasks([], "c1", {
+      members: [
+        { agent_name: "echo", agent_url: "http://echo", reason: "plan", joined_at: "2025-01-01T00:00:00Z" },
+        { agent_name: "writer", agent_url: "http://writer", reason: "plan", joined_at: "2025-01-01T00:00:00Z" },
+      ],
+    });
+    expect(view.members.map((m) => m.agent_name)).toEqual(["echo", "writer"]);
+    expect(view.members[0]?.agent_url).toBe("http://echo");
+    expect(view.members[0]?.reason).toBe("plan");
+    expect(view.members[0]?.joined_at).toBe("2025-01-01T00:00:00Z");
+  });
+
+  it("restores interventions from context", () => {
+    const view = conversationFromTasks([], "c1", {
+      interventions: [
+        { id: "iv1", node_id: "n1", question: "预算口径？", status: "pending", kind: "confirm_cancel" },
+        { id: "iv2", node_id: "n2", question: "选择哪个？", status: "resolved", kind: "question" },
+      ],
+    });
+    expect(Object.keys(view.interventions)).toEqual(["iv1", "iv2"]);
+    expect(view.interventions.iv1.status).toBe("pending");
+    expect(view.interventions.iv1.kind).toBe("confirm_cancel");
+    expect(view.interventions.iv1.question).toBe("预算口径？");
+    expect(view.interventions.iv2.status).toBe("resolved");
+  });
+
+  it("derives notifications from pending confirm_cancel interventions", () => {
+    const view = conversationFromTasks([], "c1", {
+      interventions: [
+        { id: "iv1", node_id: "n1", question: "预算口径？", status: "pending", kind: "confirm_cancel" },
+        { id: "iv2", node_id: "n2", question: "选择哪个？", status: "resolved", kind: "confirm_cancel" },
+      ],
+    });
+    expect(view.notifications).toHaveLength(1);
+    expect(view.notifications[0].kind).toBe("intervention.requested");
+    expect(view.notifications[0].text).toContain("待确认");
+    expect(view.notifications[0].text).toContain("预算口径？");
+    expect(view.notifications[0].node_id).toBe("n1");
+  });
+
+  it("restores empty members and interventions when context is null", () => {
+    const view = conversationFromTasks([], "c1", null);
+    expect(view.members).toEqual([]);
+    expect(view.interventions).toEqual({});
+    expect(view.notifications).toEqual([]);
+  });
+});

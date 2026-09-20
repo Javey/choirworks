@@ -89,6 +89,54 @@ function nodesFromContext(context: ProtoStruct | null | undefined): TaskNodeInfo
   }));
 }
 
+function membersFromContext(context: ProtoStruct | null | undefined): RoomMemberDto[] {
+  const membersMeta = (context?.members as ProtoStruct[] | undefined) ?? [];
+  return membersMeta.map((m) => ({
+    conversation_id: "",
+    agent_name: String(m.agent_name ?? m.name ?? ""),
+    agent_url: String(m.agent_url ?? m.url ?? ""),
+    reason: typeof m.reason === "string" ? m.reason : null,
+    joined_at: typeof m.joined_at === "string" ? m.joined_at : "",
+  }));
+}
+
+function interventionsFromContext(
+  context: ProtoStruct | null | undefined,
+): Record<string, InterventionInfo> {
+  const ivsMeta = (context?.interventions as ProtoStruct[] | undefined) ?? [];
+  const result: Record<string, InterventionInfo> = {};
+  for (const iv of ivsMeta) {
+    const id = String(iv.id ?? iv.intervention_id ?? "");
+    if (!id) continue;
+    result[id] = {
+      id,
+      status: typeof iv.status === "string" ? iv.status : "pending",
+      node_id: typeof iv.node_id === "string" ? iv.node_id : "",
+      kind: typeof iv.kind === "string" ? iv.kind : "question",
+      question: typeof iv.question === "string" ? iv.question : undefined,
+    };
+  }
+  return result;
+}
+
+function notificationsFromInterventions(
+  interventions: Record<string, InterventionInfo>,
+): SystemNotification[] {
+  const notifications: SystemNotification[] = [];
+  for (const iv of Object.values(interventions)) {
+    if (iv.status === "pending" && iv.kind === "confirm_cancel") {
+      notifications.push({
+        id: `sys-intervention-${iv.id}`,
+        kind: "intervention.requested",
+        text: `待确认：${iv.question ?? ""}`,
+        node_id: iv.node_id || undefined,
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
+  return notifications;
+}
+
 function stateName(state: unknown): string {
   if (typeof state === "number") return taskStateToJSON(state as TaskState);
   if (typeof state === "string") return state;
@@ -160,6 +208,9 @@ export function conversationFromTasks(
   let lastTaskId = "";
   let lastState = taskStateToJSON(TaskState.TASK_STATE_SUBMITTED);
   const nodes = nodesFromContext(context);
+  const members = membersFromContext(context);
+  const interventions = interventionsFromContext(context);
+  const notifications = notificationsFromInterventions(interventions);
   for (const task of tasks) {
     const state = stateName(
       (task.status as ProtoStruct | undefined)?.state,
@@ -188,10 +239,10 @@ export function conversationFromTasks(
     contextId: contextId,
     state: lastState,
     messages,
-    notifications: [],
-    members: [],
+    notifications,
+    members,
     nodes,
-    interventions: {},
+    interventions,
     activeArtifactIds: new Set(),
     workingBubbles: [],
     lastSeq: 0,
