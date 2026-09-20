@@ -43,3 +43,20 @@ async def test_duplicate_name_rejected(tmp_path, echo_agent):
     finally:
         await remote.close()
         await db.close()
+
+
+async def test_registration_survives_application_restart(tmp_path, echo_agent):
+    from tests.support.sdk import sdk_hub
+
+    async with sdk_hub(tmp_path, "persistent-registry.db") as (_, http, _):
+        registered = await http.post(
+            "/v1/agents", json={"name": "persisted", "card_url": echo_agent.url}
+        )
+        assert registered.status_code == 201
+        record = registered.json()
+
+    async with sdk_hub(tmp_path, "persistent-registry.db") as (_, http, _):
+        assert (await http.get("/v1/agents")).json() == [record]
+        refreshed = await http.post(f"/v1/agents/{record['id']}/refresh")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["id"] == record["id"]

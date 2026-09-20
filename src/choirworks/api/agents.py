@@ -1,29 +1,22 @@
 from __future__ import annotations
 
+from a2a.client.errors import AgentCardResolutionError
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from choirworks.a2a.registry import DuplicateAgentName
-from choirworks.models.domain import AgentRecord
+from choirworks.models.domain import AgentRecord, AgentRegistration
 
 router = APIRouter(tags=["agents"])
 
 
-class RegisterAgentIn(BaseModel):
-    name: str
-    card_url: str = Field(..., description="A2A agent base URL")
-
-
 @router.post("/agents", status_code=201, response_model=AgentRecord)
-async def register_agent(body: RegisterAgentIn, request: Request) -> AgentRecord:
+async def register_agent(body: AgentRegistration, request: Request) -> AgentRecord:
     try:
         return await request.app.state.registry.register(body.name, body.card_url)
     except DuplicateAgentName as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - card 拉取失败统一返回 400
-        raise HTTPException(
-            status_code=400, detail=f"failed to resolve agent card: {exc}"
-        ) from exc
+    except AgentCardResolutionError as exc:
+        raise HTTPException(status_code=400, detail=f"failed to resolve agent card: {exc}") from exc
 
 
 @router.get("/agents", response_model=list[AgentRecord])
@@ -42,4 +35,6 @@ async def refresh_agent(agent_id: str, request: Request) -> AgentRecord:
     try:
         return await request.app.state.registry.refresh(agent_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=exc.args[0]) from exc
+    except AgentCardResolutionError as exc:
+        raise HTTPException(status_code=502, detail=f"failed to refresh agent card: {exc}") from exc
