@@ -492,6 +492,30 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
         )
 
+    async def _emit_text_chunk(
+        self,
+        runtime: SessionRuntime,
+        *,
+        text: str,
+        append: bool,
+        last_chunk: bool,
+        artifact_id: str,
+    ) -> None:
+        part = Part(text=text)
+        await runtime.queue.enqueue_event(
+            TaskArtifactUpdateEvent(
+                task_id=runtime.task_id,
+                context_id=runtime.context_id,
+                artifact=Artifact(
+                    artifact_id=artifact_id,
+                    parts=[part],
+                    metadata=_struct({"author": "assistant"}),
+                ),
+                append=append,
+                last_chunk=last_chunk,
+            )
+        )
+
     async def _stream_plan(
         self,
         runtime: SessionRuntime,
@@ -500,36 +524,61 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         reason: str | None = None,
         context: str | None = None,
     ) -> PlanDraft:
-        """Stream the planner's thinking to subscribers, then return the plan."""
+        """Stream the planner's reasoning and text to subscribers, then return the plan."""
         draft: PlanDraft | None = None
-        thinking_parts: list[str] = []
-        first_chunk = True
+        reasoning_parts: list[str] = []
+        content_parts: list[str] = []
+        first_reasoning = True
+        first_content = True
         thought_id = uuid.uuid4().hex
+        text_id = uuid.uuid4().hex
         async for item in self._planner.plan(
             request, reason=reason, context=context
         ):
             if isinstance(item, PlanDraft):
                 draft = item
                 continue
-            thinking_parts.append(item)
+            reasoning = getattr(item, "reasoning_content", None)
+            content = getattr(item, "content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                await self._emit_thought_chunk(
+                    runtime,
+                    text=reasoning,
+                    author="assistant",
+                    append=not first_reasoning,
+                    last_chunk=False,
+                    artifact_id=thought_id,
+                )
+                first_reasoning = False
+            if content:
+                content_parts.append(content)
+                await self._emit_text_chunk(
+                    runtime,
+                    text=content,
+                    append=not first_content,
+                    last_chunk=False,
+                    artifact_id=text_id,
+                )
+                first_content = False
+        reasoning = "".join(reasoning_parts)
+        if reasoning:
             await self._emit_thought_chunk(
                 runtime,
-                text=item,
-                author="assistant",
-                append=not first_chunk,
-                last_chunk=False,
-                artifact_id=thought_id,
-            )
-            first_chunk = False
-        thinking = "".join(thinking_parts)
-        if thinking:
-            await self._emit_thought_chunk(
-                runtime,
-                text=thinking,
+                text=reasoning,
                 author="assistant",
                 append=False,
                 last_chunk=True,
                 artifact_id=thought_id,
+            )
+        content = "".join(content_parts)
+        if content:
+            await self._emit_text_chunk(
+                runtime,
+                text=content,
+                append=False,
+                last_chunk=True,
+                artifact_id=text_id,
             )
         if draft is None:
             raise PlanningFailed("planner stream ended without a plan")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import litellm
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
@@ -49,10 +49,12 @@ class LiteLLMClient:
         user: str,
         schema: type[T],
         tool_name: str | None = None,
-    ) -> AsyncIterator[str | T]:
-        """Stream thinking deltas, then yield the validated tool-call result.
+    ) -> AsyncIterator[Any]:
+        """Stream raw deltas, then yield the validated tool-call result.
 
         The schema is enforced at the API layer via a forced function tool.
+        Each yielded delta is the raw litellm ``Delta`` object — callers read
+        ``delta.reasoning_content`` and ``delta.content`` as needed.
         Argument fragments are accumulated across chunks and validated with
         pydantic once the stream ends.
         """
@@ -86,14 +88,7 @@ class LiteLLMClient:
             delta = chunk.choices[0].delta
             if delta is None:
                 continue
-            reasoning = (
-                delta.reasoning_content
-                if hasattr(delta, "reasoning_content")
-                else None
-            )
-            text = reasoning or delta.content
-            if text:
-                yield text
+            yield delta
             for call in delta.tool_calls or []:
                 if isinstance(call, ChatCompletionDeltaToolCall):
                     fragments.setdefault(call.index, []).append(

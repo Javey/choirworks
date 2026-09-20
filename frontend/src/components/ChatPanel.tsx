@@ -90,6 +90,22 @@ function AgentBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessa
   );
 }
 
+function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessage | null }) {
+  return (
+    <div className="flex gap-2.5">
+      <Avatar name="规划大脑" />
+      <div className="flex-1 max-w-[70%]">
+        {thinking ? <ThinkingSection text={thinking.text} /> : null}
+        <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-primary-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {msg.text}
+          </ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NotificationItem({ notif, thinking }: { notif: SystemNotification; thinking?: ChatMessage | null }) {
   return (
     <div className="flex flex-col items-center gap-1">
@@ -149,7 +165,7 @@ export function ChatPanel({ view }: { view: ConversationView }) {
   let pendingThinking: ChatMessage | null = null;
 
   for (const item of items) {
-    if (item.type === "message" && item.data.role === "assistant") {
+    if (item.type === "message" && item.data.thinking) {
       pendingThinking = item.data;
       continue;
     }
@@ -171,9 +187,12 @@ export function ChatPanel({ view }: { view: ConversationView }) {
           );
         }
       } else {
+        const bubble = item.data.role === "assistant"
+          ? <AssistantTextBubble msg={item.data} thinking={pendingThinking} />
+          : <AgentBubble msg={item.data} thinking={pendingThinking} />;
         rendered.push(
           <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
-            <AgentBubble msg={item.data} thinking={pendingThinking} />
+            {bubble}
           </div>,
         );
         pendingThinking = null;

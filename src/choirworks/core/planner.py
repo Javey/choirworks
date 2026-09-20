@@ -133,11 +133,11 @@ class Planner:
         *,
         reason: str | None = None,
         context: str | None = None,
-    ) -> AsyncIterator[str | PlanDraft]:
+    ) -> AsyncIterator[Any]:
         """Stream the planning thought process, then yield the final draft.
 
         Yields:
-            Plain-text thinking chunks followed by exactly one ``PlanDraft``.
+            Raw litellm ``Delta`` objects followed by exactly one ``PlanDraft``.
         """
         agents = await self._registry.list()
         if not agents:

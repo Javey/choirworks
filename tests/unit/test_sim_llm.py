@@ -179,7 +179,11 @@ async def test_stream_structured_with_sim_yields_valid_plan():
             tool_name="PlanDraft",
         )
     ]
-    thinking = "".join(item for item in items if isinstance(item, str))
+    thinking = "".join(
+        getattr(item, "reasoning_content", "") or ""
+        for item in items
+        if not isinstance(item, PlanDraft)
+    )
     drafts = [item for item in items if isinstance(item, PlanDraft)]
     assert thinking
     assert len(drafts) == 1

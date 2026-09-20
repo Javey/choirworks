@@ -12,6 +12,7 @@ export interface ChatMessage {
   task_id: string | null;
   created_at: string;
   seq: number;
+  thinking: boolean;
 }
 
 export interface SystemNotification {
@@ -294,6 +295,7 @@ export function applyStreamEvent(
         task_id: typeof msg.taskId === "string" ? msg.taskId : null,
         created_at: "",
         seq,
+        thinking: false,
       });
     }
     const nodes = view.nodes;
@@ -368,6 +370,7 @@ export function applyStreamEvent(
           task_id: view.taskId,
           created_at: new Date().toISOString(),
           seq,
+          thinking: true,
         };
         if (view.messages.some((m) => m.id === chatMsg.id)) {
           return view;
@@ -546,6 +549,7 @@ export function applyStreamEvent(
         task_id: view.taskId,
         created_at: new Date().toISOString(),
         seq,
+        thinking: true,
       };
       if (view.messages.some((m) => m.id === chatMsg.id)) {
         return view;
@@ -562,8 +566,8 @@ export function applyStreamEvent(
     if (lastChunk && !isStreaming && text) {
       const chatMsg: ChatMessage = {
         id: artifactId,
-        role: "agent",
-        sender: agentName || null,
+        role: author === "assistant" ? "assistant" : "agent",
+        sender: author === "assistant" ? null : (agentName || null),
         text,
         mentions: [],
         quote_id: null,
@@ -571,6 +575,7 @@ export function applyStreamEvent(
         task_id: view.taskId,
         created_at: new Date().toISOString(),
         seq,
+        thinking: false,
       };
       if (view.messages.some((m) => m.id === chatMsg.id)) {
         return view;
@@ -632,6 +637,7 @@ export function applyStreamEvent(
       task_id: typeof msg.taskId === "string" ? msg.taskId : null,
       created_at: new Date().toISOString(),
       seq,
+      thinking: false,
     };
     if (view.messages.some((m) => m.id === chatMsg.id)) {
       return view;

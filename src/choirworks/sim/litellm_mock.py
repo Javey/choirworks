@@ -83,7 +83,7 @@ def _text_response(content: str) -> ModelResponse:
 async def _stream_structured_response(
     reasoning: str, arguments: str, *, tool_name: str, chunk_size: int = 12
 ) -> AsyncIterator[ModelResponseStream]:
-    """Yield reasoning text chunks then streamed tool-call argument fragments."""
+    """Yield reasoning_content chunks then streamed tool-call argument fragments."""
     for start in range(0, len(reasoning), chunk_size):
         yield ModelResponseStream(
             id="sim",
@@ -92,7 +92,7 @@ async def _stream_structured_response(
             choices=[
                 StreamingChoices(
                     index=0,
-                    delta=Delta(content=reasoning[start : start + chunk_size]),
+                    delta=Delta(reasoning_content=reasoning[start : start + chunk_size]),
                     finish_reason=None,
                 )
             ],

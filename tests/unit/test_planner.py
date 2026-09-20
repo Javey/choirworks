@@ -115,7 +115,12 @@ async def collect_plan(planner: Planner, request: str, **kwargs):
         if isinstance(item, PlanDraft):
             draft = item
         else:
-            chunks.append(item)
+            reasoning = getattr(item, "reasoning_content", None) or ""
+            content = getattr(item, "content", None) or ""
+            if reasoning:
+                chunks.append(reasoning)
+            if content:
+                chunks.append(content)
     assert draft is not None
     return "".join(chunks), draft
 

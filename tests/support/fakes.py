@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
+from litellm.types.utils import Delta
 from pydantic import BaseModel
 
 from choirworks.core.planner import PlanDraft
@@ -30,8 +31,8 @@ class FakeLLM:
 
     async def stream_structured(
         self, *, system: str, user: str, schema: type[T], tool_name: str | None = None
-    ) -> AsyncIterator[str | T]:
-        """Direct LLM client interface — streams thinking then the result."""
+    ) -> AsyncIterator[Any]:
+        """Direct LLM client interface — streams reasoning deltas then the result."""
         self.stream_calls.append(
             {
                 "system": system,
@@ -51,8 +52,8 @@ class FakeLLM:
             else "思考：解读产出。"
         )
         midpoint = len(reasoning) // 2
-        yield reasoning[:midpoint]
-        yield reasoning[midpoint:]
+        yield Delta(reasoning_content=reasoning[:midpoint])
+        yield Delta(reasoning_content=reasoning[midpoint:])
         yield result
 
     async def text(self, *, system: str, user: str) -> str:
