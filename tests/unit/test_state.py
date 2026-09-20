@@ -30,11 +30,13 @@ def test_start_new_plan_resets_plan_scope_keeps_members():
     assert state.interventions == {}
     assert state.queue == {}
     assert state.derived_count == 0
+    assert state.revision_count == 0
     assert set(state.members) == {"a"}
 
 
 def test_full_json_round_trips_everything():
     state = OrchestrationState(plan_id="p2", plan_version=3, derived_count=1)
+    state.revision_count = 2
     state.nodes["n1"] = NodeState(
         id="n1",
         name="n1",
@@ -66,6 +68,7 @@ def test_full_json_round_trips_everything():
     assert loaded.plan_id == "p2"
     assert loaded.plan_version == 3
     assert loaded.derived_count == 1
+    assert loaded.revision_count == 2
     assert loaded.next_intervention == 5
     assert loaded.next_message == 5
     node = loaded.nodes["n1"]

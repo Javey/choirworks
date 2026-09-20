@@ -223,6 +223,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         max_node_attempts: int = 2,
         retry_backoff: float = 1.0,
         max_derived_nodes: int = 5,
+        max_revisions: int = 3,
         replan_on_failure: bool = True,
         compaction_threshold: float = 0.8,
         compaction_retention: int = 10,
@@ -236,6 +237,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._max_node_attempts = max_node_attempts
         self._retry_backoff = retry_backoff
         self._max_derived_nodes = max_derived_nodes
+        self._max_revisions = max_revisions
         self._replan_on_failure = replan_on_failure
         self._brief_builder = ContextBriefBuilder(
             llm,
@@ -725,7 +727,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         return
                     if state.has_failures():
                         recovered = False
-                        if self._replan_on_failure:
+                        if (
+                            self._replan_on_failure
+                            and state.revision_count < self._max_revisions
+                        ):
                             recovered = await self._repair_plan(runtime)
                         if recovered:
                             continue
@@ -848,8 +853,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 )
             else:
                 if decision.intent == "revise" and decision.patch is not None:
-                    async with runtime.lock:
-                        await self._revise_plan(runtime, decision.patch)
+                    if runtime.state.revision_count < self._max_revisions:
+                        async with runtime.lock:
+                            await self._revise_plan(runtime, decision.patch)
+                    else:
+                        logger.warning(
+                            "Revision limit reached for %s, skipping",
+                            runtime.context_id,
+                        )
                 node.status = "completed"
                 await emit_state_delta(self, runtime, nodes={
                     node.id: {
@@ -1523,12 +1534,15 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         fn_result = await func.execute(ctx, args)
         await emit_function_call(self, runtime, func, args, fn_result)
         data = fn_result.data or {}
-        return PatchResult(
+        result = PatchResult(
             added=list(data.get("added", [])),
             invalidated=list(data.get("invalidated", [])),
             skipped_in_flight=list(data.get("skipped_in_flight", [])),
             rejected=list(data.get("rejected", [])),
         )
+        if result.added or result.invalidated:
+            runtime.state.revision_count += 1
+        return result
 
     async def _cancel_node(self, runtime: SessionRuntime, node: NodeState) -> None:
         state = runtime.state

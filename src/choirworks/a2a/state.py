@@ -202,6 +202,7 @@ class OrchestrationState:
     queue: dict[str, list[QueuedMessage]] = field(default_factory=dict)
     derived_count: int = 0
     patch_count: int = 0
+    revision_count: int = 0
     next_intervention: int = 1
     next_message: int = 1
 
@@ -367,6 +368,7 @@ class OrchestrationState:
         self.queue = {}
         self.derived_count = 0
         self.patch_count = 0
+        self.revision_count = 0
         self.next_intervention = 1
         self.next_message = 1
 
@@ -386,6 +388,7 @@ class OrchestrationState:
             },
             "derived_count": self.derived_count,
             "patch_count": self.patch_count,
+            "revision_count": self.revision_count,
             "next_intervention": self.next_intervention,
             "next_message": self.next_message,
         }, ensure_ascii=False)
@@ -412,6 +415,7 @@ class OrchestrationState:
             ]
         state.derived_count = int(data.get("derived_count", 0))
         state.patch_count = int(data.get("patch_count", 0))
+        state.revision_count = int(data.get("revision_count", 0))
         state.next_intervention = int(data.get("next_intervention", 1))
         state.next_message = int(data.get("next_message", 1))
         return state

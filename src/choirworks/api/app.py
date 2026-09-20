@@ -91,6 +91,7 @@ async def create_app(
             node_timeout=settings.scheduler.node_timeout_seconds,
             max_node_attempts=settings.scheduler.max_node_attempts,
             retry_backoff=settings.scheduler.retry_backoff_seconds,
+            max_revisions=settings.scheduler.max_revisions,
             replan_on_failure=settings.scheduler.replan_on_failure,
             compaction_threshold=settings.llm.compaction_threshold,
             compaction_retention=settings.llm.compaction_retention,

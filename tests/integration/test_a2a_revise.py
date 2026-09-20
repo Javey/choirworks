@@ -281,3 +281,48 @@ async def test_failed_node_repaired_by_patch(tmp_path):
     finally:
         await flaky.stop()
         await writer.stop()
+
+
+async def test_revise_limit_stops_loop(tmp_path):
+    writer = await start_fake_agent("echo", name="writer")
+    try:
+        revise_patch = PlanPatch(
+            add=[PatchNode(agent_name="writer", instruction="再写一遍")],
+            reason="不满意",
+        )
+        llm = FakeLLM(
+            structured_results=[
+                PlanDraft(
+                    nodes=[
+                        PlanNodeDraft(
+                            id="n1",
+                            name="writer",
+                            agent_name="writer",
+                            input={"text": "写草稿"},
+                        ),
+                    ],
+                ),
+                *[
+                    OutcomeDecision(intent="revise", patch=revise_patch)
+                    for _ in range(4)
+                ],
+            ],
+        )
+        settings = _settings(tmp_path / "revise.db")
+        settings = settings.model_copy(update={
+            "scheduler": settings.scheduler.model_copy(update={"max_revisions": 3}),
+        })
+        async with sdk_hub(
+            tmp_path, "revise.db", settings=settings, llm=llm
+        ) as (app, http, client):
+            await http.post(
+                "/v1/agents", json={"name": "writer", "card_url": writer.url}
+            )
+            task_id = await _send_once(client, _message("写一份材料"))
+            task = await wait_for_task(
+                client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30
+            )
+            state = task_state(task)
+            assert state["revision_count"] == 3
+    finally:
+        await writer.stop()

@@ -15,6 +15,7 @@ from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
+from tests.support.fakes import FakeLLM
 from tests.support.sdk import (
     context_nodes,
     context_state,
@@ -183,6 +184,46 @@ async def test_send_greeting_direct_reply(tmp_path, echo_agent):
         task_id = await _send_once(client, _message("你好"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert task_nodes(task) == {}
+
+
+async def test_repair_limit_stops_loop(tmp_path):
+    from choirworks.a2a.executor import OutcomeDecision
+    from choirworks.a2a.patch import PatchNode, PlanPatch
+
+    flaky = await start_fake_agent("flaky_always", name="flaky")
+    try:
+        repair_patch = PlanPatch(
+            add=[PatchNode(agent_name="flaky", instruction="重试")],
+            reason="失败重试",
+        )
+        llm = FakeLLM(
+            structured_results=[
+                _plan("flaky"),
+                *[
+                    OutcomeDecision(intent="revise", patch=repair_patch)
+                    for _ in range(3)
+                ],
+            ],
+        )
+        settings = Settings(
+            store={"db_path": tmp_path / "send.db"},
+            a2a={"public_url": "http://test"},
+            scheduler={
+                "retry_backoff_seconds": 0.0,
+                "max_node_attempts": 1,
+                "max_revisions": 3,
+            },
+        )
+        async with sdk_hub(
+            tmp_path, "send.db", settings=settings, llm=llm
+        ) as (app, http, client):
+            await http.post("/v1/agents", json={"name": "flaky", "card_url": flaky.url})
+            task_id = await _send_once(client, _message("任务"))
+            task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_FAILED})
+            state = await context_state(app, task.context_id)
+            assert state["revision_count"] == 3
+    finally:
+        await flaky.stop()
 
 
 async def test_send_empty_text_raises(tmp_path, echo_agent):

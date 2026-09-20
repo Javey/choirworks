@@ -28,6 +28,7 @@ class SchedulerConfig(BaseModel):
     max_node_attempts: int = 2
     retry_backoff_seconds: float = 1.0
     replan_on_failure: bool = True
+    max_revisions: int = 3
     max_plan_nodes: int = 20
 
 

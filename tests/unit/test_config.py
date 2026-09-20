@@ -37,3 +37,4 @@ def test_llm_and_scheduler_defaults():
     assert settings.scheduler.max_plan_nodes == 20
     assert settings.scheduler.retry_backoff_seconds == 1.0
     assert settings.scheduler.replan_on_failure is True
+    assert settings.scheduler.max_revisions == 3

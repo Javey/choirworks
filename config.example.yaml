@@ -17,6 +17,7 @@ scheduler:
   max_node_attempts: 2
   retry_backoff_seconds: 1.0
   replan_on_failure: true
+  max_revisions: 3
   max_plan_nodes: 20
 
 recovery:
