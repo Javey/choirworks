@@ -47,6 +47,10 @@ function setupFetch() {
       });
     }
 
+    if (url.includes("/v1/conversations/") && url.includes("/replay") && method === "GET") {
+      return json([]);
+    }
+
     if (url.includes("/v1/conversations/") && method === "GET") {
       return json({ id: "ctx-1", tasks: [] });
     }
@@ -57,10 +61,10 @@ function setupFetch() {
 }
 
 describe("App", () => {
-  it("renders the header and empty event list", async () => {
+  it("renders the header and empty chat panel", async () => {
     setupFetch();
     render(<App />);
-    expect(screen.getByText("等待事件…")).toBeInTheDocument();
+    expect(screen.getByText("输入消息开始对话")).toBeInTheDocument();
   });
 
   it("renders the composer input", async () => {

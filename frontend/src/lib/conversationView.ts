@@ -11,6 +11,7 @@ export interface ChatMessage {
   node_id: string | null;
   task_id: string | null;
   created_at: string;
+  seq: number;
 }
 
 export interface SystemNotification {
@@ -20,6 +21,7 @@ export interface SystemNotification {
   agent_name?: string;
   node_id?: string;
   created_at: string;
+  seq: number;
 }
 
 export interface WorkingBubble {
@@ -182,6 +184,7 @@ function applyStateDelta(
         text: `${agentName} 加入了群聊`,
         agent_name: agentName,
         created_at: new Date().toISOString(),
+        seq,
       });
     }
     if (newMembers.length) {
@@ -216,6 +219,7 @@ function applyStateDelta(
           text: `待确认：${question}`,
           node_id: nodeId || undefined,
           created_at: new Date().toISOString(),
+          seq,
         });
       } else if (status === "resolved" && (!prev || prev.status === "pending")) {
         notifications.push({
@@ -224,6 +228,7 @@ function applyStateDelta(
           text: "人工答复已回填，任务继续",
           node_id: nodeId || prev?.node_id || undefined,
           created_at: new Date().toISOString(),
+          seq,
         });
       } else if (status === "expired" && (!prev || prev.status === "pending")) {
         notifications.push({
@@ -232,6 +237,7 @@ function applyStateDelta(
           text: "该确认已无需处理",
           node_id: nodeId || prev?.node_id || undefined,
           created_at: new Date().toISOString(),
+          seq,
         });
       }
     }
@@ -287,6 +293,7 @@ export function applyStreamEvent(
         node_id: typeof rm.node_id === "string" ? rm.node_id : null,
         task_id: typeof msg.taskId === "string" ? msg.taskId : null,
         created_at: "",
+        seq,
       });
     }
     const nodes = view.nodes;
@@ -327,6 +334,7 @@ export function applyStreamEvent(
           text: `${agentName} 加入了群聊`,
           agent_name: agentName,
           created_at: new Date().toISOString(),
+          seq,
         };
         return {
           ...view,
@@ -359,6 +367,7 @@ export function applyStreamEvent(
           node_id: typeof rm.node_id === "string" ? rm.node_id : null,
           task_id: view.taskId,
           created_at: new Date().toISOString(),
+          seq,
         };
         if (view.messages.some((m) => m.id === chatMsg.id)) {
           return view;
@@ -536,6 +545,7 @@ export function applyStreamEvent(
         node_id: nodeId,
         task_id: view.taskId,
         created_at: new Date().toISOString(),
+        seq,
       };
       if (view.messages.some((m) => m.id === chatMsg.id)) {
         return view;
@@ -560,6 +570,7 @@ export function applyStreamEvent(
         node_id: nodeId,
         task_id: view.taskId,
         created_at: new Date().toISOString(),
+        seq,
       };
       if (view.messages.some((m) => m.id === chatMsg.id)) {
         return view;
@@ -620,6 +631,7 @@ export function applyStreamEvent(
       node_id: typeof rm.node_id === "string" ? rm.node_id : null,
       task_id: typeof msg.taskId === "string" ? msg.taskId : null,
       created_at: new Date().toISOString(),
+      seq,
     };
     if (view.messages.some((m) => m.id === chatMsg.id)) {
       return view;

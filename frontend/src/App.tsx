@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { X, AlertCircle } from "lucide-react";
 
 import { api } from "./api/client";
-import { Sidebar } from "./components/Sidebar";
+import { ChatPanel } from "./components/ChatPanel";
 import { DebugEventList } from "./components/DebugEventList";
 import { RoomComposer } from "./components/room/RoomComposer";
+import { Sidebar } from "./components/Sidebar";
 import { useConversation, type ConversationSendInput } from "./hooks/useConversation";
 import type { ConversationSummaryDto } from "./lib/types";
 
@@ -18,6 +19,7 @@ export default function App() {
     new URLSearchParams(window.location.search).get("c"),
   );
   const [banner, setBanner] = useState<string | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   const { view, rawEvents, error, send } = useConversation(activeId);
 
@@ -117,7 +119,21 @@ export default function App() {
           </div>
         </header>
 
-        <DebugEventList events={rawEvents} />
+        {showDebug ? (
+          <DebugEventList events={rawEvents} />
+        ) : (
+          <ChatPanel view={view} />
+        )}
+
+        <div className="flex items-center justify-between px-6 py-1 bg-white border-t border-feishu-border flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowDebug((v) => !v)}
+            className="text-[11px] text-feishu-muted hover:text-feishu-text transition-colors"
+          >
+            {showDebug ? "返回对话" : "调试事件"}
+          </button>
+        </div>
 
         <RoomComposer
           members={view.members}
