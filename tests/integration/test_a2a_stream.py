@@ -69,16 +69,21 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
             for su in status_updates
             if "kind" in su.metadata.fields
         ]
-        assert "plan.created" in kinds
+        assert "function_call" in kinds
         assert "plan.announced" not in kinds
         assert all(not su.status.HasField("message") for su in status_updates)
-        plan_created = next(
+        create_plan_call = next(
             su
             for su in status_updates
-            if su.metadata.fields["kind"].string_value == "plan.created"
+            if su.metadata.fields["kind"].string_value == "function_call"
+            and su.metadata.fields["function_name"].string_value == "create_plan"
         )
-        nodes = plan_created.metadata.fields["nodes"].list_value.values
+        nodes = create_plan_call.metadata.fields["function_args"].struct_value.fields[
+            "nodes"
+        ].list_value.values
         assert nodes[0].struct_value.fields["agent_name"].string_value == "echo"
+        func_result = create_plan_call.metadata.fields["function_result"].struct_value
+        assert func_result.fields["success"].bool_value is True
         thought_updates = [
             r.artifact_update
             for r in responses

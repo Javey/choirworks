@@ -44,12 +44,21 @@ from choirworks.core.context import (
     build_continuation_text,
     build_dispatch_text,
     build_outcome_user,
-    build_peer_fallback_input,
     build_repair_user,
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
 from choirworks.store.contexts import ContextStore
+from choirworks.tools import (
+    AskUserFunction,
+    CallSubagentFunction,
+    CreatePlanFunction,
+    FunctionContext,
+    FunctionRegistry,
+    RevisePlanFunction,
+    emit_function_call,
+    emit_function_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +245,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._sessions: dict[str, SessionRuntime] = {}
         self._session_gate = asyncio.Lock()
         self._context_store: ContextStore | None = None
+
+        self._functions = FunctionRegistry()
+        self._functions.register(CreatePlanFunction())
+        self._functions.register(RevisePlanFunction())
+        self._functions.register(AskUserFunction())
+        self._functions.register(CallSubagentFunction())
 
     # ------------------------------------------------------------- lifecycle
 
@@ -526,6 +541,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_brief = await self._brief_builder.build(
             runtime.context_id, exclude_task_id=runtime.task_id
         )
+        create_plan = self._functions.get("create_plan")
+        assert create_plan is not None
+        ctx = FunctionContext(executor=self, runtime=runtime)
         try:
             draft = await self._stream_plan(
                 runtime, text, context=context_brief or None
@@ -533,47 +551,21 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         except PlanningFailed as exc:
             logger.warning("Planning failed for task %s: %s", runtime.task_id, exc)
             await self._persist(runtime)
-            await self._emit_event(
-                runtime,
-                "plan.failed", TaskState.TASK_STATE_FAILED, error=str(exc),
+            await emit_function_error(
+                self, runtime, create_plan, str(exc),
+                state_name=TaskState.TASK_STATE_FAILED,
             )
             self._evict_session(runtime.context_id)
             return
 
+        result = await create_plan.execute(ctx, draft)
+        await emit_function_call(
+            self, runtime, create_plan, draft, result,
+            state_name=TaskState.TASK_STATE_WORKING,
+        )
+
         agents = await self._registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
-
-        for node_draft in draft.nodes:
-            node = NodeState(
-                id=node_draft.id,
-                name=node_draft.name,
-                agent_name=node_draft.agent_name,
-                agent_url=agent_urls.get(node_draft.agent_name, ""),
-                deps=list(node_draft.deps),
-                input_text=str(node_draft.input.get("text", "")),
-            )
-            state.nodes[node.id] = node
-
-        await self._emit_event(
-            runtime,
-            "plan.created", TaskState.TASK_STATE_WORKING,
-            plan_id=state.plan_id,
-            plan_version=state.plan_version,
-            nodes=[
-                {
-                    "id": n.id,
-                    "name": n.name,
-                    "agent_name": n.agent_name,
-                    "deps": n.deps,
-                }
-                for n in state.nodes.values()
-            ],
-        )
-        await self._join_members(
-            runtime,
-            [n.agent_name for n in state.nodes.values() if n.agent_name],
-            "plan",
-        )
         mention_targets = [
             name
             for name in (room or {}).get("mentions", [])
@@ -826,7 +818,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             else:
                 if decision.intent == "revise" and decision.patch is not None:
                     async with runtime.lock:
-                        await self._apply_patch_locked(runtime, decision.patch)
+                        await self._revise_plan(runtime, decision.patch)
                 node.status = "completed"
                 await self._emit_event(
                     runtime,
@@ -1146,17 +1138,16 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         return OutcomeDecision(intent="deliver")
 
     async def _request_human(self, runtime: SessionRuntime, node: NodeState) -> None:
-        intervention = runtime.state.add_intervention(
-            node.id, node.question or ""
-        )
-        await self._emit_event(
-            runtime,
-            "intervention.requested",
-            TaskState.TASK_STATE_INPUT_REQUIRED,
-            intervention_id=intervention.id,
-            node_id=node.id,
-            agent_name=node.agent_name,
-            question=intervention.question,
+        from choirworks.tools.ask_user import AskUserArgs
+
+        func = self._functions.get("ask_user")
+        assert func is not None
+        args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
+        ctx = FunctionContext(executor=self, runtime=runtime)
+        result = await func.execute(ctx, args)
+        await emit_function_call(
+            self, runtime, func, args, result,
+            state_name=TaskState.TASK_STATE_INPUT_REQUIRED,
         )
 
     async def _decide_assistance(
@@ -1194,39 +1185,20 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         node: NodeState,
         decision: OutcomeDecision,
     ) -> bool:
-        state = runtime.state
-        if state.derived_count >= self._max_derived_nodes:
+        from choirworks.tools.call_subagent import CallSubagentArgs
+
+        func = self._functions.get("call_subagent")
+        assert func is not None
+        args = CallSubagentArgs(
+            requester_node_id=node.id,
+            target_agent=decision.target_agent or "",
+            instruction=decision.instruction,
+        )
+        ctx = FunctionContext(executor=self, runtime=runtime)
+        result = await func.execute(ctx, args)
+        if not result.success:
             return False
-        agents = await self._registry.list()
-        agent = next(
-            (item for item in agents if item.name == decision.target_agent), None
-        )
-        if agent is None:
-            return False
-        state.derived_count += 1
-        helper_id = f"{node.id}-h{state.derived_count}"
-        helper = NodeState(
-            id=helper_id,
-            name="",
-            agent_name=agent.name,
-            agent_url=agent.card_url,
-            deps=[],
-            input_text=decision.instruction
-            or build_peer_fallback_input(node.question or node.input_text),
-            derived=True,
-            assist_requested_by=node.id,
-        )
-        state.nodes[helper_id] = helper
-        await self._join_members(runtime, [agent.name], "peer_assist")
-        await self._emit_event(
-            runtime,
-            "assist.dispatched",
-            node_id=node.id,
-            requester=node.agent_name,
-            helper=agent.name,
-            helper_node_id=helper_id,
-        )
-        await self._persist(runtime)
+        await emit_function_call(self, runtime, func, args, result)
         return True
 
     async def _answer_intervention(
@@ -1476,7 +1448,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             return False
         patch = decision.patch
         patch.invalidate = list(dict.fromkeys([*patch.invalidate, *failed_ids]))
-        result = await self._apply_patch_locked(runtime, patch)
+        result = await self._revise_plan(runtime, patch)
         return bool(result.added or result.invalidated)
 
     async def _apply_patch_locked(
@@ -1513,15 +1485,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             draft.agent_name for draft in patch.add if draft.agent_name in agent_urls
         ]
         await self._join_members(runtime, added_agents, "plan_revision")
-        added_nodes = [
-            {
-                "id": node_id,
-                "name": state.nodes[node_id].name,
-                "agent_name": state.nodes[node_id].agent_name,
-                "deps": state.nodes[node_id].deps,
-            }
-            for node_id in result.added
-        ]
         for node_id in result.invalidated:
             await self._emit_event(
                 runtime,
@@ -1529,20 +1492,34 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_id=node_id,
                 reason=patch.reason,
             )
-        await self._emit_event(
-            runtime,
-            "plan.revised",
-            plan_id=state.plan_id,
-            plan_version=state.plan_version,
-            reason=patch.reason,
-            added=result.added,
-            added_nodes=added_nodes,
-            invalidated=result.invalidated,
-            skipped_in_flight=result.skipped_in_flight,
-            rejected=result.rejected,
-        )
         await self._persist(runtime)
         return result
+
+    async def _revise_plan(
+        self, runtime: SessionRuntime, patch: PlanPatch
+    ) -> PatchResult:
+        """Apply a plan patch and emit a ``revise_plan`` function-call event.
+
+        Wraps :meth:`_apply_patch_locked` so callers get both the state
+        mutation (B-class events) and the model-intent function-call event.
+        Returns the underlying :class:`PatchResult` for callers that need
+        to inspect ``added`` / ``invalidated``.
+        """
+        from choirworks.tools.revise_plan import RevisePlanArgs
+
+        func = self._functions.get("revise_plan")
+        assert func is not None
+        args = RevisePlanArgs(patch=patch)
+        ctx = FunctionContext(executor=self, runtime=runtime)
+        fn_result = await func.execute(ctx, args)
+        await emit_function_call(self, runtime, func, args, fn_result)
+        data = fn_result.data or {}
+        return PatchResult(
+            added=list(data.get("added", [])),
+            invalidated=list(data.get("invalidated", [])),
+            skipped_in_flight=list(data.get("skipped_in_flight", [])),
+            rejected=list(data.get("rejected", [])),
+        )
 
     async def _cancel_node(self, runtime: SessionRuntime, node: NodeState) -> None:
         state = runtime.state
