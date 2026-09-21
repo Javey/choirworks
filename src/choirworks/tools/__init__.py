@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from choirworks.tools.ask_user import AskUserArgs, AskUserFunction
+from choirworks.tools.ask_user import AskUserArgs, AskUserFunction, ask_user_func
 from choirworks.tools.base import (
     AgentFunction,
     FunctionContext,
@@ -10,26 +10,25 @@ from choirworks.tools.base import (
 from choirworks.tools.call_subagent import (
     CallSubagentArgs,
     CallSubagentFunction,
+    call_subagent_func,
 )
-from choirworks.tools.create_plan import CreatePlanFunction
-from choirworks.tools.emitter import emit_function_call, emit_function_error, emit_state_delta
-from choirworks.tools.registry import FunctionRegistry
-from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanFunction
+from choirworks.tools.create_plan import CreatePlanFunction, create_plan_func
+from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanFunction, revise_plan_func
 
 __all__ = [
     "AgentFunction",
     "AskUserArgs",
     "AskUserFunction",
+    "ask_user_func",
     "CallSubagentArgs",
     "CallSubagentFunction",
+    "call_subagent_func",
     "CreatePlanFunction",
+    "create_plan_func",
     "FunctionContext",
     "FunctionResult",
-    "FunctionRegistry",
     "RevisePlanArgs",
     "RevisePlanFunction",
+    "revise_plan_func",
     "ToolCallResult",
-    "emit_function_call",
-    "emit_function_error",
-    "emit_state_delta",
 ]

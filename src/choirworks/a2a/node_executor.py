@@ -2,22 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.a2a.context import OrchestrationContext
+from choirworks.a2a.assist import arbitrate_mentions
+from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
+from choirworks.a2a.events import emit_state_delta
 from choirworks.a2a.remote_caller import RemoteAgentCaller
+from choirworks.a2a.repair import RepairManager
+from choirworks.a2a.session import SessionManager
 from choirworks.a2a.state import NodeState
 from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.subagents.outcome import OutcomeSubagent
 from choirworks.tools.outcome_decision import OutcomeDecision
-
-if TYPE_CHECKING:
-    from choirworks.a2a.assist import AssistArbiter
-    from choirworks.a2a.events import EventEmitter
-    from choirworks.a2a.repair import RepairManager
-    from choirworks.a2a.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +24,15 @@ class NodeExecutor:
 
     def __init__(
         self,
-        emitter: EventEmitter,
         session_mgr: SessionManager,
         remote_caller: RemoteAgentCaller,
         outcome_subagent: OutcomeSubagent,
-        assist_arbiter: AssistArbiter,
         repair_mgr: RepairManager,
-        config: object,
+        config: ExecutorConfig,
     ):
-        self._emitter = emitter
         self._session_mgr = session_mgr
         self._remote_caller = remote_caller
         self._outcome_subagent = outcome_subagent
-        self._assist_arbiter = assist_arbiter
         self._repair_mgr = repair_mgr
         self._config = config
 
@@ -72,11 +65,11 @@ class NodeExecutor:
         if mode != "resume":
             node.attempt += 1
         if mode == "dispatch":
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {"status": "dispatched"},
             })
         elif mode == "resume":
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {"status": "resume", "a2a_task_id": node.a2a_task_id},
             })
         current = "working"
@@ -102,12 +95,12 @@ class NodeExecutor:
             await self._handle_completed(ctx, node)
         elif current == "canceled":
             node.status = "canceled"
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {"status": "canceled"},
             })
         elif current == "input_required":
             node.status = "input_required"
-            await self._emitter.emit_state_delta(
+            await emit_state_delta(
                 ctx,
                 nodes={node.id: {
                     "status": "input_required",
@@ -121,13 +114,13 @@ class NodeExecutor:
             logger.warning(
                 "Node %s (%s) failed: %s", node.id, node.agent_name, node.error
             )
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {"status": "failed", "error": node.error or "unknown error"},
             })
 
         expired = ctx.state.expire_cancel_requests(node.id)
         if expired:
-            await self._emitter.emit_state_delta(ctx, interventions={
+            await emit_state_delta(ctx, interventions={
                 iv.id: {
                     "status": "expired",
                     "node_id": node.id,
@@ -145,7 +138,7 @@ class NodeExecutor:
             node.status = "input_required"
             node.question = decision.question or node.output
             node.a2a_task_id = None
-            await self._emitter.emit_state_delta(
+            await emit_state_delta(
                 ctx,
                 nodes={node.id: {
                     "status": "input_required",
@@ -165,14 +158,14 @@ class NodeExecutor:
                         ctx.context_id,
                     )
             node.status = "completed"
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {
                     "status": "completed",
                     "agent_name": node.agent_name,
                     "output": (node.output or "")[:200],
                 },
             })
-            await self._assist_arbiter.arbitrate_mentions(ctx, node)
+            await arbitrate_mentions(ctx, node)
             await self._deliver_queued(ctx, node)
 
     async def _interpret_outcome(
@@ -233,7 +226,7 @@ class NodeExecutor:
             derived=True,
         )
         state.nodes[node_id] = followup
-        await self._emitter.emit_state_delta(ctx, nodes={
+        await emit_state_delta(ctx, nodes={
             node_id: {
                 "status": "pending",
                 "agent_name": followup.agent_name,

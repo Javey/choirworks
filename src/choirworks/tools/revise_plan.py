@@ -65,3 +65,6 @@ class RevisePlanFunction(AgentFunction):
                 "rejected": result.rejected,
             },
         )
+
+
+revise_plan_func = RevisePlanFunction()

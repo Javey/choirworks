@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -13,11 +13,9 @@ from a2a.types.a2a_pb2 import (
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import _join_text, _struct
+from choirworks.a2a.events import emit_state_delta
+from choirworks.a2a.helpers import join_text, struct
 from choirworks.a2a.state import NodeState
-
-if TYPE_CHECKING:
-    from choirworks.a2a.events import EventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +36,8 @@ _REMOTE_STATE_MAP: dict[int, str] = {
 class RemoteAgentCaller:
     """Remote A2A agent communication: stream / resume / consume chunks."""
 
-    def __init__(self, remote: RemoteAgentClient, emitter: EventEmitter):
+    def __init__(self, remote: RemoteAgentClient):
         self._remote = remote
-        self._emitter = emitter
 
     async def stream_remote(
         self,
@@ -89,9 +86,9 @@ class RemoteAgentCaller:
                 mapped = _REMOTE_STATE_MAP.get(task.status.state, current)
                 if task.artifacts and mapped == "completed":
                     text = " ".join(
-                        _join_text(artifact.parts)
+                        join_text(artifact.parts)
                         for artifact in task.artifacts
-                        if _join_text(artifact.parts)
+                        if join_text(artifact.parts)
                     ).strip()
                     if text:
                         node.output = text
@@ -99,7 +96,7 @@ class RemoteAgentCaller:
                     mapped == "input_required"
                     and task.status.HasField("message")
                 ):
-                    node.question = _join_text(task.status.message.parts)
+                    node.question = join_text(task.status.message.parts)
                 current = mapped
                 if current in settled:
                     return current
@@ -134,12 +131,12 @@ class RemoteAgentCaller:
                         {
                             "id": artifact.artifact_id,
                             "name": artifact.name,
-                            "text": _join_text(artifact.parts),
+                            "text": join_text(artifact.parts),
                         }
                         for artifact in task.artifacts
                     ]
                 node.status = "dispatched" if current == "dispatched" else node.status
-                await self._emitter.emit_state_delta(ctx, nodes={
+                await emit_state_delta(ctx, nodes={
                     node.id: {"status": "dispatched", "a2a_task_id": node.a2a_task_id},
                 })
             elif chunk.HasField("status_update"):
@@ -151,12 +148,12 @@ class RemoteAgentCaller:
                         mapped == "input_required"
                         and chunk.status_update.status.HasField("message")
                     ):
-                        node.question = _join_text(
+                        node.question = join_text(
                             chunk.status_update.status.message.parts
                         )
             elif chunk.HasField("artifact_update"):
                 update = chunk.artifact_update
-                piece = _join_text(update.artifact.parts)
+                piece = join_text(update.artifact.parts)
                 append = bool(update.append)
                 entry = next(
                     (a for a in artifacts if a["id"] == update.artifact.artifact_id),
@@ -178,7 +175,7 @@ class RemoteAgentCaller:
                     artifact_id=update.artifact.artifact_id,
                     name=update.artifact.name or node.name,
                     parts=[Part(text=piece)],
-                    metadata=_struct(
+                    metadata=struct(
                         {
                             "node_id": node.id,
                             "agent_name": node.agent_name,
@@ -192,7 +189,7 @@ class RemoteAgentCaller:
                         artifact=art,
                         append=append,
                         last_chunk=bool(update.last_chunk),
-                        metadata=_struct(
+                        metadata=struct(
                             {
                                 "node_id": node.id,
                                 "agent_name": node.agent_name,
@@ -201,13 +198,13 @@ class RemoteAgentCaller:
                     )
                 )
             elif chunk.HasField("message"):
-                msg_text = _join_text(chunk.message.parts)
+                msg_text = join_text(chunk.message.parts)
                 artifacts.append({"id": "message", "name": "message", "text": msg_text})
                 art = Artifact(
                     artifact_id=uuid.uuid4().hex,
                     name=node.name,
                     parts=[Part(text=msg_text)],
-                    metadata=_struct(
+                    metadata=struct(
                         {
                             "node_id": node.id,
                             "agent_name": node.agent_name,
@@ -221,7 +218,7 @@ class RemoteAgentCaller:
                         artifact=art,
                         append=False,
                         last_chunk=True,
-                        metadata=_struct(
+                        metadata=struct(
                             {
                                 "node_id": node.id,
                                 "agent_name": node.agent_name,

@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
+from choirworks.a2a.helpers import now_iso
 from choirworks.store.db import Database
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -78,17 +74,17 @@ class ContextStore:
         markers.append({
             "before_task_id": before_task_id,
             "cut_task_id": cut_task_id,
-            "created_at": _now(),
+            "created_at": now_iso(),
         })
         await self._db.conn.execute(
             "UPDATE contexts SET state = ?, rewind_markers = ?, updated_at = ?"
             " WHERE context_id = ?",
-            (state, json.dumps(markers, ensure_ascii=False), _now(), context_id),
+            (state, json.dumps(markers, ensure_ascii=False), now_iso(), context_id),
         )
         await self._db.conn.commit()
 
     async def create(self, context_id: str, *, title: str = "") -> None:
-        now = _now()
+        now = now_iso()
         await self._db.conn.execute(
             "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
             " VALUES (?, '{}', ?, ?, ?)"
@@ -99,7 +95,7 @@ class ContextStore:
         await self._db.conn.commit()
 
     async def upsert_state(self, context_id: str, state: str) -> None:
-        now = _now()
+        now = now_iso()
         await self._db.conn.execute(
             "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
             " VALUES (?, ?, '', ?, ?)"

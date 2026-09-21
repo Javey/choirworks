@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from a2a.types.a2a_pb2 import Task
+
+from choirworks.a2a.helpers import now_iso, truncate
 
 STATE_JSON_KEY = "choirworks.state"
 
@@ -14,18 +15,6 @@ ACTIVE_NODE_STATUSES = {"dispatched", "working"}
 PENDING_NODE_STATUSES = {"pending", "ready"}
 INPUT_NODE_STATUSES = {"input_required"}
 MAX_METADATA_OUTPUT = 2000
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _truncate(text: str | None, limit: int = MAX_METADATA_OUTPUT) -> str | None:
-    if text is None:
-        return None
-    if len(text) <= limit:
-        return text
-    return text[:limit]
 
 
 @dataclass
@@ -56,7 +45,7 @@ class NodeState:
             "status": self.status,
             "attempt": self.attempt,
             "a2a_task_id": self.a2a_task_id,
-            "output": _truncate(self.output),
+            "output": truncate(self.output),
             "error": self.error,
             "deps": list(self.deps),
             "input_text": self.input_text,
@@ -89,12 +78,20 @@ class NodeState:
         )
 
 
+class MemberDelta(TypedDict):
+    """Wire-format delta for a room member joining event."""
+
+    agent_name: str
+    agent_url: str
+    reason: str
+
+
 @dataclass
 class Member:
     name: str
     url: str
     reason: str
-    joined_at: str = field(default_factory=_now)
+    joined_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,7 +109,7 @@ class Member:
             name=str(data.get("name", data.get("agent_name", ""))),
             url=str(data.get("url", data.get("agent_url", ""))),
             reason=str(data.get("reason", "")),
-            joined_at=str(data.get("joined_at", _now())),
+            joined_at=str(data.get("joined_at", now_iso())),
         )
 
 
@@ -126,7 +123,7 @@ class Intervention:
     responder: str | None = None
     kind: str = "question"
     target_node_id: str | None = None
-    created_at: str = field(default_factory=_now)
+    created_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -153,7 +150,7 @@ class Intervention:
             responder=data.get("responder"),
             kind=str(data.get("kind", "question")),
             target_node_id=data.get("target_node_id"),
-            created_at=str(data.get("created_at", _now())),
+            created_at=str(data.get("created_at", now_iso())),
         )
 
 
@@ -163,7 +160,7 @@ class QueuedMessage:
     text: str
     sender: str
     quote_id: str | None = None
-    created_at: str = field(default_factory=_now)
+    created_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -181,7 +178,7 @@ class QueuedMessage:
             text=str(data.get("text", "")),
             sender=str(data.get("sender", "user")),
             quote_id=data.get("quote_id"),
-            created_at=str(data.get("created_at", _now())),
+            created_at=str(data.get("created_at", now_iso())),
         )
 
 
@@ -419,18 +416,6 @@ class OrchestrationState:
         state.next_intervention = int(data.get("next_intervention", 1))
         state.next_message = int(data.get("next_message", 1))
         return state
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _truncate(text: str | None, limit: int = MAX_METADATA_OUTPUT) -> str | None:
-    if text is None:
-        return None
-    if len(text) <= limit:
-        return text
-    return text[:limit]
 
 
 def load_state(task: Task | None) -> OrchestrationState | None:

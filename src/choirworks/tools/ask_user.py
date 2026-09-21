@@ -55,3 +55,6 @@ class AskUserFunction(AgentFunction):
                 "question": intervention.question,
             },
         )
+
+
+ask_user_func = AskUserFunction()

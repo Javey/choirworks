@@ -15,7 +15,7 @@ from choirworks.core.planner import (
 )
 from choirworks.models.domain import AgentRecord
 from choirworks.store.db import Database
-from choirworks.tools import CreatePlanFunction, FunctionContext, ToolCallResult
+from choirworks.tools import FunctionContext, ToolCallResult
 from tests.support.fakes import FakeLLM
 
 
@@ -140,7 +140,7 @@ async def test_planner_streams_thinking(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(
-            llm, registry, tools=[CreatePlanFunction()], max_nodes=10, max_retries=2,
+            llm, registry, max_nodes=10, max_retries=2,
         )
         ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
         thinking, tool_call = await collect_plan(planner, "研究并写一份报告", ctx)
@@ -161,7 +161,7 @@ async def test_planner_retries_with_feedback(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(
-            llm, registry, tools=[CreatePlanFunction()], max_nodes=10, max_retries=2,
+            llm, registry, max_nodes=10, max_retries=2,
         )
         ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
         thinking, tool_call = await collect_plan(planner, "x", ctx)
@@ -178,7 +178,7 @@ async def test_planner_fails_after_retries(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(
-            llm, registry, tools=[CreatePlanFunction()], max_nodes=10, max_retries=2,
+            llm, registry, max_nodes=10, max_retries=2,
         )
         ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
         with pytest.raises(PlanningFailed):
@@ -192,7 +192,7 @@ async def test_planner_fails_after_retries(tmp_path):
 async def test_planner_rejects_when_no_agents(tmp_path):
     db, remote, registry = await make_registry(tmp_path, [])
     try:
-        planner = Planner(FakeLLM(), registry, tools=[CreatePlanFunction()])
+        planner = Planner(FakeLLM(), registry)
         ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
         with pytest.raises(PlanningFailed, match="no agents"):
             await collect_plan(planner, "x", ctx)
@@ -210,7 +210,7 @@ async def test_planner_passes_constrained_schema_to_tool(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         planner = Planner(
-            llm, registry, tools=[CreatePlanFunction()], max_nodes=10, max_retries=2,
+            llm, registry, max_nodes=10, max_retries=2,
         )
         ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
         await collect_plan(planner, "x", ctx)

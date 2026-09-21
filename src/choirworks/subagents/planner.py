@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pydantic import BaseModel
 
 from choirworks.a2a.context import OrchestrationContext
 from choirworks.core.llm import LiteLLMClient
 from choirworks.subagents.base import InternalSubagent
 from choirworks.tools.base import AgentFunction
-
-if TYPE_CHECKING:
-    pass
+from choirworks.tools.create_plan import create_plan_func
 
 
 class PlannerSubagent(InternalSubagent):
@@ -43,19 +39,15 @@ Rules:
     def __init__(
         self,
         llm: LiteLLMClient,
-        create_plan_tool: AgentFunction,
         *,
-        max_nodes: int = 20,
         max_retries: int = 2,
     ):
         super().__init__(llm, max_retries=max_retries)
-        self._create_plan = create_plan_tool
-        self._max_nodes = max_nodes
 
     async def _build_tools(
         self, ctx: OrchestrationContext, **kwargs: object
     ) -> list[AgentFunction]:
-        return [self._create_plan]
+        return [create_plan_func]
 
     def _validate(self, args: BaseModel, ctx: OrchestrationContext) -> None:
         pass

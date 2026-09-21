@@ -1,20 +1,15 @@
 from __future__ import annotations
 
 from choirworks.a2a.context import OrchestrationContext
+from choirworks.a2a.helpers import as_model
 from choirworks.subagents.base import InternalSubagent
-from choirworks.tools.base import AgentFunction, ToolCallResult
+from choirworks.tools.base import AgentFunction
 from choirworks.tools.outcome_decision import (
     REPAIR_SYSTEM,
     OutcomeDecision,
     OutcomeDecisionTool,
     outcome_decision_schema,
 )
-
-
-def _as_model(item: ToolCallResult, model: type[OutcomeDecision]) -> OutcomeDecision:
-    return item.args if isinstance(item.args, model) else model.model_validate(
-        item.args.model_dump()
-    )
 
 
 class RepairSubagent(InternalSubagent):
@@ -46,4 +41,4 @@ class RepairSubagent(InternalSubagent):
         tool_call = await super().run(ctx, user, **kwargs)
         if tool_call is None:
             return None
-        return _as_model(tool_call, OutcomeDecision)
+        return as_model(tool_call, OutcomeDecision)

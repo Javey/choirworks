@@ -91,3 +91,6 @@ class CreatePlanFunction(AgentFunction):
                 ],
             },
         )
+
+
+create_plan_func = CreatePlanFunction()

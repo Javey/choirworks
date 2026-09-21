@@ -13,7 +13,7 @@ from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
 
 if TYPE_CHECKING:
-    from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+    from choirworks.tools.base import FunctionContext, ToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +107,11 @@ class Planner:
         llm: LiteLLMClient,
         registry: AgentRegistry,
         *,
-        tools: list[AgentFunction] | None = None,
         max_nodes: int = 20,
         max_retries: int = 2,
     ):
         self._llm = llm
         self._registry = registry
-        self._tools = tools or []
         self._max_nodes = max_nodes
         self._max_retries = max_retries
 
@@ -156,14 +154,13 @@ class Planner:
 
             tool_call: ToolCallResult | None = None
             try:
+                from choirworks.tools.create_plan import create_plan_func
                 async for item in self._llm.stream(
                     system=SYSTEM_PROMPT,
                     user=user,
-                    tools=self._tools or None,
+                    tools=[create_plan_func],
                     ctx=ctx,
-                    tool_choice={"type": "function", "function": {"name": "create_plan"}}
-                    if self._tools
-                    else "auto",
+                    tool_choice={"type": "function", "function": {"name": "create_plan"}},
                 ):
                     if isinstance(item, ToolCallResult):
                         tool_call = item

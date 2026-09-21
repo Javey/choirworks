@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -16,10 +16,17 @@ from a2a.types.a2a_pb2 import (
     TaskState,
 )
 
-from choirworks.a2a.assist import AssistArbiter, join_members
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
-from choirworks.a2a.events import EventEmitter, _status_update
+from choirworks.a2a.events import (
+    emit_event,
+    emit_function_call,
+    emit_function_error,
+    emit_state_delta,
+    emit_text_chunk,
+    emit_thought_chunk,
+)
+from choirworks.a2a.helpers import join_members, status_update
 from choirworks.a2a.intervention import InterventionManager
 from choirworks.a2a.node_executor import NodeExecutor
 from choirworks.a2a.patch import PlanPatch
@@ -44,17 +51,12 @@ from choirworks.subagents import (
     RepairSubagent,
 )
 from choirworks.tools import (
-    AskUserFunction,
-    CallSubagentFunction,
-    CreatePlanFunction,
     FunctionContext,
-    FunctionRegistry,
-    RevisePlanFunction,
     ToolCallResult,
+    ask_user_func,
+    create_plan_func,
+    revise_plan_func,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     runs in background runners, so multiple agents can work and chat at once.
 
     This class is now a thin A2A protocol layer that delegates to extracted
-    components (EventEmitter, SessionManager, PlanRunner, NodeExecutor,
+    components (SessionManager, PlanRunner, NodeExecutor,
     subagents, etc.).  Proxy methods retain backward compatibility with
     tools that access ``ctx.executor._xxx``.
     """
@@ -118,57 +120,37 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             compaction_retention=compaction_retention,
         )
 
-        # --- Function registry ---
-        self._functions = FunctionRegistry()
-        self._functions.register(CreatePlanFunction())
-        self._functions.register(RevisePlanFunction())
-        self._functions.register(AskUserFunction())
-        self._functions.register(CallSubagentFunction())
-
-        self._planner._tools = [self._functions.get("create_plan")]
-
         # --- Components ---
-        self._emitter = EventEmitter()
-        self._session_mgr = SessionManager(emitter=self._emitter)
-        self._remote_caller = RemoteAgentCaller(remote, self._emitter)
+        self._session_mgr = SessionManager()
+        self._remote_caller = RemoteAgentCaller(remote)
 
         # Subagents
-        self._planner_subagent = PlannerSubagent(
-            llm, self._functions.get("create_plan"),
-            max_nodes=self._config.max_nodes,
-        )
+        self._planner_subagent = PlannerSubagent(llm)
         self._outcome_subagent = OutcomeSubagent(llm)
         self._assistance_subagent = AssistanceSubagent(llm)
         self._repair_subagent = RepairSubagent(llm)
 
         self._repair_mgr = RepairManager(
-            self._emitter, self._session_mgr,
+            self._session_mgr,
             self._repair_subagent,
-            self._functions.get("revise_plan"),
-        )
-        self._assist_arbiter = AssistArbiter(
-            self._emitter, self._session_mgr,
-            self._functions.get("call_subagent"),
-            self._config,
+            revise_plan_func,
         )
         self._intervention_mgr = InterventionManager(
-            self._emitter, self._session_mgr,
+            self._session_mgr,
             self._assistance_subagent,
-            self._functions.get("ask_user"),
-            self._assist_arbiter,
+            ask_user_func,
             self._remote_caller,
             self._config,
         )
         self._node_executor = NodeExecutor(
-            self._emitter, self._session_mgr,
+            self._session_mgr,
             self._remote_caller,
             self._outcome_subagent,
-            self._assist_arbiter,
             self._repair_mgr,
             self._config,
         )
         self._runner = PlanRunner(
-            self._emitter, self._session_mgr,
+            self._session_mgr,
             self._node_executor,
             self._intervention_mgr,
             self._repair_mgr,
@@ -267,7 +249,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id = context.task_id or ""
         context_id = context.context_id or ""
         await event_queue.enqueue_event(
-            _status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
+            status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
         )
         runtime = self._sessions.get(context_id)
         if runtime is None:
@@ -310,7 +292,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         state = await self._session_mgr.load_state(runtime.context_id)
         if state is None:
-            await self._emit_event(runtime, "", TaskState.TASK_STATE_FAILED)
+            ctx = self._build_ctx(runtime)
+            await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
             self._session_mgr.evict_session(runtime.context_id)
             return
         async with runtime.lock:
@@ -320,8 +303,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     async def _resume(self, runtime: SessionRuntime) -> None:
         expired = runtime.state.normalize_cancel_requests()
         if expired:
-            from choirworks.tools import emit_state_delta
-            await emit_state_delta(self, runtime, interventions={
+            ctx = self._build_ctx(runtime)
+            await emit_state_delta(ctx, interventions={
                 iv.id: {
                     "status": "expired",
                     "node_id": iv.target_node_id or "",
@@ -340,13 +323,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
         runtime.runner_start_requested = False
-        runtime.call_subagent_func = self._functions.get("call_subagent")
         return OrchestrationContext(
             runtime=runtime,
             registry=self._registry,
             llm=self._llm,
             config=self._config,
-            emitter=self._emitter,
             session_mgr=self._session_mgr,
             executor=self,
         )
@@ -382,7 +363,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             content = getattr(item, "content", None)
             if reasoning:
                 reasoning_parts.append(reasoning)
-                await self._emitter.emit_thought_chunk(
+                await emit_thought_chunk(
                     orch_ctx,
                     text=reasoning,
                     author="assistant",
@@ -393,7 +374,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 first_reasoning = False
             if content:
                 content_parts.append(content)
-                await self._emitter.emit_text_chunk(
+                await emit_text_chunk(
                     orch_ctx,
                     text=content,
                     append=not first_content,
@@ -403,7 +384,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 first_content = False
         reasoning = "".join(reasoning_parts)
         if reasoning:
-            await self._emitter.emit_thought_chunk(
+            await emit_thought_chunk(
                 orch_ctx,
                 text=reasoning,
                 author="assistant",
@@ -413,7 +394,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             )
         content = "".join(content_parts)
         if content:
-            await self._emitter.emit_text_chunk(
+            await emit_text_chunk(
                 orch_ctx,
                 text=content,
                 append=False,
@@ -436,8 +417,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_brief = await self._brief_builder.build(
             runtime.context_id, exclude_task_id=runtime.task_id
         )
-        create_plan = self._functions.get("create_plan")
-        assert create_plan is not None
+        create_plan = create_plan_func
         ctx = FunctionContext(executor=self, runtime=runtime)
         try:
             tool_call = await self._stream_plan(
@@ -447,7 +427,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             logger.warning("Planning failed for task %s: %s", runtime.task_id, exc)
             await self._persist(runtime)
             orch_ctx = self._build_ctx(runtime)
-            await self._emitter.emit_function_error(
+            await emit_function_error(
                 orch_ctx, create_plan, str(exc),
                 state_name=TaskState.TASK_STATE_FAILED,
             )
@@ -459,14 +439,15 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
 
         if not draft.nodes:
+            orch_ctx = self._build_ctx(runtime)
             await self._persist(runtime)
-            await self._emit_event(runtime, "", TaskState.TASK_STATE_COMPLETED)
+            await emit_event(orch_ctx, "", TaskState.TASK_STATE_COMPLETED)
             self._session_mgr.evict_session(runtime.context_id)
             return
 
         result = await tool_call.function.execute(ctx, tool_call.args)
         orch_ctx = self._build_ctx(runtime)
-        await self._emitter.emit_function_call(
+        await emit_function_call(
             orch_ctx, tool_call.function, tool_call.args, result,
             state_name=TaskState.TASK_STATE_WORKING,
         )
@@ -526,8 +507,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             invalidated = state.blocked_nodes()
             for blocked in invalidated:
                 blocked.status = "invalidated"
-            from choirworks.tools import emit_state_delta
-            await emit_state_delta(self, runtime, nodes={
+            from choirworks.a2a.events import emit_state_delta as _esd
+            ctx = self._build_ctx(runtime)
+            await _esd(ctx, nodes={
                 node.id: {"status": "canceled", "agent_name": node.agent_name},
                 **{b.id: {"status": "invalidated"} for b in invalidated},
             })
@@ -573,8 +555,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             derived=True,
         )
         state.nodes[node_id] = followup
-        from choirworks.tools import emit_state_delta
-        await emit_state_delta(self, runtime, nodes={
+        ctx = self._build_ctx(runtime)
+        await emit_state_delta(ctx, nodes={
             node_id: {
                 "status": "pending",
                 "agent_name": followup.agent_name,
@@ -595,7 +577,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         **metadata: Any,
     ) -> None:
         ctx = self._build_ctx(runtime)
-        await self._emitter.emit_event(ctx, kind, state_name, **metadata)
+        await emit_event(ctx, kind, state_name, **metadata)
 
     async def _persist(self, runtime: SessionRuntime) -> None:
         ctx = self._build_ctx(runtime)

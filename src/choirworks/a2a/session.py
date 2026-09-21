@@ -3,15 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from a2a.server.events import EventQueue
 
+from choirworks.a2a.events import emit_event
 from choirworks.a2a.state import STATE_JSON_KEY, OrchestrationState
 from choirworks.store.contexts import ContextStore
-
-if TYPE_CHECKING:
-    from choirworks.a2a.events import EventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +23,7 @@ class SessionRuntime:
     queue: EventQueue
     runner: asyncio.Task | None = None
     node_tasks: dict[asyncio.Task, Any] = field(default_factory=dict)
+    runner_start_requested: bool = False
 
 
 class SessionManager:
@@ -36,10 +35,8 @@ class SessionManager:
 
     def __init__(
         self,
-        emitter: EventEmitter,
         context_store: ContextStore | None = None,
     ):
-        self._emitter = emitter
         self._context_store = context_store
         self._sessions: dict[str, SessionRuntime] = {}
         self._session_gate = asyncio.Lock()
@@ -107,7 +104,7 @@ class SessionManager:
         snapshot = runtime.state.to_json()
         if self._context_store is not None:
             await self._context_store.upsert_state(runtime.context_id, snapshot)
-        await self._emitter.emit_event(
+        await emit_event(
             ctx, "state.updated",
             **{STATE_JSON_KEY: snapshot},
         )

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from a2a.server.events import EventQueue
+from a2a.server.events import EventQueue
 
-    from choirworks.a2a.registry import AgentRegistry
-    from choirworks.a2a.state import OrchestrationState
-    from choirworks.core.llm import LiteLLMClient
+from choirworks.a2a.registry import AgentRegistry
+from choirworks.a2a.session import SessionManager, SessionRuntime
+from choirworks.a2a.state import OrchestrationState
+from choirworks.core.llm import LiteLLMClient
+
+if TYPE_CHECKING:
+    from choirworks.a2a.executor import ChoirWorksAgentExecutor
 
 
 @dataclass
@@ -21,17 +25,17 @@ class ExecutorConfig:
     max_revisions: int = 3
     replan_on_failure: bool = True
     max_nodes: int = 20
+    max_plan_retries: int = 2
 
 
 @dataclass
 class OrchestrationContext:
-    runtime: object
+    runtime: SessionRuntime
     registry: AgentRegistry
     llm: LiteLLMClient
     config: ExecutorConfig
-    emitter: object
-    session_mgr: object
-    executor: object | None = None
+    session_mgr: SessionManager
+    executor: ChoirWorksAgentExecutor | None = None
 
     @property
     def state(self) -> OrchestrationState:
@@ -50,5 +54,5 @@ class OrchestrationContext:
         return self.runtime.queue
 
     @property
-    def lock(self) -> object:
+    def lock(self) -> asyncio.Lock:
         return self.runtime.lock

@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-from choirworks.a2a.context import OrchestrationContext
+from choirworks.a2a.assist import spawn_assist
+from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
+from choirworks.a2a.events import emit_state_delta
+from choirworks.a2a.helpers import execute_function
+from choirworks.a2a.session import SessionManager
 from choirworks.a2a.state import ACTIVE_NODE_STATUSES, NodeState
 from choirworks.core.context import build_assistance_decision_user
 from choirworks.subagents.assistance import AssistanceSubagent
 from choirworks.tools import AskUserFunction
 from choirworks.tools.ask_user import AskUserArgs
-from choirworks.tools.base import FunctionContext
-
-if TYPE_CHECKING:
-    from choirworks.a2a.assist import AssistArbiter
-    from choirworks.a2a.events import EventEmitter
-    from choirworks.a2a.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +27,15 @@ class InterventionManager:
 
     def __init__(
         self,
-        emitter: EventEmitter,
         session_mgr: SessionManager,
         assistance_subagent: AssistanceSubagent,
         ask_user_func: AskUserFunction,
-        assist_arbiter: AssistArbiter,
         remote_caller: object,
-        config: object,
+        config: ExecutorConfig,
     ):
-        self._emitter = emitter
         self._session_mgr = session_mgr
         self._assistance_subagent = assistance_subagent
         self._ask_user_func = ask_user_func
-        self._assist_arbiter = assist_arbiter
         self._remote_caller = remote_caller
         self._config = config
 
@@ -70,7 +63,7 @@ class InterventionManager:
                 intervention.responder = helper.id
                 node.answer_text = helper.output
                 node.status = "ready"
-                await self._emitter.emit_state_delta(ctx,
+                await emit_state_delta(ctx,
                     nodes={node.id: {"status": "ready"}},
                     interventions={
                         intervention.id: {
@@ -94,12 +87,12 @@ class InterventionManager:
 
             decision = await self._decide_assistance(ctx, node)
             if decision is not None and decision.target_agent:
-                if await self._assist_arbiter.spawn_assist(ctx, node, decision):
+                if await spawn_assist(ctx, node, decision):
                     progress = True
                 else:
-                    await self._request_human(ctx, node)
+                    await self.request_human(ctx, node)
             else:
-                await self._request_human(ctx, node)
+                await self.request_human(ctx, node)
         return progress
 
     async def _decide_assistance(
@@ -130,10 +123,8 @@ class InterventionManager:
         self, ctx: OrchestrationContext, node: NodeState
     ) -> None:
         args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
-        func_ctx = FunctionContext(executor=ctx.executor, runtime=ctx.runtime)  # type: ignore[arg-type]
-        result = await self._ask_user_func.execute(func_ctx, args)
-        await self._emitter.emit_function_call(
-            ctx, self._ask_user_func, args, result,
+        await execute_function(
+            ctx, self._ask_user_func, args,
             state_name=4,  # TASK_STATE_INPUT_REQUIRED
         )
 
@@ -154,7 +145,7 @@ class InterventionManager:
             target = state.nodes.get(intervention.target_node_id or "")
             if target is not None and _is_affirmative(text):
                 await self.cancel_node(ctx, target)
-            await self._emitter.emit_state_delta(ctx, interventions={
+            await emit_state_delta(ctx, interventions={
                 intervention.id: {
                     "status": "resolved",
                     "node_id": intervention.node_id,
@@ -168,7 +159,7 @@ class InterventionManager:
         if node is not None:
             node.answer_text = text
             node.status = "ready"
-        await self._emitter.emit_state_delta(ctx,
+        await emit_state_delta(ctx,
             nodes={node.id: {"status": "ready"}} if node else None,
             interventions={
                 intervention.id: {
@@ -195,7 +186,7 @@ class InterventionManager:
         invalidated = state.blocked_nodes()
         for blocked in invalidated:
             blocked.status = "invalidated"
-        await self._emitter.emit_state_delta(ctx, nodes={
+        await emit_state_delta(ctx, nodes={
             node.id: {"status": "canceled", "agent_name": node.agent_name},
             **{b.id: {"status": "invalidated"} for b in invalidated},
         })

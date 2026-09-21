@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.a2a.context import OrchestrationContext
+from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
+from choirworks.a2a.events import (
+    emit_event,
+    emit_function_call,
+    emit_state_delta,
+)
+from choirworks.a2a.intervention import InterventionManager
+from choirworks.a2a.node_executor import NodeExecutor
+from choirworks.a2a.repair import RepairManager
+from choirworks.a2a.session import SessionManager
 from choirworks.a2a.state import NodeState
-
-if TYPE_CHECKING:
-    from choirworks.a2a.events import EventEmitter
-    from choirworks.a2a.intervention import InterventionManager
-    from choirworks.a2a.node_executor import NodeExecutor
-    from choirworks.a2a.repair import RepairManager
-    from choirworks.a2a.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +30,12 @@ class PlanRunner:
 
     def __init__(
         self,
-        emitter: EventEmitter,
         session_mgr: SessionManager,
         node_executor: NodeExecutor,
         intervention_mgr: InterventionManager,
         repair_mgr: RepairManager,
-        config: object,
+        config: ExecutorConfig,
     ):
-        self._emitter = emitter
         self._session_mgr = session_mgr
         self._node_executor = node_executor
         self._intervention_mgr = intervention_mgr
@@ -98,7 +97,7 @@ class PlanRunner:
                         if exception is not None:
                             node.status = "failed"
                             node.error = str(exception)
-                            await self._emitter.emit_state_delta(ctx, nodes={
+                            await emit_state_delta(ctx, nodes={
                                 node.id: {"status": "failed", "error": node.error},
                             })
                     if self._config.retry_backoff > 0 and any(
@@ -120,12 +119,12 @@ class PlanRunner:
                         if progress:
                             continue
                         await self._session_mgr.persist(ctx)
-                        await self._emitter.emit_event(
+                        await emit_event(
                             ctx, "", TaskState.TASK_STATE_INPUT_REQUIRED,
                         )
                         return
                     if state.all_completed():
-                        await self._emitter.emit_event(
+                        await emit_event(
                             ctx, "", TaskState.TASK_STATE_COMPLETED,
                         )
                         self._session_mgr.evict_session(context_id)
@@ -139,7 +138,7 @@ class PlanRunner:
                             recovered = await self._repair_mgr.repair_plan(ctx)
                         if recovered:
                             continue
-                        await self._emitter.emit_event(
+                        await emit_event(
                             ctx, "", TaskState.TASK_STATE_FAILED,
                         )
                         self._session_mgr.evict_session(context_id)
@@ -158,7 +157,7 @@ class PlanRunner:
                         )
                     else:
                         logger.warning("Runner stalled for task %s", task_id)
-                    await self._emitter.emit_event(
+                    await emit_event(
                         ctx, "", TaskState.TASK_STATE_FAILED,
                     )
                     self._session_mgr.evict_session(context_id)
@@ -170,7 +169,7 @@ class PlanRunner:
             if context_id in self._session_mgr.sessions:
                 try:
                     await self._session_mgr.persist(ctx)
-                    await self._emitter.emit_event(
+                    await emit_event(
                         ctx, "", TaskState.TASK_STATE_FAILED,
                     )
                 except Exception:
@@ -190,10 +189,7 @@ class PlanRunner:
         ctx: OrchestrationContext,
         batch: list[tuple[NodeState, str]],
     ) -> None:
-        from choirworks.tools import CallSubagentArgs, FunctionResult
-        func = ctx.runtime.call_subagent_func
-        if func is None:
-            return
+        from choirworks.tools import CallSubagentArgs, FunctionResult, call_subagent_func
         for node, mode in batch:
             if mode != "dispatch" or node.derived or node.attempt != 0:
                 continue
@@ -202,6 +198,6 @@ class PlanRunner:
                 target_agent=node.agent_name,
                 instruction=node.name,
             )
-            await self._emitter.emit_function_call(
-                ctx, func, args, FunctionResult(success=True)
+            await emit_function_call(
+                ctx, call_subagent_func, args, FunctionResult(success=True)
             )

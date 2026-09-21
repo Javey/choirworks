@@ -105,3 +105,6 @@ class CallSubagentFunction(AgentFunction):
                 "requester": requester_node.agent_name if requester_node else "",
             },
         )
+
+
+call_subagent_func = CallSubagentFunction()

@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from choirworks.a2a.context import OrchestrationContext
+from choirworks.a2a.events import emit_state_delta
+from choirworks.a2a.helpers import execute_function, join_members
 from choirworks.a2a.patch import PatchResult, PlanPatch, apply_patch
+from choirworks.a2a.session import SessionManager
 from choirworks.core.context import build_repair_user
 from choirworks.subagents.repair import RepairSubagent
-from choirworks.tools.base import FunctionContext
+from choirworks.tools import RevisePlanFunction
 from choirworks.tools.revise_plan import RevisePlanArgs
-
-if TYPE_CHECKING:
-    from choirworks.a2a.events import EventEmitter
-    from choirworks.a2a.session import SessionManager
-    from choirworks.tools import RevisePlanFunction
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +21,10 @@ class RepairManager:
 
     def __init__(
         self,
-        emitter: EventEmitter,
         session_mgr: SessionManager,
         repair_subagent: RepairSubagent,
         revise_plan_func: RevisePlanFunction,
     ):
-        self._emitter = emitter
         self._session_mgr = session_mgr
         self._repair_subagent = repair_subagent
         self._revise_plan_func = revise_plan_func
@@ -56,9 +52,7 @@ class RepairManager:
         self, ctx: OrchestrationContext, patch: PlanPatch
     ) -> PatchResult:
         args = RevisePlanArgs(patch=patch)
-        func_ctx = FunctionContext(executor=ctx.executor, runtime=ctx.runtime)  # type: ignore[arg-type]
-        fn_result = await self._revise_plan_func.execute(func_ctx, args)
-        await self._emitter.emit_function_call(ctx, self._revise_plan_func, args, fn_result)
+        fn_result = await execute_function(ctx, self._revise_plan_func, args)
         data = fn_result.data or {}
         result = PatchResult(
             added=list(data.get("added", [])),
@@ -99,24 +93,15 @@ class RepairManager:
                 "question": intervention.question,
             }
         if new_interventions:
-            await self._emitter.emit_state_delta(ctx, interventions=new_interventions)
+            await emit_state_delta(ctx, interventions=new_interventions)
         added_agents = [
             draft.agent_name for draft in patch.add if draft.agent_name in agent_urls
         ]
-        await self._join_members(ctx, added_agents, "plan_revision")
+        await join_members(ctx, added_agents, "plan_revision")
         if result.invalidated:
-            await self._emitter.emit_state_delta(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node_id: {"status": "invalidated"}
                 for node_id in result.invalidated
             })
         await self._session_mgr.persist(ctx)
         return result
-
-    async def _join_members(
-        self,
-        ctx: OrchestrationContext,
-        names: list[str],
-        reason: str,
-    ) -> None:
-        from choirworks.a2a.assist import join_members
-        await join_members(ctx, names, reason)
