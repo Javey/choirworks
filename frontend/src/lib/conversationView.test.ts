@@ -7,6 +7,8 @@ import {
   type ConversationView,
 } from "./conversationView";
 
+type ProtoStruct = Record<string, unknown>;
+
 function statusUpdate(
   kind: string,
   meta: Record<string, unknown> = {},
@@ -730,5 +732,159 @@ describe("applyStreamEvent", () => {
     expect(msg?.thinking).toBe(false);
     expect(view.activeArtifactIds.has(id)).toBe(false);
     expect(view.workingBubbles).toHaveLength(0);
+  });
+
+  // --- snapshot artifact replay (resubscribe gap fill) ---
+
+  function artifactInSnapshot(
+    artifactId: string,
+    parts: ProtoStruct[],
+    metadata: ProtoStruct = {},
+  ): ProtoStruct {
+    return { artifactId, parts, metadata };
+  }
+
+  function taskSnapshot(
+    artifacts: ProtoStruct[] = [],
+    history: ProtoStruct[] = [],
+    state: TaskState = TaskState.TASK_STATE_WORKING,
+  ): ProtoStruct {
+    return {
+      payload: {
+        $case: "task",
+        value: {
+          id: "task-1",
+          status: { state },
+          history,
+          artifacts,
+        },
+      },
+    };
+  }
+
+  function fcArtifact(
+    name: string,
+    args: ProtoStruct = {},
+    result: ProtoStruct = { success: true },
+    artifactId = `fc-${name}`,
+  ): ProtoStruct {
+    return artifactInSnapshot(
+      artifactId,
+      [{
+        content: {
+          $case: "data",
+          value: { function_name: name, function_args: args, function_result: result },
+        },
+        metadata: { cw_type: "function_call" },
+      }],
+    );
+  }
+
+  it("snapshot replays unseen call_subagent dispatch artifact as a bubble", () => {
+    const artifacts = [
+      fcArtifact(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { success: true },
+      ),
+    ];
+    const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
+    expect(view.messages.some((m) => m.group === "dispatch" && m.text.includes("@echo"))).toBe(true);
+    expect(view.seenArtifactIds.has("fc-call_subagent")).toBe(true);
+  });
+
+  it("snapshot replays unseen agent output artifact as an agent message", () => {
+    const artifacts = [
+      artifactInSnapshot(
+        "art-node-1",
+        [{ content: { $case: "text", value: "调研完成" } }],
+        { node_id: "n1", agent_name: "echo" },
+      ),
+    ];
+    const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
+    const msg = view.messages.find((m) => m.id === "art-node-1");
+    expect(msg?.role).toBe("agent");
+    expect(msg?.text).toBe("调研完成");
+    expect(msg?.node_id).toBe("n1");
+    expect(msg?.sender).toBe("echo");
+  });
+
+  it("snapshot replays unseen thought artifact as a thinking message", () => {
+    const artifacts = [
+      artifactInSnapshot(
+        "thought-1",
+        [{ content: { $case: "text", value: "正在思考" }, metadata: { cw_thought: true } }],
+        { author: "assistant" },
+      ),
+    ];
+    const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
+    const msg = view.messages.find((m) => m.id === "thought-1");
+    expect(msg?.thinking).toBe(true);
+    expect(msg?.text).toBe("正在思考");
+  });
+
+  it("snapshot merges multi-part text artifact into single text", () => {
+    const artifacts = [
+      artifactInSnapshot(
+        "art-multi",
+        [
+          { content: { $case: "text", value: "Hello" } },
+          { content: { $case: "text", value: " World" } },
+        ],
+        { node_id: "n1", agent_name: "echo" },
+      ),
+    ];
+    const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
+    expect(view.messages.find((m) => m.id === "art-multi")?.text).toBe("Hello World");
+  });
+
+  it("snapshot skips artifacts already seen via live stream", () => {
+    let view = applyStreamEvent(
+      emptyConversation,
+      functionCallEvent("create_plan", {
+        nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [] }],
+      }),
+      1,
+    );
+    expect(view.nodes).toHaveLength(1);
+    expect(view.notifications.some((n) => n.kind === "plan.created")).toBe(true);
+
+    const snapshotArtifacts = [
+      fcArtifact(
+        "create_plan",
+        { nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [] }] },
+        { success: true },
+      ),
+      fcArtifact(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { success: true },
+      ),
+    ];
+    view = applyStreamEvent(view, taskSnapshot(snapshotArtifacts), 2);
+    expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0].status).toBe("pending");
+    expect(view.notifications.filter((n) => n.kind === "plan.created")).toHaveLength(1);
+    expect(view.messages.some((m) => m.group === "dispatch")).toBe(true);
+  });
+
+  it("same snapshot applied twice does not duplicate", () => {
+    const artifacts = [
+      fcArtifact(
+        "call_subagent",
+        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { success: true },
+      ),
+      artifactInSnapshot(
+        "art-node-1",
+        [{ content: { $case: "text", value: "完成" } }],
+        { node_id: "n1", agent_name: "echo" },
+      ),
+    ];
+    const snap = taskSnapshot(artifacts);
+    let view = applyStreamEvent(emptyConversation, snap, 1);
+    const msgCount = view.messages.length;
+    view = applyStreamEvent(view, snap, 2);
+    expect(view.messages.length).toBe(msgCount);
   });
 });

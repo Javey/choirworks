@@ -61,6 +61,7 @@ export interface ConversationView {
   interventions: Record<string, InterventionInfo>;
   activeArtifactIds: Set<string>;
   workingBubbles: WorkingBubble[];
+  seenArtifactIds: Set<string>;
   lastSeq: number;
 }
 
@@ -75,6 +76,7 @@ export const emptyConversation: ConversationView = {
   interventions: {},
   activeArtifactIds: new Set(),
   workingBubbles: [],
+  seenArtifactIds: new Set(),
   lastSeq: 0,
 };
 
@@ -295,7 +297,63 @@ function applyStateDelta(
   };
 }
 
+function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
+  const parts = (artifact.parts as ProtoStruct[] | undefined) ?? [];
+  const firstPart = parts[0] ?? {};
+  const firstPartMeta = metaOf(firstPart);
+  const firstPartContent = firstPart.content as { $case?: string; value?: unknown } | undefined;
+  const artifactMeta = metaOf(artifact);
+
+  const isFc = firstPartContent?.$case === "data" && firstPartMeta.cw_type === "function_call";
+  const isThought = firstPartMeta.cw_thought === true;
+
+  if (isFc || isThought) {
+    return {
+      payload: {
+        $case: "artifactUpdate",
+        value: { artifact, metadata: artifactMeta, append: false, lastChunk: true },
+      },
+    };
+  }
+
+  const mergedText = parts
+    .map((p) => {
+      const c = p.content as { $case?: string; value?: unknown } | undefined;
+      if (c?.$case === "text") return String(c.value ?? "");
+      return "";
+    })
+    .join("");
+
+  const mergedArtifact = { ...artifact, parts: [{ content: { $case: "text", value: mergedText } }] };
+  return {
+    payload: {
+      $case: "artifactUpdate",
+      value: { artifact: mergedArtifact, metadata: artifactMeta, append: false, lastChunk: true },
+    },
+  };
+}
+
 export function applyStreamEvent(
+  view: ConversationView,
+  event: ProtoStruct,
+  seq: number,
+): ConversationView {
+  let result = applyStreamEventInner(view, event, seq);
+  const payload = event.payload as { $case?: string; value?: unknown } | undefined;
+  if (payload?.$case === "artifactUpdate") {
+    const artUpdate = payload.value as ProtoStruct;
+    const artifact = (artUpdate.artifact as ProtoStruct | undefined) ?? {};
+    const artifactId = String(artifact.artifactId ?? "");
+    if (artifactId) {
+      const seenArtifactIds = new Set(result.seenArtifactIds);
+      seenArtifactIds.add(artifactId);
+      result = { ...result, seenArtifactIds };
+    }
+  }
+  return result;
+}
+
+function applyStreamEventInner(
   view: ConversationView,
   event: ProtoStruct,
   seq: number,
@@ -334,16 +392,24 @@ export function applyStreamEvent(
         thinking: false,
       });
     }
-    const nodes = view.nodes;
-    return {
+    let next: ConversationView = {
       ...view,
       taskId,
       state,
       messages: [...view.messages, ...newMessages],
-      nodes,
+      nodes: view.nodes,
       contextId: String(result.contextId ?? view.contextId),
       lastSeq: Math.max(view.lastSeq, seq),
     };
+    const artifacts = (result.artifacts as ProtoStruct[] | undefined) ?? [];
+    const seenArtifactIds = new Set(next.seenArtifactIds);
+    for (const artifact of artifacts) {
+      const artifactId = String(artifact.artifactId ?? "");
+      if (!artifactId || seenArtifactIds.has(artifactId)) continue;
+      seenArtifactIds.add(artifactId);
+      next = applyStreamEventInner(next, synthesizeArtifactUpdate(artifact), seq);
+    }
+    return { ...next, seenArtifactIds };
   }
 
   // Status update
