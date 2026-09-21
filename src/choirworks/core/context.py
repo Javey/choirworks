@@ -109,14 +109,23 @@ Condense the following messages into a brief summary preserving:
 Be concise. Output only the summary."""
 
 
+def _skill_descriptions(agent: AgentRecord) -> str:
+    raw = agent.card.get("skills")
+    if not isinstance(raw, list):
+        return ""
+    parts: list[str] = []
+    for skill in raw:
+        if not isinstance(skill, dict):
+            continue
+        description = cap_description(str(skill.get("description", "")))
+        parts.append(f"{skill.get('id')} ({description})")
+    return "; ".join(parts)
+
+
 def build_planner_capabilities(agents: Sequence[AgentRecord]) -> str:
     lines = []
     for agent in agents:
-        skills = agent.card.get("skills", [])
-        skill_text = "; ".join(
-            f"{skill.get('id')} ({cap_description(str(skill.get('description', '')))})"
-            for skill in skills
-        )
+        skill_text = _skill_descriptions(agent)
         description = cap_description(str(agent.card.get("description", "")))
         lines.append(
             f"- {agent.name}: {description} skills=[{skill_text}]"

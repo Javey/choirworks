@@ -8,7 +8,13 @@ from pathlib import Path
 import uvicorn
 
 from choirworks.api.app import create_app
-from choirworks.config import Settings
+from choirworks.config import (
+    A2AConfig,
+    SchedulerConfig,
+    ServerConfig,
+    Settings,
+    StoreConfig,
+)
 from choirworks.core.llm import LiteLLMClient
 from choirworks.sim.fake_agent import FakeAgent, start_fake_agent
 from choirworks.sim.litellm_mock import sim_acompletion
@@ -34,10 +40,10 @@ EXAMPLES = [
 
 def build_settings(host: str, port: int, db_path: Path) -> Settings:
     return Settings(
-        server={"host": host, "port": port},
-        store={"db_path": db_path},
-        a2a={"public_url": f"http://{host}:{port}"},
-        scheduler={"retry_backoff_seconds": 0.2},
+        server=ServerConfig(host=host, port=port),
+        store=StoreConfig(db_path=db_path),
+        a2a=A2AConfig(public_url=f"http://{host}:{port}"),
+        scheduler=SchedulerConfig(retry_backoff_seconds=0.2),
     )
 
 

@@ -6,6 +6,7 @@ from a2a.types.a2a_pb2 import (
     StreamResponse,
     Task,
     TaskArtifactUpdateEvent,
+    TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
@@ -23,36 +24,41 @@ def _state_delta_event(
     context: dict[str, object],
     context_id: str,
     task_id: str,
-    task_state: int,
+    task_state: TaskState,
 ) -> TaskStatusUpdateEvent:
     nodes: dict[str, object] = {}
-    for n in context.get("nodes", []):
-        node = n if isinstance(n, dict) else {}
-        node_id = node.get("id", "")
-        if not node_id:
-            continue
-        nodes[node_id] = {
-            "status": node.get("status", "pending"),
-            "output": node.get("output") or "",
-            "error": node.get("error") or "",
-            "name": node.get("name", ""),
-            "agent_name": node.get("agent_name", ""),
-        }
+    raw_nodes = context.get("nodes")
+    if isinstance(raw_nodes, list):
+        for n in raw_nodes:
+            node = n if isinstance(n, dict) else {}
+            node_id = node.get("id", "")
+            if not node_id:
+                continue
+            nodes[node_id] = {
+                "status": node.get("status", "pending"),
+                "output": node.get("output") or "",
+                "error": node.get("error") or "",
+                "name": node.get("name", ""),
+                "agent_name": node.get("agent_name", ""),
+            }
 
-    members = list(context.get("members", []))
+    raw_members = context.get("members")
+    members = list(raw_members) if isinstance(raw_members, list) else []
 
     interventions: dict[str, object] = {}
-    for iv in context.get("interventions", []):
-        iv_dict = iv if isinstance(iv, dict) else {}
-        iv_id = iv_dict.get("id") or iv_dict.get("intervention_id") or ""
-        if not iv_id:
-            continue
-        interventions[iv_id] = {
-            "status": iv_dict.get("status", "pending"),
-            "node_id": iv_dict.get("node_id", ""),
-            "kind": iv_dict.get("kind", "question"),
-            "question": iv_dict.get("question", ""),
-        }
+    raw_interventions = context.get("interventions")
+    if isinstance(raw_interventions, list):
+        for iv in raw_interventions:
+            iv_dict = iv if isinstance(iv, dict) else {}
+            iv_id = iv_dict.get("id") or iv_dict.get("intervention_id") or ""
+            if not iv_id:
+                continue
+            interventions[iv_id] = {
+                "status": iv_dict.get("status", "pending"),
+                "node_id": iv_dict.get("node_id", ""),
+                "kind": iv_dict.get("kind", "question"),
+                "question": iv_dict.get("question", ""),
+            }
 
     return TaskStatusUpdateEvent(
         task_id=task_id,

@@ -45,7 +45,7 @@ async def execute_function(
     func: AgentFunction,
     args: BaseModel,
     *,
-    state_name: int = TaskState.TASK_STATE_WORKING,
+    state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> FunctionResult:
     """Execute an AgentFunction and emit the function-call event.
 

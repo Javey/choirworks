@@ -49,8 +49,8 @@ class AgentRegistry:
                         record.card_url,
                         json.dumps(record.card, ensure_ascii=False),
                         record.health,
-                        record.last_seen.isoformat(),
-                        record.created_at.isoformat(),
+                        now.isoformat(),
+                        now.isoformat(),
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -110,7 +110,7 @@ class AgentRegistry:
                 (
                     json.dumps(updated.card, ensure_ascii=False),
                     updated.health,
-                    updated.last_seen.isoformat(),
+                    now.isoformat(),
                     agent_id,
                 ),
             )

@@ -61,7 +61,8 @@ def outcome_decision_schema(
 ) -> type[OutcomeDecision]:
     fields: dict[str, Any] = {}
     if candidate_names:
-        fields["target_agent"] = (Literal[*candidate_names] | None, None)
+        target = Literal[*candidate_names] | None  # pyright: ignore[reportOperatorIssue]
+        fields["target_agent"] = (target, None)
     return create_model("OutcomeDecision", __base__=OutcomeDecision, **fields)
 
 

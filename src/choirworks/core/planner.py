@@ -35,6 +35,20 @@ class PlanValidationError(ValueError):
     pass
 
 
+def _skill_ids(record: AgentRecord) -> set[str]:
+    raw = record.card.get("skills")
+    if not isinstance(raw, list):
+        return set()
+    ids: set[str] = set()
+    for skill in raw:
+        if not isinstance(skill, dict):
+            continue
+        skill_id = skill.get("id")
+        if isinstance(skill_id, str):
+            ids.add(skill_id)
+    return ids
+
+
 def validate_plan(
     draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: int = 20
 ) -> None:
@@ -49,9 +63,7 @@ def validate_plan(
     for node in draft.nodes:
         if node.skill_id is not None:
             record = agents_by_name[node.agent_name]
-            skills = {
-                skill.get("id") for skill in record.card.get("skills", [])
-            }
+            skills = _skill_ids(record)
             if node.skill_id not in skills:
                 raise PlanValidationError(
                     f"unknown skill '{node.skill_id}' for agent {node.agent_name}"
@@ -157,6 +169,8 @@ async def plan(
                     yield item
             if tool_call is None:
                 raise ValueError("model did not call the create_plan tool")
+            if not isinstance(tool_call.args, PlanDraft):
+                raise ValueError("model did not return a plan draft")
             validate_plan(tool_call.args, agents, max_nodes)
         except (PlanValidationError, ValidationError, ValueError) as exc:
             last_error = exc

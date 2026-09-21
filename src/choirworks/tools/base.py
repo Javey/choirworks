@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from choirworks.tools.capabilities import ToolEffects
 
 if TYPE_CHECKING:
-    from choirworks.a2a.executor import SessionRuntime
     from choirworks.orchestration.registry import AgentRegistry
+    from choirworks.orchestration.session import SessionRuntime
     from choirworks.orchestration.state import OrchestrationState
 
 

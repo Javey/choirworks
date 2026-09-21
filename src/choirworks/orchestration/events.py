@@ -43,7 +43,7 @@ async def emit_state_delta(
     nodes: dict[str, dict[str, Any]] | None = None,
     members: list[MemberDelta] | None = None,
     interventions: dict[str, dict[str, Any]] | None = None,
-    state_name: int = TaskState.TASK_STATE_WORKING,
+    state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> None:
     delta: dict[str, Any] = {}
     if nodes:
@@ -113,7 +113,7 @@ async def emit_function_call(
     args: BaseModel,
     result: FunctionResult,
     *,
-    state_name: int = TaskState.TASK_STATE_WORKING,
+    state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> None:
     part = function_call_part(
         func.name, args.model_dump(), result.model_dump()
@@ -139,7 +139,7 @@ async def emit_function_error(
     func: AgentFunction,
     error: str,
     *,
-    state_name: int = TaskState.TASK_STATE_FAILED,
+    state_name: TaskState = TaskState.TASK_STATE_FAILED,
 ) -> None:
     part = function_call_part(
         func.name, {}, {"success": False, "error": error}

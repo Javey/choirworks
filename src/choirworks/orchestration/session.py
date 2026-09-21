@@ -10,6 +10,7 @@ from a2a.server.events import EventQueue
 from choirworks.orchestration.events import emit_event
 from choirworks.orchestration.state import (
     STATE_JSON_KEY,
+    NodeState,
     OrchestrationState,
     state_from_json,
     state_to_json,
@@ -29,8 +30,8 @@ class SessionRuntime:
     lock: asyncio.Lock
     task_id: str
     queue: EventQueue
-    runner: asyncio.Task | None = None
-    node_tasks: dict[asyncio.Task, Any] = field(default_factory=dict)
+    runner: asyncio.Task[None] | None = None
+    node_tasks: dict[asyncio.Task[None], NodeState] = field(default_factory=dict)
     runner_start_requested: bool = False
 
 
@@ -112,7 +113,5 @@ class SessionManager:
         snapshot = state_to_json(runtime.state)
         if self._context_store is not None:
             await self._context_store.upsert_state(runtime.context_id, snapshot)
-        await emit_event(
-            ctx, "state.updated",
-            **{STATE_JSON_KEY: snapshot},
-        )
+        metadata: dict[str, Any] = {STATE_JSON_KEY: snapshot}
+        await emit_event(ctx, "state.updated", **metadata)

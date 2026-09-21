@@ -115,8 +115,11 @@ class ScriptedExecutor(AgentExecutor):
             text.split("[当前任务]")[-1].strip() if "[当前任务]" in text else text
         )
         if context.current_task is None:
+            message = context.message
+            if message is None:
+                return
             self._calls += 1
-            task = new_task_from_user_message(context.message)
+            task = new_task_from_user_message(message)
             await event_queue.enqueue_event(task)
             updater = TaskUpdater(event_queue, task.id, task.context_id)
             await updater.start_work()
@@ -185,7 +188,7 @@ class FakeAgent:
     url: str
     card: AgentCard
     server: uvicorn.Server
-    task: asyncio.Task
+    task: asyncio.Task[None]
     handler: DefaultRequestHandler
 
     async def stop(self) -> None:

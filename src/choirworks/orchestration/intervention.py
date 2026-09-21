@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from a2a.types.a2a_pb2 import TaskState
+
 from choirworks.core.context import build_assistance_decision_user
 from choirworks.orchestration.assist import spawn_assist
 from choirworks.orchestration.context import OrchestrationContext
@@ -117,7 +119,7 @@ async def request_human(ctx: OrchestrationContext, node: NodeState) -> None:
     args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
     await execute_function(
         ctx, ask_user_func, args,
-        state_name=4,  # TASK_STATE_INPUT_REQUIRED
+        state_name=TaskState.TASK_STATE_INPUT_REQUIRED,
     )
 
 

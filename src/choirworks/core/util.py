@@ -26,6 +26,8 @@ def truncate(
 def as_model[T: BaseModel](item: object, model: type[T]) -> T:
     """Extract a typed model from a ToolCallResult, validating if needed."""
     args = getattr(item, "args", item)
-    return args if isinstance(args, model) else model.model_validate(
-        args.model_dump()
-    )
+    if isinstance(args, model):
+        return args
+    if isinstance(args, BaseModel):
+        return model.model_validate(args.model_dump())
+    return model.model_validate(args)

@@ -22,6 +22,7 @@ choirworks-sim = "choirworks.sim.runner:main"
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.40.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
@@ -45,3 +46,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.basedpyright]
+include = ["src"]
+# 项目内存在有意为之的类型层循环（TYPE_CHECKING + 函数内延迟导入），
+# 运行时无循环；保持可见但不再作为错误阻断。
+reportImportCycles = "warning"
