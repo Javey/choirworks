@@ -100,7 +100,7 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
 
 
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
-    from choirworks.a2a.executor import OutcomeDecision
+    from choirworks.tools.outcome_decision import OutcomeDecision
 
     settings = Settings(
         store={"db_path": tmp_path / "send.db"},
@@ -187,8 +187,8 @@ async def test_send_greeting_direct_reply(tmp_path, echo_agent):
 
 
 async def test_repair_limit_stops_loop(tmp_path):
-    from choirworks.a2a.executor import OutcomeDecision
     from choirworks.a2a.patch import PatchNode, PlanPatch
+    from choirworks.tools.outcome_decision import OutcomeDecision
 
     flaky = await start_fake_agent("flaky_always", name="flaky")
     try:

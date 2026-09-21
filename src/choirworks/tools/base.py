@@ -24,6 +24,18 @@ class FunctionResult(BaseModel):
 
 
 @dataclass
+class ToolCallResult:
+    """The LLM's parsed tool call — function + validated args.
+
+    Yielded by :meth:`LiteLLMClient.stream` when the model invokes a tool.
+    The caller is responsible for executing the function.
+    """
+
+    function: AgentFunction
+    args: BaseModel
+
+
+@dataclass
 class FunctionContext:
     """Dependencies handed to every :class:`AgentFunction` at call time.
 

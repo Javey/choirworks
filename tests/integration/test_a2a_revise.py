@@ -9,11 +9,11 @@ from a2a.types import (
     TaskState,
 )
 
-from choirworks.a2a.executor import OutcomeDecision
 from choirworks.a2a.patch import PatchNode, PlanPatch
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.tools.outcome_decision import OutcomeDecision
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import sdk_hub, task_nodes, task_state, wait_for_task
 

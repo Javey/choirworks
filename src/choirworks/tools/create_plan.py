@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import BaseModel, create_model
@@ -13,7 +14,7 @@ from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 # (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0), which
 # constrains agent_name to a JSON-Schema enum so hallucinated names cannot
 # pass validation.
-def _constrained_plan_schema(agent_names: list[str]) -> type[PlanDraft]:
+def constrained_plan_schema(agent_names: Sequence[str]) -> type[PlanDraft]:
     node = create_model(
         "PlanNodeDraft",
         __base__=PlanNodeDraft,
@@ -29,10 +30,11 @@ def _constrained_plan_schema(agent_names: list[str]) -> type[PlanDraft]:
 class CreatePlanFunction(AgentFunction):
     """``create_plan`` — turn the model's plan draft into live orchestration state.
 
-    The model calls this function (via forced ``stream_structured`` schema) with
-    a DAG of nodes.  The function creates :class:`NodeState` entries, joins the
-    plan agents as room members, and returns an ack.  Execution of the nodes
-    starts asynchronously — the model is **not** kept waiting.
+    The model calls this function (via :meth:`LiteLLMClient.stream` with a
+    forced tool choice) with a DAG of nodes.  The function creates
+    :class:`NodeState` entries, joins the plan agents as room members, and
+    returns an ack.  Execution of the nodes starts asynchronously — the model
+    is **not** kept waiting.
     """
 
     name = "create_plan"
@@ -41,7 +43,7 @@ class CreatePlanFunction(AgentFunction):
 
     async def args_model(self, ctx: FunctionContext) -> type[BaseModel]:
         agents = await ctx.registry.list()
-        return _constrained_plan_schema([agent.name for agent in agents])
+        return constrained_plan_schema([agent.name for agent in agents])
 
     async def execute(
         self, ctx: FunctionContext, args: BaseModel

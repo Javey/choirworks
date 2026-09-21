@@ -5,6 +5,7 @@ from choirworks.tools.base import (
     AgentFunction,
     FunctionContext,
     FunctionResult,
+    ToolCallResult,
 )
 from choirworks.tools.call_subagent import (
     CallSubagentArgs,
@@ -27,6 +28,7 @@ __all__ = [
     "FunctionRegistry",
     "RevisePlanArgs",
     "RevisePlanFunction",
+    "ToolCallResult",
     "emit_function_call",
     "emit_function_error",
     "emit_state_delta",

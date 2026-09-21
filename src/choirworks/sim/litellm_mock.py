@@ -306,7 +306,7 @@ async def sim_acompletion(
 
     if kwargs.get("stream"):
         tool_name = tools[0]["function"]["name"] if tools else ""
-        if tool_name == "PlanDraft":
+        if tool_name == "create_plan":
             reasoning, draft = _make_plan(user_content)
             arguments = draft.model_dump_json()
         elif tool_name == "OutcomeDecision" and "Agent final reply:" in user_content:

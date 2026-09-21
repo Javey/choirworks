@@ -1,9 +1,9 @@
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 
-from choirworks.a2a.executor import OutcomeDecision
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
+from choirworks.tools.outcome_decision import OutcomeDecision
 from tests.support.sdk import (
     sdk_hub,
     task_artifact_text,

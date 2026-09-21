@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import litellm
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
-from litellm.types.utils import ChatCompletionDeltaToolCall, ModelResponse
+from litellm.types.utils import ChatCompletionDeltaToolCall, Delta, ModelResponse
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -17,9 +20,12 @@ type CompletionFn = Callable[..., Awaitable[CompletionResult]]
 class LiteLLMClient:
     """LLM client backed by litellm.
 
-    ``stream_structured`` enforces the schema with a forced function tool and
-    streams thinking deltas followed by the validated result.  ``text`` is the
-    plain non-streaming completion used for summaries.
+    ``stream`` is the core method: it sends messages (optionally with tool
+    declarations) to the model and streams back ``Delta`` chunks followed by
+    a ``ToolCallResult`` when the model invokes a tool.  The client does NOT
+    execute tools — that is the caller's responsibility.
+
+    ``text`` is the plain non-streaming completion used for summaries.
     """
 
     def __init__(
@@ -42,30 +48,45 @@ class LiteLLMClient:
             return {"api_base": self._api_base}
         return {}
 
-    async def stream_structured(
+    async def stream(
         self,
         *,
         system: str,
         user: str,
-        schema: type[T],
-        tool_name: str | None = None,
-    ) -> AsyncIterator[Any]:
-        """Stream raw deltas, then yield the validated tool-call result.
+        tools: list[AgentFunction] | None = None,
+        ctx: FunctionContext | None = None,
+        tool_choice: str | dict[str, object] = "auto",
+    ) -> AsyncIterator[Delta | ToolCallResult]:
+        """Stream ``Delta`` chunks, then yield a ``ToolCallResult`` if the
+        model invokes a tool.
 
-        The schema is enforced at the API layer via a forced function tool.
-        Each yielded delta is the raw litellm ``Delta`` object — callers read
-        ``delta.reasoning_content`` and ``delta.content`` as needed.
-        Argument fragments are accumulated across chunks and validated with
-        pydantic once the stream ends.
+        When *tools* and *ctx* are provided, each tool's ``args_model(ctx)``
+        is awaited to build the function-tool declarations sent to the model.
+        Tool-call argument fragments are accumulated across chunks and
+        validated with the tool's schema once the stream ends.
+
+        The client does NOT execute the tool — it yields a
+        :class:`ToolCallResult` for the caller to act on.
         """
-        name = tool_name or schema.__name__
-        tool = {
-            "type": "function",
-            "function": {
-                "name": name,
-                "parameters": schema.model_json_schema(),
-            },
-        }
+        from choirworks.tools.base import ToolCallResult  # runtime import
+
+        declarations: list[dict[str, object]] = []
+        schemas: dict[str, type[BaseModel]] = {}
+        functions: dict[str, AgentFunction] = {}
+        if tools and ctx:
+            for tool in tools:
+                schema = await tool.args_model(ctx)
+                schemas[tool.name] = schema
+                functions[tool.name] = tool
+                declarations.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": schema.model_json_schema(),
+                    },
+                })
+
         response = await self._completion_fn(
             model=self._model,
             messages=[
@@ -74,14 +95,15 @@ class LiteLLMClient:
             ],
             timeout=self._timeout,
             stream=True,
-            tools=[tool],
-            tool_choice={"type": "function", "function": {"name": name}},
+            tools=declarations or None,
+            tool_choice=tool_choice if declarations else None,
             **self._extra_kwargs(),
         )
         if not isinstance(response, CustomStreamWrapper):
             raise ValueError("expected a streaming response")
 
         fragments: dict[int, list[str]] = {}
+        call_names: dict[int, str] = {}
         async for chunk in response:
             if not chunk.choices:
                 continue
@@ -94,13 +116,24 @@ class LiteLLMClient:
                     fragments.setdefault(call.index, []).append(
                         call.function.arguments
                     )
+                    if call.function.name:
+                        call_names[call.index] = call.function.name
 
         if not fragments:
-            raise ValueError(f"model did not call the {name} tool")
+            return
+
         if len(fragments) > 1:
-            raise ValueError(f"expected a single {name} tool call")
-        payload = "".join(next(iter(fragments.values())))
-        yield schema.model_validate_json(payload)
+            raise ValueError("expected a single tool call")
+
+        index, args_fragments = next(iter(fragments.items()))
+        tool_name = call_names.get(index, "")
+        if not tool_name or tool_name not in functions:
+            raise ValueError(f"model called unknown tool: {tool_name}")
+
+        payload = "".join(args_fragments)
+        schema = schemas[tool_name]
+        args = schema.model_validate_json(payload)
+        yield ToolCallResult(function=functions[tool_name], args=args)
 
     async def text(self, *, system: str, user: str) -> str:
         response = await self._completion_fn(

@@ -1,13 +1,17 @@
 from datetime import UTC, datetime
 
-import pytest
 from pydantic import BaseModel
 
-from choirworks.a2a.executor import OutcomeDecision
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.models.domain import AgentRecord
 from choirworks.sim.litellm_mock import sim_acompletion
+from choirworks.tools import CreatePlanFunction, FunctionContext, ToolCallResult
+from choirworks.tools.outcome_decision import (
+    OutcomeDecision,
+    OutcomeDecisionTool,
+    outcome_decision_schema,
+)
 
 
 def agent(name: str) -> AgentRecord:
@@ -43,22 +47,42 @@ def make_client() -> LiteLLMClient:
     return LiteLLMClient(model="sim", completion_fn=sim_acompletion)
 
 
-async def structured_result(client: LiteLLMClient, *, system: str, user: str, schema, tool_name):
+def _as[T: BaseModel](item: ToolCallResult, model: type[T]) -> T:
+    return item.args if isinstance(item.args, model) else model.model_validate(
+        item.args.model_dump()
+    )
+
+
+class MockExecutor:
+    def __init__(self, agents):
+        class _R:
+            async def list(self):
+                return agents
+        self._registry = _R()
+
+
+async def tool_result(
+    client: LiteLLMClient, *, system: str, user: str, tool, ctx: FunctionContext
+) -> ToolCallResult:
     result = None
-    async for item in client.stream_structured(
-        system=system, user=user, schema=schema, tool_name=tool_name
+    async for item in client.stream(
+        system=system, user=user, tools=[tool], ctx=ctx,
+        tool_choice={"type": "function", "function": {"name": tool.name}},
     ):
-        if not isinstance(item, str):
+        if isinstance(item, ToolCallResult):
             result = item
+    assert result is not None
     return result
 
 
 async def plan_for(request: str) -> PlanDraft:
     client = make_client()
-    draft = await structured_result(
-        client, system="plan", user=prompt(request), schema=PlanDraft, tool_name="PlanDraft"
+    tool = CreatePlanFunction()
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    tc = await tool_result(
+        client, system="plan", user=prompt(request), tool=tool, ctx=ctx,
     )
-    assert draft is not None
+    draft = _as(tc, PlanDraft)
     validate_plan(draft, AGENTS, 20)
     return draft
 
@@ -91,10 +115,12 @@ async def test_broken_plan_triggers_replan_without_auditor():
     replan_prompt = prompt("请审计合规性并降级处理")
     replan_prompt += "\n\nReason for replanning:\nnode 'n1' failed: boom"
     client = make_client()
-    replanned = await structured_result(
-        client, system="plan", user=replan_prompt, schema=PlanDraft, tool_name="PlanDraft"
+    tool = CreatePlanFunction()
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    tc = await tool_result(
+        client, system="plan", user=replan_prompt, tool=tool, ctx=ctx,
     )
-    assert replanned is not None
+    replanned = _as(tc, PlanDraft)
     validate_plan(replanned, AGENTS, 20)
     assert "auditor" not in agents_of(replanned)
     assert agents_of(replanned) == ["developer"]
@@ -108,14 +134,13 @@ async def test_assistance_decision_routes_to_pm_for_developer():
         + "缺少关键信息：请 product-manager 提供需求文档。"
     )
     client = make_client()
-    decision = await structured_result(
-        client,
-        system="assistance",
-        user=prompt_text,
-        schema=OutcomeDecision,
-        tool_name="OutcomeDecision",
+    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "developer"])
+    tool = OutcomeDecisionTool(schema)
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    tc = await tool_result(
+        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
     )
-    assert decision is not None
+    decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
     assert decision.target_agent == "product-manager"
     assert "请补充信息" in decision.instruction
@@ -130,14 +155,13 @@ async def test_assistance_decision_routes_to_qa_for_pm():
         + "需要 qa-engineer 协助确认技术细节。"
     )
     client = make_client()
-    decision = await structured_result(
-        client,
-        system="assistance",
-        user=prompt_text,
-        schema=OutcomeDecision,
-        tool_name="OutcomeDecision",
+    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "product-manager"])
+    tool = OutcomeDecisionTool(schema)
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    tc = await tool_result(
+        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
     )
-    assert decision is not None
+    decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
     assert decision.target_agent == "qa-engineer"
     assert "需要 qa-engineer" in decision.instruction
@@ -149,14 +173,13 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         + "\n\nRequester: code-reviewer\nQuestion / blocked work:\n需要人工确认评审标准。"
     )
     client = make_client()
-    decision = await structured_result(
-        client,
-        system="assistance",
-        user=prompt_text,
-        schema=OutcomeDecision,
-        tool_name="OutcomeDecision",
+    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "code-reviewer"])
+    tool = OutcomeDecisionTool(schema)
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    tc = await tool_result(
+        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
     )
-    assert decision is not None
+    decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
     assert decision.target_agent is None
 
@@ -168,27 +191,32 @@ async def test_coordination_plan_runs_pm_and_developer_in_parallel():
     assert draft.nodes[1].deps == []
 
 
-async def test_stream_structured_with_sim_yields_valid_plan():
+async def test_stream_with_sim_yields_valid_plan():
     client = make_client()
+    tool = CreatePlanFunction()
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
     items = [
         item
-        async for item in client.stream_structured(
+        async for item in client.stream(
             system="plan",
             user=prompt("帮我调研技术方案并写一份设计文档"),
-            schema=PlanDraft,
-            tool_name="PlanDraft",
+            tools=[tool],
+            ctx=ctx,
+            tool_choice={"type": "function", "function": {"name": "create_plan"}},
         )
     ]
     thinking = "".join(
         getattr(item, "reasoning_content", "") or ""
         for item in items
-        if not isinstance(item, PlanDraft)
+        if not isinstance(item, ToolCallResult)
     )
-    drafts = [item for item in items if isinstance(item, PlanDraft)]
+    tool_calls = [item for item in items if isinstance(item, ToolCallResult)]
     assert thinking
-    assert len(drafts) == 1
-    validate_plan(drafts[0], AGENTS, 20)
-    assert agents_of(drafts[0]) == ["product-manager", "developer"]
+    assert len(tool_calls) == 1
+    draft = tool_calls[0].args
+    assert isinstance(draft, PlanDraft)
+    validate_plan(draft, AGENTS, 20)
+    assert agents_of(draft) == ["product-manager", "developer"]
 
 
 async def test_greeting_returns_empty_plan():
@@ -203,7 +231,7 @@ async def test_sim_stream_returns_custom_stream_wrapper():
         stream=True,
         messages=[{"role": "user", "content": prompt("帮我调研")}],
         tools=[
-            {"type": "function", "function": {"name": "PlanDraft", "parameters": {}}}
+            {"type": "function", "function": {"name": "create_plan", "parameters": {}}}
         ],
     )
     assert isinstance(result, CustomStreamWrapper)
@@ -211,15 +239,19 @@ async def test_sim_stream_returns_custom_stream_wrapper():
         pass
 
 
-async def test_stream_structured_raises_without_tool_call():
+async def test_stream_no_tool_call_yields_no_result():
     class Answer(BaseModel):
         value: str
 
     client = make_client()
-    with pytest.raises(ValueError, match="did not call"):
-        [
-            item
-            async for item in client.stream_structured(
-                system="x", user="y", schema=Answer, tool_name="Answer"
-            )
-        ]
+    tool = OutcomeDecisionTool(Answer)  # type: ignore[arg-type]
+    tool.name = "Answer"
+    ctx = FunctionContext(executor=MockExecutor(AGENTS), runtime=None)  # type: ignore[arg-type]
+    items = [
+        item
+        async for item in client.stream(
+            system="x", user="y", tools=[tool], ctx=ctx,
+            tool_choice={"type": "function", "function": {"name": "Answer"}},
+        )
+    ]
+    assert not any(isinstance(item, ToolCallResult) for item in items)

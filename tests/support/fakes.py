@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, TypeVar
+from typing import Any
 
 from litellm.types.utils import Delta
-from pydantic import BaseModel
 
 from choirworks.core.planner import PlanDraft
-
-T = TypeVar("T", bound=BaseModel)
+from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
 
 
 class FakeLLM:
     """Mock LLM client for testing Planner / ContextBriefBuilder.
 
     Pass ``structured_results`` (list of Pydantic models) to script
-    ``stream_structured()`` calls in order, and ``text_results`` to script
+    ``stream()`` calls in order, and ``text_results`` to script
     ``text()`` calls.
     """
 
@@ -29,16 +27,23 @@ class FakeLLM:
         self.stream_calls: list[dict[str, Any]] = []
         self.text_calls: list[dict[str, Any]] = []
 
-    async def stream_structured(
-        self, *, system: str, user: str, schema: type[T], tool_name: str | None = None
-    ) -> AsyncIterator[Any]:
-        """Direct LLM client interface — streams reasoning deltas then the result."""
+    async def stream(
+        self,
+        *,
+        system: str,
+        user: str,
+        tools: list[AgentFunction] | None = None,
+        ctx: FunctionContext | None = None,
+        tool_choice: str | dict[str, object] = "auto",
+    ) -> AsyncIterator[Delta | ToolCallResult]:
+        """Direct LLM client interface — streams reasoning deltas then the tool call."""
         self.stream_calls.append(
             {
                 "system": system,
                 "user": user,
-                "schema": schema,
-                "tool_name": tool_name,
+                "tools": tools,
+                "ctx": ctx,
+                "tool_choice": tool_choice,
             }
         )
         if not self.structured_results:
@@ -54,7 +59,8 @@ class FakeLLM:
         midpoint = len(reasoning) // 2
         yield Delta(reasoning_content=reasoning[:midpoint])
         yield Delta(reasoning_content=reasoning[midpoint:])
-        yield result
+        if tools:
+            yield ToolCallResult(function=tools[0], args=result)
 
     async def text(self, *, system: str, user: str) -> str:
         """Direct LLM client interface — used by ContextBriefBuilder."""
