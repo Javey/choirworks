@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import uuid
 
 from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -18,42 +17,26 @@ from a2a.types.a2a_pb2 import (
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
 from choirworks.a2a.deps import Deps
-from choirworks.a2a.events import (
-    emit_event,
-    emit_function_call,
-    emit_function_error,
-    emit_state_delta,
-    emit_text_chunk,
-    emit_thought_chunk,
-)
+from choirworks.a2a.events import emit_event, emit_state_delta
 from choirworks.a2a.helpers import join_members, status_update
 from choirworks.a2a.intervention import answer_intervention
 from choirworks.a2a.patch import PatchResult, PlanPatch
+from choirworks.a2a.planning import plan_and_launch
 from choirworks.a2a.registry import AgentRegistry
 from choirworks.a2a.repair import apply_patch_locked
-from choirworks.a2a.room import RoomOptions, room_options
+from choirworks.a2a.room import room_options
+from choirworks.a2a.routing import route_message
 from choirworks.a2a.runner import start_runner
 from choirworks.a2a.session import SessionManager, SessionRuntime
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
-    NodeState,
-    active_nodes,
-    blocked_nodes,
-    enqueue,
     has_pending_work,
     normalize_cancel_requests,
     pending_interventions,
-    start_new_plan,
 )
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.planner import PlanDraft, PlanningFailed, plan
 from choirworks.store.contexts import ContextStore
-from choirworks.tools import (
-    FunctionContext,
-    ToolCallResult,
-    create_plan_func,
-)
 from choirworks.tools.capabilities import ToolEffects
 
 logger = logging.getLogger(__name__)
@@ -123,6 +106,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             llm=llm,
             sessions=self._session_mgr,
             config=self._config,
+            brief_builder=self._brief_builder,
         )
 
     # ------------------------------------------------------------- lifecycle
@@ -189,11 +173,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 return
 
             if runtime.runner is not None and not runtime.runner.done():
-                await self._route_message(runtime, text, room)
+                await route_message(self._build_ctx(runtime), text, room)
                 return
 
             if has_pending_work(state):
-                await self._route_message(runtime, text, room)
+                await route_message(self._build_ctx(runtime), text, room)
                 self._start_runner(runtime)
                 return
 
@@ -203,7 +187,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 return
 
             await updater.start_work()
-            await self._plan_and_launch(runtime, text, room=room)
+            await plan_and_launch(self._build_ctx(runtime), text, room=room)
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
@@ -280,7 +264,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         await self._persist(runtime)
         self._start_runner(runtime)
 
-    # ---------------------------------------------------------------- plan
+    # ------------------------------------------------------------- context
 
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
@@ -297,244 +281,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     def _start_runner(self, runtime: SessionRuntime) -> None:
         start_runner(self._build_ctx(runtime))
-
-    async def _stream_plan(
-        self,
-        runtime: SessionRuntime,
-        request: str,
-        ctx: FunctionContext,
-        *,
-        reason: str | None = None,
-        context: str | None = None,
-    ) -> ToolCallResult:
-        tool_call: ToolCallResult | None = None
-        reasoning_parts: list[str] = []
-        content_parts: list[str] = []
-        first_reasoning = True
-        first_content = True
-        thought_id = uuid.uuid4().hex
-        text_id = uuid.uuid4().hex
-        orch_ctx = self._build_ctx(runtime)
-        async for item in plan(
-            self._deps.llm,
-            self._deps.registry,
-            request,
-            ctx=ctx,
-            reason=reason,
-            context=context,
-            max_nodes=self._config.max_nodes,
-            max_retries=self._config.max_plan_retries,
-        ):
-            if isinstance(item, ToolCallResult):
-                tool_call = item
-                continue
-            reasoning = getattr(item, "reasoning_content", None)
-            content = getattr(item, "content", None)
-            if reasoning:
-                reasoning_parts.append(reasoning)
-                await emit_thought_chunk(
-                    orch_ctx,
-                    text=reasoning,
-                    author="assistant",
-                    append=not first_reasoning,
-                    last_chunk=False,
-                    artifact_id=thought_id,
-                )
-                first_reasoning = False
-            if content:
-                content_parts.append(content)
-                await emit_text_chunk(
-                    orch_ctx,
-                    text=content,
-                    append=not first_content,
-                    last_chunk=False,
-                    artifact_id=text_id,
-                )
-                first_content = False
-        reasoning = "".join(reasoning_parts)
-        if reasoning:
-            await emit_thought_chunk(
-                orch_ctx,
-                text=reasoning,
-                author="assistant",
-                append=False,
-                last_chunk=True,
-                artifact_id=thought_id,
-            )
-        content = "".join(content_parts)
-        if content:
-            await emit_text_chunk(
-                orch_ctx,
-                text=content,
-                append=False,
-                last_chunk=True,
-                artifact_id=text_id,
-            )
-        if tool_call is None:
-            raise PlanningFailed("planner stream ended without a plan")
-        return tool_call
-
-    async def _plan_and_launch(
-        self,
-        runtime: SessionRuntime,
-        text: str,
-        *,
-        room: RoomOptions | None = None,
-    ) -> None:
-        state = runtime.state
-        start_new_plan(state, f"plan-{uuid.uuid4().hex[:8]}")
-        context_brief = await self._brief_builder.build(
-            runtime.context_id, exclude_task_id=runtime.task_id
-        )
-        create_plan = create_plan_func
-        orch_ctx = self._build_ctx(runtime)
-        ctx = FunctionContext(
-            runtime=runtime, registry=orch_ctx.registry, effects=orch_ctx.effects
-        )
-        try:
-            tool_call = await self._stream_plan(
-                runtime, text, ctx, context=context_brief or None
-            )
-        except PlanningFailed as exc:
-            logger.warning("Planning failed for task %s: %s", runtime.task_id, exc)
-            await self._persist(runtime)
-            orch_ctx = self._build_ctx(runtime)
-            await emit_function_error(
-                orch_ctx, create_plan, str(exc),
-                state_name=TaskState.TASK_STATE_FAILED,
-            )
-            self._session_mgr.evict_session(runtime.context_id)
-            return
-
-        draft = tool_call.args if isinstance(tool_call.args, PlanDraft) else (
-            PlanDraft.model_validate(tool_call.args.model_dump())
-        )
-
-        if not draft.nodes:
-            orch_ctx = self._build_ctx(runtime)
-            await self._persist(runtime)
-            await emit_event(orch_ctx, "", TaskState.TASK_STATE_COMPLETED)
-            self._session_mgr.evict_session(runtime.context_id)
-            return
-
-        result = await tool_call.function.execute(ctx, tool_call.args)
-        orch_ctx = self._build_ctx(runtime)
-        await emit_function_call(
-            orch_ctx, tool_call.function, tool_call.args, result,
-            state_name=TaskState.TASK_STATE_WORKING,
-        )
-
-        agents = await self._deps.registry.list()
-        agent_urls = {agent.name: agent.card_url for agent in agents}
-        mention_targets = [
-            name
-            for name in (room or {}).get("mentions", [])
-            if name in agent_urls
-        ]
-        if mention_targets:
-            await self._join_members(runtime, mention_targets, "human_mention")
-        await self._persist(runtime)
-        self._start_runner(runtime)
-
-    # -------------------------------------------------------------- routing
-
-    async def _route_message(
-        self,
-        runtime: SessionRuntime,
-        text: str,
-        room: RoomOptions,
-    ) -> None:
-        state = runtime.state
-        if not text:
-            return
-        active = active_nodes(state)
-        quote_id = room.get("quote_id")
-        interrupt = bool(room.get("interrupt"))
-
-        if quote_id and not interrupt:
-            quoted_node = next(
-                (
-                    node
-                    for node in state.nodes.values()
-                    if node.id == quote_id
-                    or f"{runtime.task_id}:{node.id}" == quote_id
-                ),
-                None,
-            )
-            if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
-                enqueue(state, 
-                    quoted_node.id, text, sender="user", quote_id=str(quote_id)
-                )
-                await self._persist(runtime)
-                return
-            if quoted_node is not None and quoted_node.status == "completed":
-                await self._spawn_followup_node(runtime, text, quoted_node)
-                return
-
-        if interrupt and active:
-            node = active[0]
-            if node.a2a_task_id:
-                await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
-            node.status = "canceled"
-            invalidated = blocked_nodes(state)
-            for blocked in invalidated:
-                blocked.status = "invalidated"
-            ctx = self._build_ctx(runtime)
-            await emit_state_delta(ctx, nodes={
-                node.id: {"status": "canceled", "agent_name": node.agent_name},
-                **{b.id: {"status": "invalidated"} for b in invalidated},
-            })
-            await self._spawn_followup_node(runtime, text, node, deps=[])
-            return
-
-        target = active[0] if active else next(
-            (n for n in state.nodes.values() if n.status in {"pending", "ready"}),
-            None,
-        )
-        if target is not None:
-            enqueue(state, 
-                target.id,
-                text,
-                sender="user",
-                quote_id=str(quote_id) if quote_id else None,
-            )
-            await self._persist(runtime)
-            return
-
-        await self._plan_and_launch(runtime, text)
-
-    async def _spawn_followup_node(
-        self,
-        runtime: SessionRuntime,
-        text: str,
-        anchor: NodeState,
-        *,
-        deps: list[str] | None = None,
-    ) -> None:
-        state = runtime.state
-        if state.derived_count >= self._config.max_derived_nodes:
-            return
-        state.derived_count += 1
-        node_id = f"{anchor.id}-f{state.derived_count}"
-        followup = NodeState(
-            id=node_id,
-            name="",
-            agent_name=anchor.agent_name,
-            agent_url=anchor.agent_url,
-            deps=list(deps if deps is not None else [anchor.id]),
-            input_text=text,
-            derived=True,
-        )
-        state.nodes[node_id] = followup
-        ctx = self._build_ctx(runtime)
-        await emit_state_delta(ctx, nodes={
-            node_id: {
-                "status": "pending",
-                "agent_name": followup.agent_name,
-            },
-        })
-        await self._persist(runtime)
-        self._start_runner(runtime)
 
     # ------------------------------------------------------- effect bindings
     # ToolEffects closures bind a runtime to the module-level functions, so

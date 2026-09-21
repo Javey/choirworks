@@ -38,7 +38,6 @@ async def execute_ask_user(
 
     node.status = "input_required"
     node.question = ask_args.question
-    node.a2a_task_id = None
 
     intervention = add_intervention(state, node.id, ask_args.question)
 

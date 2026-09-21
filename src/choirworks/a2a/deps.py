@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from choirworks.a2a.context import ExecutorConfig
     from choirworks.a2a.registry import AgentRegistry
     from choirworks.a2a.session import SessionManager
+    from choirworks.core.context import ContextBriefBuilder
     from choirworks.core.llm import LiteLLMClient
 
 
@@ -25,3 +26,4 @@ class Deps:
     llm: LiteLLMClient
     sessions: SessionManager
     config: ExecutorConfig
+    brief_builder: ContextBriefBuilder

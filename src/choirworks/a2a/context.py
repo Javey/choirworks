@@ -14,6 +14,7 @@ from choirworks.tools.capabilities import ToolEffects
 if TYPE_CHECKING:
     from choirworks.a2a.client import RemoteAgentClient
     from choirworks.a2a.registry import AgentRegistry
+    from choirworks.core.context import ContextBriefBuilder
     from choirworks.core.llm import LiteLLMClient
 
 
@@ -81,3 +82,7 @@ class OrchestrationContext:
     @property
     def config(self) -> ExecutorConfig:
         return self.deps.config
+
+    @property
+    def brief_builder(self) -> ContextBriefBuilder:
+        return self.deps.brief_builder

@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from a2a.types.a2a_pb2 import TaskState
-
 from choirworks.a2a.assist import arbitrate_mentions
 from choirworks.a2a.context import OrchestrationContext
 from choirworks.a2a.events import emit_state_delta
 from choirworks.a2a.remote_caller import resume_remote, stream_remote
 from choirworks.a2a.repair import revise_plan
+from choirworks.a2a.routing import spawn_followup_node
 from choirworks.a2a.state import NodeState, expire_cancel_requests, take_queued
 from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
@@ -81,15 +80,13 @@ async def execute_node(
         })
     elif current == "input_required":
         node.status = "input_required"
-        await emit_state_delta(
-            ctx,
-            nodes={node.id: {
+        await emit_state_delta(ctx, nodes={
+            node.id: {
                 "status": "input_required",
                 "question": node.question or "",
                 "agent_name": node.agent_name,
-            }},
-            state_name=TaskState.TASK_STATE_INPUT_REQUIRED,
-        )
+            },
+        })
     else:
         node.status = "failed"
         logger.warning(
@@ -118,15 +115,13 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
         node.status = "input_required"
         node.question = decision.question or node.output
         node.a2a_task_id = None
-        await emit_state_delta(
-            ctx,
-            nodes={node.id: {
+        await emit_state_delta(ctx, nodes={
+            node.id: {
                 "status": "input_required",
                 "question": node.question or "",
                 "agent_name": node.agent_name,
-            }},
-            state_name=TaskState.TASK_STATE_INPUT_REQUIRED,
-        )
+            },
+        })
     else:
         if decision.intent == "revise" and decision.patch is not None:
             if ctx.state.revision_count < ctx.config.max_revisions:
@@ -182,36 +177,4 @@ async def _deliver_queued(ctx: OrchestrationContext, node: NodeState) -> None:
     if not messages:
         return
     text = "\n\n".join(message.text for message in messages)
-    await _spawn_followup_node(ctx, text, node, deps=[node.id])
-
-
-async def _spawn_followup_node(
-    ctx: OrchestrationContext,
-    text: str,
-    anchor: NodeState,
-    *,
-    deps: list[str] | None = None,
-) -> None:
-    state = ctx.state
-    if state.derived_count >= ctx.config.max_derived_nodes:
-        return
-    state.derived_count += 1
-    node_id = f"{anchor.id}-f{state.derived_count}"
-    followup = NodeState(
-        id=node_id,
-        name="",
-        agent_name=anchor.agent_name,
-        agent_url=anchor.agent_url,
-        deps=list(deps if deps is not None else [anchor.id]),
-        input_text=text,
-        derived=True,
-    )
-    state.nodes[node_id] = followup
-    await emit_state_delta(ctx, nodes={
-        node_id: {
-            "status": "pending",
-            "agent_name": followup.agent_name,
-        },
-    })
-    await ctx.sessions.persist(ctx)
-    ctx.runtime.runner_start_requested = True
+    await spawn_followup_node(ctx, text, node, deps=[node.id])

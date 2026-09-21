@@ -122,7 +122,9 @@ async def test_ask_user_marks_node_input_required():
     node = state.nodes["n1"]
     assert node.status == "input_required"
     assert node.question == "请问？"
-    assert node.a2a_task_id is None
+    # The remote task stays open awaiting input, so a human answer can
+    # resume it instead of spawning a brand-new remote task.
+    assert node.a2a_task_id == "remote-1"
     pending = pending_interventions(state)
     assert [iv.question for iv in pending] == ["请问？"]
 
