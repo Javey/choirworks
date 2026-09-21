@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from choirworks.subagents.assistance import AssistanceSubagent
-from choirworks.subagents.base import InternalSubagent
-from choirworks.subagents.outcome import OutcomeSubagent
-from choirworks.subagents.planner import PlannerSubagent
-from choirworks.subagents.repair import RepairSubagent
+from choirworks.subagents.assistance import ASSISTANCE_SUBAGENT
+from choirworks.subagents.base import Subagent, run_subagent
+from choirworks.subagents.outcome import OUTCOME_SUBAGENT
+from choirworks.subagents.repair import REPAIR_SUBAGENT
 
 __all__ = [
-    "AssistanceSubagent",
-    "InternalSubagent",
-    "OutcomeSubagent",
-    "PlannerSubagent",
-    "RepairSubagent",
+    "ASSISTANCE_SUBAGENT",
+    "OUTCOME_SUBAGENT",
+    "REPAIR_SUBAGENT",
+    "Subagent",
+    "run_subagent",
 ]

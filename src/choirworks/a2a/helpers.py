@@ -122,6 +122,7 @@ async def join_members(
 ) -> None:
     """Add agents to the room state (de-duplicated) and emit a member delta."""
     from choirworks.a2a.events import emit_state_delta
+    from choirworks.a2a.state import add_member
 
     state = ctx.state
     records = await ctx.registry.list()
@@ -131,7 +132,7 @@ async def join_members(
         record = known.get(name)
         if record is None:
             continue
-        if not state.add_member(name, record.card_url, reason):
+        if not add_member(state, name, record.card_url, reason):
             continue
         new_members.append({
             "agent_name": name,
@@ -157,7 +158,11 @@ async def execute_function(
     from choirworks.a2a.events import emit_function_call
     from choirworks.tools.base import FunctionContext
 
-    func_ctx = FunctionContext(executor=ctx.executor, runtime=ctx.runtime)  # type: ignore[arg-type]
+    func_ctx = FunctionContext(
+        runtime=ctx.runtime,
+        registry=ctx.registry,
+        effects=ctx.effects,
+    )
     result = await func.execute(func_ctx, args)
     await emit_function_call(ctx, func, args, result, state_name=state_name)
     return result

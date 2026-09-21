@@ -30,11 +30,11 @@ from choirworks.a2a.rewind import (
     parse_markers,
     restore_state,
 )
+from choirworks.a2a.state import state_to_json
 from choirworks.api import agents as agents_routes
 from choirworks.api.replay import synthesize_replay_events
 from choirworks.config import Settings
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.planner import Planner
 from choirworks.store.contexts import ContextStore
 from choirworks.store.db import Database
 
@@ -75,17 +75,9 @@ async def create_app(
         remote = RemoteAgentClient()
         registry = AgentRegistry(db, remote)
 
-        planner = Planner(
-            llm_client,
-            registry,
-            max_nodes=settings.scheduler.max_plan_nodes,
-            max_retries=settings.llm.max_plan_retries,
-        )
-
         executor = ChoirWorksAgentExecutor(
             registry=registry,
             remote=remote,
-            planner=planner,
             llm=llm_client,
             max_parallel=settings.scheduler.max_parallel_nodes,
             node_timeout=settings.scheduler.node_timeout_seconds,
@@ -93,6 +85,8 @@ async def create_app(
             retry_backoff=settings.scheduler.retry_backoff_seconds,
             max_revisions=settings.scheduler.max_revisions,
             replan_on_failure=settings.scheduler.replan_on_failure,
+            max_plan_nodes=settings.scheduler.max_plan_nodes,
+            max_plan_retries=settings.llm.max_plan_retries,
             compaction_threshold=settings.llm.compaction_threshold,
             compaction_retention=settings.llm.compaction_retention,
         )
@@ -113,7 +107,6 @@ async def create_app(
         app.state.db = db
         app.state.remote = remote
         app.state.registry = registry
-        app.state.planner = planner
         app.state.executor = executor
         app.state.request_handler = request_handler
         app.state.agent_card = agent_card
@@ -345,7 +338,7 @@ async def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         await context_store.rewind(
             context_id,
-            state=state.to_json(),
+            state=state_to_json(state),
             before_task_id=task_id,
             cut_task_id=tasks[-1].id,
         )

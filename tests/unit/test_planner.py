@@ -5,18 +5,19 @@ import pytest
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.registry import AgentRegistry
+from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import (
     PlanDraft,
-    Planner,
     PlanningFailed,
     PlanNodeDraft,
     PlanValidationError,
+    plan,
     validate_plan,
 )
 from choirworks.models.domain import AgentRecord
 from choirworks.store.db import Database
 from choirworks.tools import FunctionContext, ToolCallResult
-from tests.support.fakes import FakeLLM
+from tests.support.fakes import FakeLLM, make_func_ctx
 
 
 def make_agent(name: str, skills: list[str]) -> AgentRecord:
@@ -108,16 +109,16 @@ async def make_registry(tmp_path, agents):
     return db, remote, registry
 
 
-class MockExecutor:
-    """Minimal executor stub for FunctionContext.registry."""
-    def __init__(self, registry):
-        self._registry = registry
-
-
-async def collect_plan(planner: Planner, request: str, ctx: FunctionContext, **kwargs):
+async def collect_plan(
+    llm: LiteLLMClient,
+    registry: AgentRegistry,
+    request: str,
+    ctx: FunctionContext,
+    **kwargs,
+):
     chunks: list[str] = []
     tool_call: ToolCallResult | None = None
-    async for item in planner.plan(request, ctx=ctx, **kwargs):
+    async for item in plan(llm, registry, request, ctx=ctx, **kwargs):
         if isinstance(item, ToolCallResult):
             tool_call = item
         else:
@@ -139,11 +140,8 @@ async def test_planner_streams_thinking(tmp_path):
     )
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        planner = Planner(
-            llm, registry, max_nodes=10, max_retries=2,
-        )
-        ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
-        thinking, tool_call = await collect_plan(planner, "研究并写一份报告", ctx)
+        ctx = make_func_ctx(registry)
+        thinking, tool_call = await collect_plan(llm, registry, "研究并写一份报告", ctx)
         assert thinking == "思考：将请求拆解为 1 个节点。"
         draft = tool_call.args
         assert isinstance(draft, PlanDraft)
@@ -160,11 +158,8 @@ async def test_planner_retries_with_feedback(tmp_path):
     llm = FakeLLM(structured_results=[bad, good])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        planner = Planner(
-            llm, registry, max_nodes=10, max_retries=2,
-        )
-        ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
-        thinking, tool_call = await collect_plan(planner, "x", ctx)
+        ctx = make_func_ctx(registry)
+        thinking, tool_call = await collect_plan(llm, registry, "x", ctx)
         assert "unknown skill" in llm.stream_calls[1]["user"]
         assert thinking == "思考：将请求拆解为 1 个节点。" * 2
     finally:
@@ -177,12 +172,9 @@ async def test_planner_fails_after_retries(tmp_path):
     llm = FakeLLM(structured_results=[bad, bad, bad])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        planner = Planner(
-            llm, registry, max_nodes=10, max_retries=2,
-        )
-        ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
+        ctx = make_func_ctx(registry)
         with pytest.raises(PlanningFailed):
-            await collect_plan(planner, "x", ctx)
+            await collect_plan(llm, registry, "x", ctx)
         assert len(llm.stream_calls) == 3
     finally:
         await remote.close()
@@ -192,10 +184,9 @@ async def test_planner_fails_after_retries(tmp_path):
 async def test_planner_rejects_when_no_agents(tmp_path):
     db, remote, registry = await make_registry(tmp_path, [])
     try:
-        planner = Planner(FakeLLM(), registry)
-        ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
+        ctx = make_func_ctx(registry)
         with pytest.raises(PlanningFailed, match="no agents"):
-            await collect_plan(planner, "x", ctx)
+            await collect_plan(FakeLLM(), registry, "x", ctx)
     finally:
         await remote.close()
         await db.close()
@@ -209,11 +200,8 @@ async def test_planner_passes_constrained_schema_to_tool(tmp_path):
     )
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        planner = Planner(
-            llm, registry, max_nodes=10, max_retries=2,
-        )
-        ctx = FunctionContext(executor=MockExecutor(registry), runtime=None)  # type: ignore[arg-type]
-        await collect_plan(planner, "x", ctx)
+        ctx = make_func_ctx(registry)
+        await collect_plan(llm, registry, "x", ctx)
         call = llm.stream_calls[0]
         tool = call["tools"][0]
         assert tool.name == "create_plan"

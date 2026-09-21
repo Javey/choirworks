@@ -14,7 +14,7 @@ from choirworks.a2a.rewind import (
     restore_state,
 )
 from choirworks.a2a.room import A2A_ROOM_URI
-from choirworks.a2a.state import OrchestrationState
+from choirworks.a2a.state import OrchestrationState, state_to_json
 
 
 def _marker(before: str, cut: str) -> RewindMarker:
@@ -28,7 +28,7 @@ def _task(task_id: str, *, state: OrchestrationState | None = None) -> Task:
         status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
     )
     if state is not None:
-        ParseDict({"choirworks.state": state.to_json()}, task.metadata)
+        ParseDict({"choirworks.state": state_to_json(state)}, task.metadata)
     return task
 
 

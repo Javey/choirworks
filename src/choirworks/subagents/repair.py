@@ -1,44 +1,43 @@
+"""``repair`` — produce an incremental patch for a failed plan.
+
+Given the set of failed nodes, the LLM returns an ``OutcomeDecision``
+with ``intent="revise"`` and a :class:`PlanPatch`.  No retries —
+repair is best-effort, and a missing tool call yields ``None``.
+"""
+
 from __future__ import annotations
 
 from choirworks.a2a.context import OrchestrationContext
 from choirworks.a2a.helpers import as_model
-from choirworks.subagents.base import InternalSubagent
-from choirworks.tools.base import AgentFunction
+from choirworks.subagents.base import Subagent
+from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (
     REPAIR_SYSTEM,
     OutcomeDecision,
-    OutcomeDecisionTool,
     outcome_decision_schema,
+    outcome_decision_tool,
 )
 
 
-class RepairSubagent(InternalSubagent):
-    """``repair`` — produce an incremental patch for a failed plan.
+async def build_repair_tools(
+    ctx: OrchestrationContext, **kwargs: object
+) -> list[AgentFunction]:
+    agents = await ctx.registry.list()
+    schema = outcome_decision_schema([a.name for a in agents])
+    return [outcome_decision_tool(schema)]
 
-    Given the set of failed nodes, the LLM returns an ``OutcomeDecision``
-    with ``intent="revise"`` and a :class:`PlanPatch`.  No retries —
-    repair is best-effort.
-    """
 
-    name = "repair"
-    system_prompt = REPAIR_SYSTEM
-    tool_name = "OutcomeDecision"
-    max_retries = 0
+def _process_repair(tool_call: ToolCallResult | None) -> OutcomeDecision | None:
+    if tool_call is None:
+        return None
+    return as_model(tool_call, OutcomeDecision)
 
-    async def _build_tools(
-        self, ctx: OrchestrationContext, **kwargs: object
-    ) -> list[AgentFunction]:
-        agents = await ctx.registry.list()
-        schema = outcome_decision_schema([a.name for a in agents])
-        return [OutcomeDecisionTool(schema)]
 
-    async def run(
-        self,
-        ctx: OrchestrationContext,
-        user: str,
-        **kwargs: object,
-    ) -> OutcomeDecision | None:
-        tool_call = await super().run(ctx, user, **kwargs)
-        if tool_call is None:
-            return None
-        return as_model(tool_call, OutcomeDecision)
+REPAIR_SUBAGENT: Subagent[OutcomeDecision | None] = Subagent(
+    name="repair",
+    system_prompt=REPAIR_SYSTEM,
+    tool_name="OutcomeDecision",
+    build_tools=build_repair_tools,
+    process=_process_repair,
+    max_retries=0,
+)

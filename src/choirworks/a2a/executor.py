@@ -4,7 +4,6 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any
 
 from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -18,6 +17,7 @@ from a2a.types.a2a_pb2 import (
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
+from choirworks.a2a.deps import Deps
 from choirworks.a2a.events import (
     emit_event,
     emit_function_call,
@@ -27,36 +27,34 @@ from choirworks.a2a.events import (
     emit_thought_chunk,
 )
 from choirworks.a2a.helpers import join_members, status_update
-from choirworks.a2a.intervention import InterventionManager
-from choirworks.a2a.node_executor import NodeExecutor
-from choirworks.a2a.patch import PlanPatch
+from choirworks.a2a.intervention import answer_intervention
+from choirworks.a2a.patch import PatchResult, PlanPatch
 from choirworks.a2a.registry import AgentRegistry
-from choirworks.a2a.remote_caller import RemoteAgentCaller
-from choirworks.a2a.repair import RepairManager
+from choirworks.a2a.repair import apply_patch_locked
 from choirworks.a2a.room import RoomOptions, room_options
-from choirworks.a2a.runner import PlanRunner
+from choirworks.a2a.runner import start_runner
 from choirworks.a2a.session import SessionManager, SessionRuntime
 from choirworks.a2a.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
+    active_nodes,
+    blocked_nodes,
+    enqueue,
+    has_pending_work,
+    normalize_cancel_requests,
+    pending_interventions,
+    start_new_plan,
 )
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.planner import PlanDraft, Planner, PlanningFailed
+from choirworks.core.planner import PlanDraft, PlanningFailed, plan
 from choirworks.store.contexts import ContextStore
-from choirworks.subagents import (
-    AssistanceSubagent,
-    OutcomeSubagent,
-    PlannerSubagent,
-    RepairSubagent,
-)
 from choirworks.tools import (
     FunctionContext,
     ToolCallResult,
-    ask_user_func,
     create_plan_func,
-    revise_plan_func,
 )
+from choirworks.tools.capabilities import ToolEffects
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +75,15 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     ``execute()`` routes each inbound message and returns quickly; node work
     runs in background runners, so multiple agents can work and chat at once.
 
-    This class is now a thin A2A protocol layer that delegates to extracted
-    components (SessionManager, PlanRunner, NodeExecutor,
-    subagents, etc.).  Proxy methods retain backward compatibility with
-    tools that access ``ctx.executor._xxx``.
+    This class is a thin A2A protocol layer: it wires the long-lived
+    collaborators into :class:`Deps` and delegates all orchestration work to
+    module-level functions.
     """
 
     def __init__(
         self,
         registry: AgentRegistry,
         remote: RemoteAgentClient,
-        planner: Planner,
         llm: LiteLLMClient,
         *,
         max_parallel: int = 5,
@@ -97,13 +93,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         max_derived_nodes: int = 5,
         max_revisions: int = 3,
         replan_on_failure: bool = True,
+        max_plan_nodes: int = 20,
+        max_plan_retries: int = 2,
         compaction_threshold: float = 0.8,
         compaction_retention: int = 10,
     ):
-        self._registry = registry
-        self._remote = remote
-        self._planner = planner
-        self._llm = llm
         self._config = ExecutorConfig(
             max_parallel=max_parallel,
             node_timeout=node_timeout,
@@ -112,6 +106,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             max_derived_nodes=max_derived_nodes,
             max_revisions=max_revisions,
             replan_on_failure=replan_on_failure,
+            max_nodes=max_plan_nodes,
+            max_plan_retries=max_plan_retries,
         )
 
         self._brief_builder = ContextBriefBuilder(
@@ -120,41 +116,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             compaction_retention=compaction_retention,
         )
 
-        # --- Components ---
         self._session_mgr = SessionManager()
-        self._remote_caller = RemoteAgentCaller(remote)
-
-        # Subagents
-        self._planner_subagent = PlannerSubagent(llm)
-        self._outcome_subagent = OutcomeSubagent(llm)
-        self._assistance_subagent = AssistanceSubagent(llm)
-        self._repair_subagent = RepairSubagent(llm)
-
-        self._repair_mgr = RepairManager(
-            self._session_mgr,
-            self._repair_subagent,
-            revise_plan_func,
-        )
-        self._intervention_mgr = InterventionManager(
-            self._session_mgr,
-            self._assistance_subagent,
-            ask_user_func,
-            self._remote_caller,
-            self._config,
-        )
-        self._node_executor = NodeExecutor(
-            self._session_mgr,
-            self._remote_caller,
-            self._outcome_subagent,
-            self._repair_mgr,
-            self._config,
-        )
-        self._runner = PlanRunner(
-            self._session_mgr,
-            self._node_executor,
-            self._intervention_mgr,
-            self._repair_mgr,
-            self._config,
+        self._deps = Deps(
+            registry=registry,
+            remote=remote,
+            llm=llm,
+            sessions=self._session_mgr,
+            config=self._config,
         )
 
     # ------------------------------------------------------------- lifecycle
@@ -168,10 +136,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     @property
     def _sessions(self) -> dict[str, SessionRuntime]:
         return self._session_mgr.sessions
-
-    @property
-    def _max_derived_nodes(self) -> int:
-        return self._config.max_derived_nodes
 
     def session_is_active(self, context_id: str) -> bool:
         return self._session_mgr.session_is_active(context_id)
@@ -215,12 +179,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         async with runtime.lock:
             state = runtime.state
-            if state.pending_interventions():
+            if pending_interventions(state):
                 if text:
                     orch_ctx = self._build_ctx(runtime)
-                    await self._intervention_mgr.answer_intervention(
-                        orch_ctx, text
-                    )
+                    await answer_intervention(orch_ctx, text)
                     if getattr(runtime, "runner_start_requested", False):
                         runtime.runner_start_requested = False
                         self._start_runner(runtime)
@@ -230,7 +192,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 await self._route_message(runtime, text, room)
                 return
 
-            if state.has_pending_work():
+            if has_pending_work(state):
                 await self._route_message(runtime, text, room)
                 self._start_runner(runtime)
                 return
@@ -266,7 +228,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await self._persist(runtime)
             for node in list(state.nodes.values()):
                 if node.status == "canceled" and node.a2a_task_id:
-                    await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
+                    await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
         self._session_mgr.evict_session(context_id)
 
     async def shutdown(self) -> None:
@@ -301,7 +263,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         await self._resume(runtime)
 
     async def _resume(self, runtime: SessionRuntime) -> None:
-        expired = runtime.state.normalize_cancel_requests()
+        expired = normalize_cancel_requests(runtime.state)
         if expired:
             ctx = self._build_ctx(runtime)
             await emit_state_delta(ctx, interventions={
@@ -323,18 +285,18 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
         runtime.runner_start_requested = False
-        return OrchestrationContext(
-            runtime=runtime,
-            registry=self._registry,
-            llm=self._llm,
-            config=self._config,
-            session_mgr=self._session_mgr,
-            executor=self,
+        effects = ToolEffects(
+            max_derived_nodes=self._config.max_derived_nodes,
+            join_members=lambda names, reason: self._join_members(
+                runtime, names, reason
+            ),
+            persist=lambda: self._persist(runtime),
+            apply_patch_locked=lambda patch: self._apply_patch_locked(runtime, patch),
         )
+        return OrchestrationContext(runtime=runtime, deps=self._deps, effects=effects)
 
     def _start_runner(self, runtime: SessionRuntime) -> None:
-        ctx = self._build_ctx(runtime)
-        self._runner.start_runner(ctx)
+        start_runner(self._build_ctx(runtime))
 
     async def _stream_plan(
         self,
@@ -353,8 +315,15 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         thought_id = uuid.uuid4().hex
         text_id = uuid.uuid4().hex
         orch_ctx = self._build_ctx(runtime)
-        async for item in self._planner.plan(
-            request, ctx=ctx, reason=reason, context=context
+        async for item in plan(
+            self._deps.llm,
+            self._deps.registry,
+            request,
+            ctx=ctx,
+            reason=reason,
+            context=context,
+            max_nodes=self._config.max_nodes,
+            max_retries=self._config.max_plan_retries,
         ):
             if isinstance(item, ToolCallResult):
                 tool_call = item
@@ -413,12 +382,15 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         room: RoomOptions | None = None,
     ) -> None:
         state = runtime.state
-        state.start_new_plan(f"plan-{uuid.uuid4().hex[:8]}")
+        start_new_plan(state, f"plan-{uuid.uuid4().hex[:8]}")
         context_brief = await self._brief_builder.build(
             runtime.context_id, exclude_task_id=runtime.task_id
         )
         create_plan = create_plan_func
-        ctx = FunctionContext(executor=self, runtime=runtime)
+        orch_ctx = self._build_ctx(runtime)
+        ctx = FunctionContext(
+            runtime=runtime, registry=orch_ctx.registry, effects=orch_ctx.effects
+        )
         try:
             tool_call = await self._stream_plan(
                 runtime, text, ctx, context=context_brief or None
@@ -452,7 +424,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             state_name=TaskState.TASK_STATE_WORKING,
         )
 
-        agents = await self._registry.list()
+        agents = await self._deps.registry.list()
         agent_urls = {agent.name: agent.card_url for agent in agents}
         mention_targets = [
             name
@@ -475,7 +447,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         state = runtime.state
         if not text:
             return
-        active = state.active_nodes()
+        active = active_nodes(state)
         quote_id = room.get("quote_id")
         interrupt = bool(room.get("interrupt"))
 
@@ -490,7 +462,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 None,
             )
             if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
-                state.enqueue(
+                enqueue(state, 
                     quoted_node.id, text, sender="user", quote_id=str(quote_id)
                 )
                 await self._persist(runtime)
@@ -502,14 +474,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if interrupt and active:
             node = active[0]
             if node.a2a_task_id:
-                await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
+                await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
             node.status = "canceled"
-            invalidated = state.blocked_nodes()
+            invalidated = blocked_nodes(state)
             for blocked in invalidated:
                 blocked.status = "invalidated"
-            from choirworks.a2a.events import emit_state_delta as _esd
             ctx = self._build_ctx(runtime)
-            await _esd(ctx, nodes={
+            await emit_state_delta(ctx, nodes={
                 node.id: {"status": "canceled", "agent_name": node.agent_name},
                 **{b.id: {"status": "invalidated"} for b in invalidated},
             })
@@ -521,7 +492,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             None,
         )
         if target is not None:
-            state.enqueue(
+            enqueue(state, 
                 target.id,
                 text,
                 sender="user",
@@ -565,23 +536,13 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         await self._persist(runtime)
         self._start_runner(runtime)
 
-    # ------------------------------------------------------------ proxies
-    # Backward-compatible proxy methods for tools that access
-    # ``ctx.executor._xxx`` via FunctionContext.
-
-    async def _emit_event(
-        self,
-        runtime: SessionRuntime,
-        kind: str,
-        state_name: TaskState = TaskState.TASK_STATE_WORKING,
-        **metadata: Any,
-    ) -> None:
-        ctx = self._build_ctx(runtime)
-        await emit_event(ctx, kind, state_name, **metadata)
+    # ------------------------------------------------------- effect bindings
+    # ToolEffects closures bind a runtime to the module-level functions, so
+    # tools never see the executor.
 
     async def _persist(self, runtime: SessionRuntime) -> None:
         ctx = self._build_ctx(runtime)
-        await self._session_mgr.persist(ctx)
+        await ctx.sessions.persist(ctx)
 
     async def _join_members(
         self,
@@ -594,6 +555,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     async def _apply_patch_locked(
         self, runtime: SessionRuntime, patch: PlanPatch
-    ) -> Any:
+    ) -> PatchResult:
         ctx = self._build_ctx(runtime)
-        return await self._repair_mgr.apply_patch_locked(ctx, patch)
+        return await apply_patch_locked(ctx, patch)

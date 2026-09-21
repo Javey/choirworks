@@ -65,23 +65,23 @@ def outcome_decision_schema(
     return create_model("OutcomeDecision", __base__=OutcomeDecision, **fields)
 
 
-class OutcomeDecisionTool(AgentFunction):
+def outcome_decision_tool(schema: type[OutcomeDecision]) -> AgentFunction:
     """``OutcomeDecision`` — structured-output tool for interpreting agent replies.
 
     Has no side effects; the caller reads the validated ``OutcomeDecision``
-    from :class:`ToolCallResult.args` and acts on it.
+    from :class:`ToolCallResult.args` and acts on it.  The schema is captured
+    in a closure so the dynamic enum constraint stays per-call.
     """
 
-    name = "OutcomeDecision"
-    description = "Decide what an agent's final reply means for the plan."
+    async def args_model(ctx: FunctionContext) -> type[BaseModel]:
+        return schema
 
-    def __init__(self, schema: type[OutcomeDecision]):
-        self._schema = schema
-
-    async def args_model(self, ctx: FunctionContext) -> type[BaseModel]:
-        return self._schema
-
-    async def execute(
-        self, ctx: FunctionContext, args: BaseModel
-    ) -> FunctionResult:
+    async def execute(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
         return FunctionResult(success=True)
+
+    return AgentFunction(
+        name="OutcomeDecision",
+        description="Decide what an agent's final reply means for the plan.",
+        args_model=args_model,
+        execute=execute,
+    )

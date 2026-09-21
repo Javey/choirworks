@@ -101,85 +101,74 @@ Rules:
   create_plan with an empty nodes list."""
 
 
-class Planner:
-    def __init__(
-        self,
-        llm: LiteLLMClient,
-        registry: AgentRegistry,
-        *,
-        max_nodes: int = 20,
-        max_retries: int = 2,
-    ):
-        self._llm = llm
-        self._registry = registry
-        self._max_nodes = max_nodes
-        self._max_retries = max_retries
+async def plan(
+    llm: LiteLLMClient,
+    registry: AgentRegistry,
+    request: str,
+    *,
+    ctx: FunctionContext,
+    reason: str | None = None,
+    context: str | None = None,
+    max_nodes: int = 20,
+    max_retries: int = 2,
+) -> AsyncIterator[Delta | ToolCallResult]:
+    """Stream the planning thought process, then yield the tool call.
 
-    async def plan(
-        self,
-        request: str,
-        *,
-        ctx: FunctionContext,
-        reason: str | None = None,
-        context: str | None = None,
-    ) -> AsyncIterator[Delta | ToolCallResult]:
-        """Stream the planning thought process, then yield the tool call.
-
-        Yields:
-            ``Delta`` objects (streaming chunks) followed by exactly one
-            ``ToolCallResult`` whose ``args`` is a :class:`PlanDraft`.
-            The caller validates and executes the tool.
-        """
-        agents = await self._registry.list()
-        if not agents:
-            raise PlanningFailed(
-                "no agents registered; register at least one A2A agent first"
-            )
-        capabilities = build_planner_capabilities(agents)
-        user = build_planner_user_message(
-            request, capabilities, reason=reason, context=context
-        )
-
-        last_error: Exception | None = None
-        from choirworks.tools.base import ToolCallResult  # runtime: avoid circular import
-
-        for attempt in range(self._max_retries + 1):
-            if attempt > 0:
-                logger.warning(
-                    "plan validation failed (attempt %d/%d): %s",
-                    attempt,
-                    self._max_retries + 1,
-                    last_error,
-                )
-
-            tool_call: ToolCallResult | None = None
-            try:
-                from choirworks.tools.create_plan import create_plan_func
-                async for item in self._llm.stream(
-                    system=SYSTEM_PROMPT,
-                    user=user,
-                    tools=[create_plan_func],
-                    ctx=ctx,
-                    tool_choice={"type": "function", "function": {"name": "create_plan"}},
-                ):
-                    if isinstance(item, ToolCallResult):
-                        tool_call = item
-                    else:
-                        yield item
-                if tool_call is None:
-                    raise ValueError("model did not call the create_plan tool")
-                validate_plan(tool_call.args, agents, self._max_nodes)
-            except (PlanValidationError, ValidationError, ValueError) as exc:
-                last_error = exc
-                user += (
-                    f"\n\nPrevious plan was invalid: {exc}."
-                    " Return a corrected plan."
-                )
-                continue
-
-            yield tool_call
-            return
-
+    Yields:
+        ``Delta`` objects (streaming chunks) followed by exactly one
+        ``ToolCallResult`` whose ``args`` is a :class:`PlanDraft`.
+        The caller validates and executes the tool.
+    """
+    agents = await registry.list()
+    if not agents:
         raise PlanningFailed(
-            f"planner failed after {self._max_retries + 1} attempts: {last_error}"
+            "no agents registered; register at least one A2A agent first"
         )
+    capabilities = build_planner_capabilities(agents)
+    user = build_planner_user_message(
+        request, capabilities, reason=reason, context=context
+    )
+
+    last_error: Exception | None = None
+    from choirworks.tools.base import ToolCallResult  # runtime: avoid circular import
+
+    for attempt in range(max_retries + 1):
+        if attempt > 0:
+            logger.warning(
+                "plan validation failed (attempt %d/%d): %s",
+                attempt,
+                max_retries + 1,
+                last_error,
+            )
+
+        tool_call: ToolCallResult | None = None
+        try:
+            from choirworks.tools.create_plan import create_plan_func
+            async for item in llm.stream(
+                system=SYSTEM_PROMPT,
+                user=user,
+                tools=[create_plan_func],
+                ctx=ctx,
+                tool_choice={"type": "function", "function": {"name": "create_plan"}},
+            ):
+                if isinstance(item, ToolCallResult):
+                    tool_call = item
+                else:
+                    yield item
+            if tool_call is None:
+                raise ValueError("model did not call the create_plan tool")
+            validate_plan(tool_call.args, agents, max_nodes)
+        except (PlanValidationError, ValidationError, ValueError) as exc:
+            last_error = exc
+            user += (
+                f"\n\nPrevious plan was invalid: {exc}."
+                " Return a corrected plan."
+            )
+            continue
+
+        yield tool_call
+        return
+
+    raise PlanningFailed(
+        f"planner failed after {max_retries + 1} attempts: {last_error}"
+    )

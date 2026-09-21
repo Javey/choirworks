@@ -6,7 +6,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.executor import _is_resume_message
 from choirworks.a2a.recovery import recover_tasks
-from choirworks.a2a.state import OrchestrationState
+from choirworks.a2a.state import OrchestrationState, state_to_json
 
 
 def _resume_message():
@@ -24,7 +24,7 @@ def _persisted_task(task_id: str = "t1", context_id: str = "c1") -> Task:
         context_id=context_id,
         status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
     )
-    ParseDict({"choirworks.state": state.to_json()}, task.metadata)
+    ParseDict({"choirworks.state": state_to_json(state)}, task.metadata)
     return task
 
 
@@ -98,7 +98,7 @@ async def test_recover_tasks_uses_context_state_without_task_snapshot():
         context_id="c1",
         status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
     )
-    contexts = FakeContextStore({"c1": OrchestrationState(plan_id="p1").to_json()})
+    contexts = FakeContextStore({"c1": state_to_json(OrchestrationState(plan_id="p1"))})
 
     recovered = await recover_tasks(handler, FakeTaskStore([task]), contexts)
 
@@ -128,7 +128,7 @@ async def test_recover_tasks_skips_hidden_tasks():
     handler = RecordingHandler()
     hidden_id = "t2"
     contexts = FakeContextStore(
-        {"c1": OrchestrationState(plan_id="p1").to_json()},
+        {"c1": state_to_json(OrchestrationState(plan_id="p1"))},
         markers={
             "c1": json.dumps([
                 {"before_task_id": hidden_id, "cut_task_id": hidden_id}

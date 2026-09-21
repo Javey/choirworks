@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from choirworks.a2a.patch import PatchNode, PlanPatch, apply_patch
-from choirworks.a2a.state import NodeState, OrchestrationState
+from choirworks.a2a.state import NodeState, OrchestrationState, all_completed, has_pending_work
 
 
 def node(node_id: str, **kwargs) -> NodeState:
@@ -123,8 +123,8 @@ def test_invalidated_nodes_do_not_block_completion():
         node("n1", status="completed"),
         node("n2", status="invalidated"),
     )
-    assert state.all_completed()
-    assert not state.has_pending_work()
+    assert all_completed(state)
+    assert not has_pending_work(state)
 
 
 def test_canceled_nodes_settle_the_plan():
@@ -132,5 +132,5 @@ def test_canceled_nodes_settle_the_plan():
         node("n1", status="completed"),
         node("n2", status="canceled"),
     )
-    assert state.all_completed()
-    assert not state.has_pending_work()
+    assert all_completed(state)
+    assert not has_pending_work(state)

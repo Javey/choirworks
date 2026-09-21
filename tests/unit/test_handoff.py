@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from choirworks.a2a.state import NodeState, OrchestrationState
+from choirworks.a2a.state import NodeState, OrchestrationState, add_member
 from choirworks.core.context import (
     HANDOFF_MAX_CHARS,
     RECEIPT_CONVENTION,
@@ -88,8 +88,8 @@ def test_dispatch_text_truncates_long_dep_output():
 def test_dispatch_text_roster_only_known_members():
     target = node("n2", input_text="撰写报告")
     state = state_with(target)
-    state.add_member("researcher", "http://researcher", "plan")
-    state.add_member("ghost", "http://ghost", "plan")
+    add_member(state, "researcher", "http://researcher", "plan")
+    add_member(state, "ghost", "http://ghost", "plan")
     text = build_dispatch_text(
         target,
         state,

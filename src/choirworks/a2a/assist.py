@@ -6,7 +6,7 @@ import re
 from choirworks.a2a.context import OrchestrationContext
 from choirworks.a2a.events import emit_state_delta
 from choirworks.a2a.helpers import execute_function, join_members
-from choirworks.a2a.state import NodeState
+from choirworks.a2a.state import NodeState, assist_nodes_for
 from choirworks.core.context import build_assist_input
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
@@ -26,7 +26,7 @@ async def arbitrate_mentions(
     for name in dict.fromkeys(re.findall(r"@([A-Za-z0-9_-]+)", node.output)):
         if name == node.agent_name or name not in known:
             continue
-        if state.assist_nodes_for(name, node.id):
+        if assist_nodes_for(state, name, node.id):
             continue
         if state.derived_count >= ctx.config.max_derived_nodes:
             return
@@ -51,7 +51,7 @@ async def arbitrate_mentions(
                 "agent_name": helper.agent_name,
             },
         })
-        await ctx.session_mgr.persist(ctx)
+        await ctx.sessions.persist(ctx)
         ctx.runtime.runner_start_requested = True
 
 

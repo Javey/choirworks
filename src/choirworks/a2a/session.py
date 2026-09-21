@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from a2a.server.events import EventQueue
 
 from choirworks.a2a.events import emit_event
-from choirworks.a2a.state import STATE_JSON_KEY, OrchestrationState
+from choirworks.a2a.state import STATE_JSON_KEY, OrchestrationState, state_from_json, state_to_json
 from choirworks.store.contexts import ContextStore
+
+if TYPE_CHECKING:
+    from choirworks.a2a.context import OrchestrationContext
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +58,7 @@ class SessionManager:
         if record is None:
             return None
         try:
-            return OrchestrationState.from_json(record.state)
+            return state_from_json(record.state)
         except (ValueError, TypeError):
             logger.warning("Invalid context state for %s", context_id)
             return None
@@ -99,9 +102,9 @@ class SessionManager:
     def drop_session(self, context_id: str) -> None:
         self.evict_session(context_id)
 
-    async def persist(self, ctx: object) -> None:
-        runtime: SessionRuntime = ctx.runtime  # type: ignore[attr-defined]
-        snapshot = runtime.state.to_json()
+    async def persist(self, ctx: OrchestrationContext) -> None:
+        runtime = ctx.runtime
+        snapshot = state_to_json(runtime.state)
         if self._context_store is not None:
             await self._context_store.upsert_state(runtime.context_id, snapshot)
         await emit_event(

@@ -6,16 +6,18 @@ from typing import TYPE_CHECKING
 
 from a2a.server.events import EventQueue
 
-from choirworks.a2a.registry import AgentRegistry
+from choirworks.a2a.deps import Deps
 from choirworks.a2a.session import SessionManager, SessionRuntime
 from choirworks.a2a.state import OrchestrationState
-from choirworks.core.llm import LiteLLMClient
+from choirworks.tools.capabilities import ToolEffects
 
 if TYPE_CHECKING:
-    from choirworks.a2a.executor import ChoirWorksAgentExecutor
+    from choirworks.a2a.client import RemoteAgentClient
+    from choirworks.a2a.registry import AgentRegistry
+    from choirworks.core.llm import LiteLLMClient
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ExecutorConfig:
     max_parallel: int = 5
     node_timeout: float = 600.0
@@ -28,14 +30,17 @@ class ExecutorConfig:
     max_plan_retries: int = 2
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class OrchestrationContext:
+    """One turn's orchestration context: runtime + deps + tool effects.
+
+    Immutable; shared read-only collaborators live in :class:`Deps` and are
+    re-exposed as properties so call sites stay terse.
+    """
+
     runtime: SessionRuntime
-    registry: AgentRegistry
-    llm: LiteLLMClient
-    config: ExecutorConfig
-    session_mgr: SessionManager
-    executor: ChoirWorksAgentExecutor | None = None
+    deps: Deps
+    effects: ToolEffects
 
     @property
     def state(self) -> OrchestrationState:
@@ -56,3 +61,23 @@ class OrchestrationContext:
     @property
     def lock(self) -> asyncio.Lock:
         return self.runtime.lock
+
+    @property
+    def registry(self) -> AgentRegistry:
+        return self.deps.registry
+
+    @property
+    def remote(self) -> RemoteAgentClient:
+        return self.deps.remote
+
+    @property
+    def llm(self) -> LiteLLMClient:
+        return self.deps.llm
+
+    @property
+    def sessions(self) -> SessionManager:
+        return self.deps.sessions
+
+    @property
+    def config(self) -> ExecutorConfig:
+        return self.deps.config

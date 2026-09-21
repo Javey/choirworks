@@ -1,12 +1,43 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from litellm.types.utils import Delta
 
 from choirworks.core.planner import PlanDraft
+from choirworks.models.domain import AgentRecord
 from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+from choirworks.tools.capabilities import ToolEffects
+
+
+class FakeRegistry:
+    """Stub registry exposing only ``list()`` for tool/subagent tests."""
+
+    def __init__(self, agents: Sequence[AgentRecord] | None = None):
+        self._agents = list(agents or [])
+
+    async def list(self) -> list[AgentRecord]:
+        return list(self._agents)
+
+
+async def _noop(*args: object, **kwargs: object) -> None:
+    return None
+
+
+def make_func_ctx(registry: object, *, max_derived_nodes: int = 5) -> FunctionContext:
+    """Build a FunctionContext for a fake executor: no runtime, no-op effects."""
+    effects = ToolEffects(
+        max_derived_nodes=max_derived_nodes,
+        join_members=_noop,
+        persist=_noop,
+        apply_patch_locked=_noop,  # type: ignore[arg-type]
+    )
+    return FunctionContext(
+        runtime=None,  # type: ignore[arg-type]
+        registry=registry,  # type: ignore[arg-type]
+        effects=effects,
+    )
 
 
 class FakeLLM:
