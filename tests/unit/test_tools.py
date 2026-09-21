@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from choirworks.a2a.patch import PatchResult, PlanPatch
-from choirworks.a2a.state import NodeState, OrchestrationState, pending_interventions
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.patch import PatchResult, PlanPatch
+from choirworks.orchestration.state import NodeState, OrchestrationState, pending_interventions
 from choirworks.tools import (
     AskUserArgs,
     CallSubagentArgs,

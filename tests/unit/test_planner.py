@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 import pytest
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.a2a.registry import AgentRegistry
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import (
     PlanDraft,
@@ -15,6 +14,7 @@ from choirworks.core.planner import (
     validate_plan,
 )
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.registry import AgentRegistry
 from choirworks.store.db import Database
 from choirworks.tools import FunctionContext, ToolCallResult
 from tests.support.fakes import FakeLLM, make_func_ctx

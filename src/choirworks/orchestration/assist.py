@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import re
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
-from choirworks.a2a.helpers import execute_function, join_members
-from choirworks.a2a.state import NodeState, assist_nodes_for
 from choirworks.core.context import build_assist_input
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.flows import execute_function, join_members
+from choirworks.orchestration.state import NodeState, assist_nodes_for
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
 logger = logging.getLogger(__name__)

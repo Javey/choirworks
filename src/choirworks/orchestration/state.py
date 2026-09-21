@@ -6,7 +6,7 @@ from typing import Any, TypedDict
 
 from a2a.types.a2a_pb2 import Task
 
-from choirworks.a2a.helpers import now_iso, truncate
+from choirworks.core.util import now_iso, truncate
 
 STATE_JSON_KEY = "choirworks.state"
 

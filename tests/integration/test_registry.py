@@ -1,7 +1,7 @@
 import pytest
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.a2a.registry import AgentRegistry, DuplicateAgentName
+from choirworks.orchestration.registry import AgentRegistry, DuplicateAgentName
 from choirworks.store.db import Database
 
 

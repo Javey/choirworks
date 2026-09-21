@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
 from choirworks.a2a.room import RoomOptions
-from choirworks.a2a.state import (
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
     active_nodes,
@@ -74,7 +74,7 @@ async def route_message(
         await ctx.sessions.persist(ctx)
         return
 
-    from choirworks.a2a.planning import plan_and_launch
+    from choirworks.orchestration.planning import plan_and_launch
     await plan_and_launch(ctx, text)
 
 

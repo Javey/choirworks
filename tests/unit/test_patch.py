@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from choirworks.a2a.patch import PatchNode, PlanPatch, apply_patch
-from choirworks.a2a.state import NodeState, OrchestrationState, all_completed, has_pending_work
+from choirworks.orchestration.patch import PatchNode, PlanPatch, apply_patch
+from choirworks.orchestration.state import (
+    NodeState,
+    OrchestrationState,
+    all_completed,
+    has_pending_work,
+)
 
 
 def node(node_id: str, **kwargs) -> NodeState:

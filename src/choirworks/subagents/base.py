@@ -4,8 +4,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from choirworks.a2a.context import OrchestrationContext
 from choirworks.core.llm import LiteLLMClient
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
 
 logger = logging.getLogger(__name__)

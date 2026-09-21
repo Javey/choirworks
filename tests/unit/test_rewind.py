@@ -4,7 +4,8 @@ import pytest
 from a2a.types.a2a_pb2 import Message, Role, Task, TaskState, TaskStatus
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.rewind import (
+from choirworks.a2a.room import A2A_ROOM_URI
+from choirworks.orchestration.rewind import (
     RewindMarker,
     RewindUnavailable,
     checkpoint_before,
@@ -13,8 +14,7 @@ from choirworks.a2a.rewind import (
     parse_markers,
     restore_state,
 )
-from choirworks.a2a.room import A2A_ROOM_URI
-from choirworks.a2a.state import OrchestrationState, state_to_json
+from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
 def _marker(before: str, cut: str) -> RewindMarker:

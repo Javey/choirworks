@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
-from choirworks.a2a.state import NodeState, OrchestrationState
+from choirworks.orchestration.state import NodeState, OrchestrationState
 
 INVALIDATABLE_STATUSES = {"pending", "ready", "resume", "failed"}
 

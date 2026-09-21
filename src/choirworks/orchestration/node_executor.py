@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from choirworks.a2a.assist import arbitrate_mentions
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
-from choirworks.a2a.remote_caller import resume_remote, stream_remote
-from choirworks.a2a.repair import revise_plan
-from choirworks.a2a.routing import spawn_followup_node
-from choirworks.a2a.state import NodeState, expire_cancel_requests, take_queued
 from choirworks.core.context import build_continuation_text, build_dispatch_text
+from choirworks.orchestration.assist import arbitrate_mentions
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.remote_caller import resume_remote, stream_remote
+from choirworks.orchestration.repair import revise_plan
+from choirworks.orchestration.routing import spawn_followup_node
+from choirworks.orchestration.state import NodeState, expire_cancel_requests, take_queued
 from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
 from choirworks.tools.outcome_decision import OutcomeDecision
 
@@ -147,7 +147,7 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
 async def _interpret_outcome(
     ctx: OrchestrationContext, node: NodeState
 ) -> OutcomeDecision:
-    from choirworks.a2a.markers import parse_marker
+    from choirworks.orchestration.markers import parse_marker
     marker = parse_marker(node.output)
     if marker is not None:
         return OutcomeDecision(intent=marker.intent, question=marker.text)

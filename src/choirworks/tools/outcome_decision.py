@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, create_model
 
-from choirworks.a2a.patch import PlanPatch
+from choirworks.orchestration.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 OUTCOME_SYSTEM = """You are the orchestrator of a multi-agent group.

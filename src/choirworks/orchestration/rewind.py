@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from a2a.types.a2a_pb2 import Role, Task
 
 from choirworks.a2a.room import room_options
-from choirworks.a2a.state import OrchestrationState, load_state
+from choirworks.orchestration.state import OrchestrationState, load_state
 
 
 class RewindUnavailable(RuntimeError):

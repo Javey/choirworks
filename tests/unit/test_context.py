@@ -6,7 +6,6 @@ from a2a.types.a2a_pb2 import Role
 from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.room import A2A_ROOM_URI
-from choirworks.a2a.state import NodeState
 from choirworks.core.context import (
     ContextBriefBuilder,
     build_assist_input,
@@ -23,6 +22,7 @@ from choirworks.core.fencing import (
     QUOTED_CONTENT_PREAMBLE,
 )
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.state import NodeState
 from tests.support.fakes import FakeLLM
 
 

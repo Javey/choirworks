@@ -4,8 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, create_model
 
-from choirworks.a2a.state import NodeState
 from choirworks.core.context import build_peer_fallback_input
+from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 

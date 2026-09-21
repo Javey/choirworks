@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from choirworks.a2a.patch import PlanPatch
+from choirworks.orchestration.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 

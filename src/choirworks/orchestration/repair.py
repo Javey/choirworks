@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
-from choirworks.a2a.helpers import execute_function, join_members
-from choirworks.a2a.patch import PatchResult, PlanPatch, apply_patch
-from choirworks.a2a.state import add_cancel_request, failed_nodes
 from choirworks.core.context import build_repair_user
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.flows import execute_function, join_members
+from choirworks.orchestration.patch import PatchResult, PlanPatch, apply_patch
+from choirworks.orchestration.state import add_cancel_request, failed_nodes
 from choirworks.subagents import REPAIR_SUBAGENT, run_subagent
 from choirworks.tools import revise_plan_func
 from choirworks.tools.revise_plan import RevisePlanArgs

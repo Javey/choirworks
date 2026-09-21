@@ -15,27 +15,28 @@ from a2a.types.a2a_pb2 import (
 )
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.a2a.context import ExecutorConfig, OrchestrationContext
-from choirworks.a2a.deps import Deps
-from choirworks.a2a.events import emit_event, emit_state_delta
-from choirworks.a2a.helpers import join_members, status_update
-from choirworks.a2a.intervention import answer_intervention
-from choirworks.a2a.patch import PatchResult, PlanPatch
-from choirworks.a2a.planning import plan_and_launch
-from choirworks.a2a.registry import AgentRegistry
-from choirworks.a2a.repair import apply_patch_locked
 from choirworks.a2a.room import room_options
-from choirworks.a2a.routing import route_message
-from choirworks.a2a.runner import start_runner
-from choirworks.a2a.session import SessionManager, SessionRuntime
-from choirworks.a2a.state import (
+from choirworks.a2a.wire import status_update
+from choirworks.core.context import ContextBriefBuilder
+from choirworks.core.llm import LiteLLMClient
+from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
+from choirworks.orchestration.deps import Deps
+from choirworks.orchestration.events import emit_event, emit_state_delta
+from choirworks.orchestration.flows import join_members
+from choirworks.orchestration.intervention import answer_intervention
+from choirworks.orchestration.patch import PatchResult, PlanPatch
+from choirworks.orchestration.planning import plan_and_launch
+from choirworks.orchestration.registry import AgentRegistry
+from choirworks.orchestration.repair import apply_patch_locked
+from choirworks.orchestration.routing import route_message
+from choirworks.orchestration.runner import start_runner
+from choirworks.orchestration.session import SessionManager, SessionRuntime
+from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     has_pending_work,
     normalize_cancel_requests,
     pending_interventions,
 )
-from choirworks.core.context import ContextBriefBuilder
-from choirworks.core.llm import LiteLLMClient
 from choirworks.store.contexts import ContextStore
 from choirworks.tools.capabilities import ToolEffects
 

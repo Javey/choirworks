@@ -6,7 +6,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.executor import _is_resume_message
 from choirworks.a2a.recovery import recover_tasks
-from choirworks.a2a.state import OrchestrationState, state_to_json
+from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
 def _resume_message():

@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
-from choirworks.a2a.registry import AgentRegistry
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
 from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.registry import AgentRegistry
 
 if TYPE_CHECKING:
     from choirworks.tools.base import FunctionContext, ToolCallResult

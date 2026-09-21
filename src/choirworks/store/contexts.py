@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from choirworks.a2a.helpers import now_iso
+from choirworks.core.util import now_iso
 from choirworks.store.db import Database
 
 

@@ -5,19 +5,19 @@ import uuid
 
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import (
+from choirworks.a2a.room import RoomOptions
+from choirworks.core.planner import PlanDraft, PlanningFailed, plan
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import (
     emit_event,
     emit_function_call,
     emit_function_error,
     emit_text_chunk,
     emit_thought_chunk,
 )
-from choirworks.a2a.helpers import join_members
-from choirworks.a2a.room import RoomOptions
-from choirworks.a2a.runner import start_runner
-from choirworks.a2a.state import start_new_plan
-from choirworks.core.planner import PlanDraft, PlanningFailed, plan
+from choirworks.orchestration.flows import join_members
+from choirworks.orchestration.runner import start_runner
+from choirworks.orchestration.state import start_new_plan
 from choirworks.tools import FunctionContext, ToolCallResult, create_plan_func
 
 logger = logging.getLogger(__name__)

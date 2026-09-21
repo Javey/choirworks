@@ -15,8 +15,8 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.rewind import hidden_task_ids, parse_markers
-from choirworks.a2a.state import load_state
+from choirworks.orchestration.rewind import hidden_task_ids, parse_markers
+from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
 logger = logging.getLogger(__name__)

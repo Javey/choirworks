@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from choirworks.a2a.state import (
+from choirworks.orchestration.state import (
     NodeState,
     OrchestrationState,
     add_cancel_request,

@@ -5,15 +5,15 @@ import logging
 
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.a2a import intervention, repair
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import (
+from choirworks.orchestration import intervention, repair
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import (
     emit_event,
     emit_function_call,
     emit_state_delta,
 )
-from choirworks.a2a.node_executor import execute_node
-from choirworks.a2a.state import (
+from choirworks.orchestration.node_executor import execute_node
+from choirworks.orchestration.state import (
     NodeState,
     all_completed,
     failed_nodes,

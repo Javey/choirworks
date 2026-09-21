@@ -10,7 +10,6 @@ from a2a.server.tasks.task_store import TaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, Role
 
 from choirworks.a2a.room import message_text, room_options
-from choirworks.a2a.state import NodeState, OrchestrationState
 from choirworks.core.fencing import (
     QUOTED_CONTENT_PREAMBLE,
     cap_description,
@@ -18,6 +17,7 @@ from choirworks.core.fencing import (
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.state import NodeState, OrchestrationState
 
 MAX_PEER_CONTEXT = 2000
 HANDOFF_MAX_CHARS = 2000

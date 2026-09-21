@@ -13,10 +13,10 @@ from a2a.types.a2a_pb2 import (
     TaskState,
 )
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
-from choirworks.a2a.helpers import join_text, struct
-from choirworks.a2a.state import NodeState
+from choirworks.a2a.wire import join_text, struct
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.state import NodeState
 
 logger = logging.getLogger(__name__)
 

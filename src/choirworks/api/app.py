@@ -22,19 +22,19 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from choirworks.a2a.card import build_agent_card
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.executor import ChoirWorksAgentExecutor
-from choirworks.a2a.registry import AgentRegistry
-from choirworks.a2a.rewind import (
+from choirworks.api import agents as agents_routes
+from choirworks.api.replay import synthesize_replay_events
+from choirworks.config import Settings
+from choirworks.core.llm import LiteLLMClient
+from choirworks.orchestration.registry import AgentRegistry
+from choirworks.orchestration.rewind import (
     RewindUnavailable,
     hidden_task_ids,
     is_human_turn,
     parse_markers,
     restore_state,
 )
-from choirworks.a2a.state import state_to_json
-from choirworks.api import agents as agents_routes
-from choirworks.api.replay import synthesize_replay_events
-from choirworks.config import Settings
-from choirworks.core.llm import LiteLLMClient
+from choirworks.orchestration.state import state_to_json
 from choirworks.store.contexts import ContextStore
 from choirworks.store.db import Database
 

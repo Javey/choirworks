@@ -6,16 +6,16 @@ from typing import TYPE_CHECKING
 
 from a2a.server.events import EventQueue
 
-from choirworks.a2a.deps import Deps
-from choirworks.a2a.session import SessionManager, SessionRuntime
-from choirworks.a2a.state import OrchestrationState
+from choirworks.orchestration.deps import Deps
+from choirworks.orchestration.session import SessionManager, SessionRuntime
+from choirworks.orchestration.state import OrchestrationState
 from choirworks.tools.capabilities import ToolEffects
 
 if TYPE_CHECKING:
     from choirworks.a2a.client import RemoteAgentClient
-    from choirworks.a2a.registry import AgentRegistry
     from choirworks.core.context import ContextBriefBuilder
     from choirworks.core.llm import LiteLLMClient
+    from choirworks.orchestration.registry import AgentRegistry
 
 
 @dataclass(frozen=True, slots=True)

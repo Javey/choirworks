@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from choirworks.a2a.assist import spawn_assist
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.events import emit_state_delta
-from choirworks.a2a.helpers import execute_function
-from choirworks.a2a.remote_caller import cancel_remote_task
-from choirworks.a2a.state import (
+from choirworks.core.context import build_assistance_decision_user
+from choirworks.orchestration.assist import spawn_assist
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.flows import execute_function
+from choirworks.orchestration.remote_caller import cancel_remote_task
+from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
     add_intervention,
@@ -16,7 +17,6 @@ from choirworks.a2a.state import (
     pending_intervention_for,
     pending_interventions,
 )
-from choirworks.core.context import build_assistance_decision_user
 from choirworks.subagents import ASSISTANCE_SUBAGENT, run_subagent
 from choirworks.tools import ask_user_func
 from choirworks.tools.ask_user import AskUserArgs

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from choirworks.a2a.patch import PatchResult, PlanPatch
+    from choirworks.orchestration.patch import PatchResult, PlanPatch
 
 
 @dataclass(frozen=True, slots=True)

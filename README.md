@@ -12,8 +12,11 @@ ChoirWorks —— 多 Agent 协作工作群：人类像 CEO 一样提出目标�
 
 ## 架构（A2A SDK 唯一实现）
 
-- **协议层**：基于 `a2a-sdk` 的 A2A v1.0 Server（AgentCard / JSON-RPC / REST / SSE）。
-- **执行层**：`ChoirWorksAgentExecutor` 挂载在 SDK `DefaultRequestHandlerV2` 上，每个 A2A Task
+- **协议层（`a2a/`）**：基于 `a2a-sdk` 的 A2A v1.0 Server（AgentCard / JSON-RPC / REST / SSE）；
+  只放协议出入口：`card`（AgentCard）、`client`（南向调用）、`room`（群聊扩展 wire 契约）、
+  `wire`（protobuf 事件编码）、`executor`（`ChoirWorksAgentExecutor` 适配器）、`recovery`（启动恢复）。
+- **编排层（`orchestration/`）**：计划 DAG、节点调度、结果交接、人工介入、计划修订等业务核心。
+  `ChoirWorksAgentExecutor` 挂载在 SDK `DefaultRequestHandlerV2` 上，每个 A2A Task
   由 `ActiveTask` 管理；`execute()` 路由一条消息后**立即返回**，节点由后台 runner 非阻塞执行。
 - **状态层**：Plan / 节点 / 群成员 / 干预 / 排队消息写入 `Task.metadata`，由 SDK `TaskManager`
   合并、`DatabaseTaskStore` 持久化；重启时 `recover_tasks` 重挂非终态任务并重新跟踪远端工作。

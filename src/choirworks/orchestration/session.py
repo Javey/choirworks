@@ -7,12 +7,17 @@ from typing import TYPE_CHECKING, Any
 
 from a2a.server.events import EventQueue
 
-from choirworks.a2a.events import emit_event
-from choirworks.a2a.state import STATE_JSON_KEY, OrchestrationState, state_from_json, state_to_json
+from choirworks.orchestration.events import emit_event
+from choirworks.orchestration.state import (
+    STATE_JSON_KEY,
+    OrchestrationState,
+    state_from_json,
+    state_to_json,
+)
 from choirworks.store.contexts import ContextStore
 
 if TYPE_CHECKING:
-    from choirworks.a2a.context import OrchestrationContext
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = logging.getLogger(__name__)
 

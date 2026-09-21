@@ -8,8 +8,8 @@ enum-constrained ``target_agent`` based on currently registered agents.
 
 from __future__ import annotations
 
-from choirworks.a2a.context import OrchestrationContext
-from choirworks.a2a.helpers import as_model
+from choirworks.core.util import as_model
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.subagents.base import Subagent
 from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (

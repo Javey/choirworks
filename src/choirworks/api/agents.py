@@ -3,8 +3,8 @@ from __future__ import annotations
 from a2a.client.errors import AgentCardResolutionError
 from fastapi import APIRouter, HTTPException, Request
 
-from choirworks.a2a.registry import DuplicateAgentName
 from choirworks.models.domain import AgentRecord, AgentRegistration
+from choirworks.orchestration.registry import DuplicateAgentName
 
 router = APIRouter(tags=["agents"])
 

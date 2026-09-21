@@ -12,11 +12,11 @@ from a2a.types.a2a_pb2 import (
 from google.protobuf.json_format import ParseDict
 from pydantic import BaseModel
 
-from choirworks.a2a.helpers import function_call_part, status_update, struct
-from choirworks.a2a.state import MemberDelta
+from choirworks.a2a.wire import function_call_part, status_update, struct
+from choirworks.orchestration.state import MemberDelta
 
 if TYPE_CHECKING:
-    from choirworks.a2a.context import OrchestrationContext
+    from choirworks.orchestration.context import OrchestrationContext
     from choirworks.tools.base import AgentFunction, FunctionResult
 
 

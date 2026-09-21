@@ -8,8 +8,8 @@ import pytest
 from fastapi import FastAPI
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.a2a.registry import AgentRegistry
 from choirworks.api.agents import router
+from choirworks.orchestration.registry import AgentRegistry
 from choirworks.store.db import Database
 
 

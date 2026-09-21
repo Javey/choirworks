@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from choirworks.a2a.state import add_intervention
+from choirworks.orchestration.state import add_intervention
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 

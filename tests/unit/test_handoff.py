@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from choirworks.a2a.state import NodeState, OrchestrationState, add_member
 from choirworks.core.context import (
     HANDOFF_MAX_CHARS,
     RECEIPT_CONVENTION,
@@ -10,6 +9,7 @@ from choirworks.core.context import (
 )
 from choirworks.core.fencing import QUOTED_CONTENT_BEGIN, QUOTED_CONTENT_END
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.state import NodeState, OrchestrationState, add_member
 
 
 def make_agent(name: str, description: str = "") -> AgentRecord:

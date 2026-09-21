@@ -10,8 +10,8 @@ from choirworks.tools.capabilities import ToolEffects
 
 if TYPE_CHECKING:
     from choirworks.a2a.executor import SessionRuntime
-    from choirworks.a2a.registry import AgentRegistry
-    from choirworks.a2a.state import OrchestrationState
+    from choirworks.orchestration.registry import AgentRegistry
+    from choirworks.orchestration.state import OrchestrationState
 
 
 class FunctionResult(BaseModel):
