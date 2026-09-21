@@ -13,6 +13,15 @@ class AskUserArgs(BaseModel):
     question: str
 
 
+class AskUserData(BaseModel):
+    """Result payload of ``ask_user``."""
+
+    intervention_id: str
+    node_id: str
+    agent_name: str
+    question: str
+
+
 async def ask_user_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return AskUserArgs
 
@@ -43,12 +52,12 @@ async def execute_ask_user(
 
     return FunctionResult(
         success=True,
-        data={
-            "intervention_id": intervention.id,
-            "node_id": node.id,
-            "agent_name": node.agent_name,
-            "question": intervention.question,
-        },
+        data=AskUserData(
+            intervention_id=intervention.id,
+            node_id=node.id,
+            agent_name=node.agent_name,
+            question=intervention.question,
+        ),
     )
 
 

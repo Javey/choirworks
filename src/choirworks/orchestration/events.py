@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -13,7 +14,11 @@ from google.protobuf.json_format import ParseDict
 from pydantic import BaseModel
 
 from choirworks.a2a.wire import function_call_part, status_update, struct
-from choirworks.orchestration.state import MemberDelta
+from choirworks.orchestration.state import (
+    InterventionDelta,
+    MemberDelta,
+    NodeDelta,
+)
 
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
@@ -24,7 +29,8 @@ async def emit_event(
     ctx: OrchestrationContext,
     kind: str,
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
-    **metadata: Any,
+    *,
+    metadata: Mapping[str, object] | None = None,
 ) -> None:
     await ctx.queue.enqueue_event(
         status_update(
@@ -32,7 +38,7 @@ async def emit_event(
             ctx.context_id,
             state_name,
             kind=kind,
-            **metadata,
+            metadata=metadata,
         )
     )
 
@@ -40,12 +46,12 @@ async def emit_event(
 async def emit_state_delta(
     ctx: OrchestrationContext,
     *,
-    nodes: dict[str, dict[str, Any]] | None = None,
+    nodes: dict[str, NodeDelta] | None = None,
     members: list[MemberDelta] | None = None,
-    interventions: dict[str, dict[str, Any]] | None = None,
+    interventions: dict[str, InterventionDelta] | None = None,
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> None:
-    delta: dict[str, Any] = {}
+    delta: dict[str, object] = {}
     if nodes:
         delta["nodes"] = nodes
     if members:
@@ -54,7 +60,7 @@ async def emit_state_delta(
         delta["interventions"] = interventions
     if not delta:
         return
-    await emit_event(ctx, "state_delta", state_name, **delta)
+    await emit_event(ctx, "state_delta", state_name, metadata=delta)
 
 
 async def emit_thought_chunk(

@@ -7,10 +7,14 @@ from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import execute_function, join_members
 from choirworks.orchestration.patch import PatchResult, PlanPatch, apply_patch
-from choirworks.orchestration.state import add_cancel_request, failed_nodes
+from choirworks.orchestration.state import (
+    InterventionDelta,
+    add_cancel_request,
+    failed_nodes,
+)
 from choirworks.subagents import REPAIR_SUBAGENT, run_subagent
 from choirworks.tools import revise_plan_func
-from choirworks.tools.revise_plan import RevisePlanArgs
+from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +43,16 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
 async def revise_plan(ctx: OrchestrationContext, patch: PlanPatch) -> PatchResult:
     args = RevisePlanArgs(patch=patch)
     fn_result = await execute_function(ctx, revise_plan_func, args)
-    data = fn_result.data or {}
-    result = PatchResult(
-        added=list(data.get("added", [])),
-        invalidated=list(data.get("invalidated", [])),
-        skipped_in_flight=list(data.get("skipped_in_flight", [])),
-        rejected=list(data.get("rejected", [])),
+    data = fn_result.data
+    result = (
+        PatchResult(
+            added=data.added,
+            invalidated=data.invalidated,
+            skipped_in_flight=data.skipped_in_flight,
+            rejected=data.rejected,
+        )
+        if isinstance(data, RevisePlanData)
+        else PatchResult()
     )
     if result.added or result.invalidated:
         ctx.state.revision_count += 1
@@ -60,7 +68,7 @@ async def apply_patch_locked(
     result = apply_patch(state, patch, agent_urls)
     for rejected in result.rejected:
         logger.warning("Patch rejected for %s: %s", ctx.context_id, rejected)
-    new_interventions: dict[str, dict[str, object]] = {}
+    new_interventions: dict[str, InterventionDelta] = {}
     for node_id in result.skipped_in_flight:
         node = state.nodes.get(node_id)
         if node is None:

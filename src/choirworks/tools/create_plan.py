@@ -10,6 +10,23 @@ from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 
+class PlanNodeData(BaseModel):
+    """Wire payload for one plan node in a tool result."""
+
+    id: str
+    name: str
+    agent_name: str
+    deps: list[str]
+
+
+class CreatePlanData(BaseModel):
+    """Result payload of ``create_plan``."""
+
+    plan_id: str
+    plan_version: int
+    nodes: list[PlanNodeData]
+
+
 # Enum-pinned structured output mirrors google-adk's TransferToAgentTool
 # (src/google/adk/tools/transfer_to_agent_tool.py, Apache-2.0), which
 # constrains agent_name to a JSON-Schema enum so hallucinated names cannot
@@ -69,19 +86,19 @@ async def execute_create_plan(
 
     return FunctionResult(
         success=True,
-        data={
-            "plan_id": state.plan_id,
-            "plan_version": state.plan_version,
-            "nodes": [
-                {
-                    "id": n.id,
-                    "name": n.name,
-                    "agent_name": n.agent_name,
-                    "deps": n.deps,
-                }
+        data=CreatePlanData(
+            plan_id=state.plan_id,
+            plan_version=state.plan_version,
+            nodes=[
+                PlanNodeData(
+                    id=n.id,
+                    name=n.name,
+                    agent_name=n.agent_name,
+                    deps=n.deps,
+                )
                 for n in state.nodes.values()
             ],
-        },
+        ),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Collection, Mapping
+from typing import cast
 
 from a2a.types.a2a_pb2 import (
     Part,
@@ -12,12 +13,13 @@ from google.protobuf import struct_pb2, timestamp_pb2
 from google.protobuf.json_format import ParseDict
 
 
-def strip_none(value: Any) -> Any:
+def strip_none(value: object) -> object:
     """Recursively remove None values from dicts and lists."""
     if isinstance(value, dict):
+        mapping = cast("dict[object, object]", value)
         return {
             key: strip_none(item)
-            for key, item in value.items()
+            for key, item in mapping.items()
             if item is not None
         }
     if isinstance(value, list):
@@ -25,14 +27,14 @@ def strip_none(value: Any) -> Any:
     return value
 
 
-def struct(data: dict[str, Any]) -> struct_pb2.Struct:
-    """Build a protobuf Struct from a dict, stripping None values first."""
+def struct(data: Mapping[str, object]) -> struct_pb2.Struct:
+    """Build a protobuf Struct from a mapping, stripping None values first."""
     result = struct_pb2.Struct()
-    ParseDict(strip_none(data), result)
+    ParseDict(cast("dict[str, object]", strip_none(data)), result)
     return result
 
 
-def join_text(parts: Any) -> str:
+def join_text(parts: Collection[Part]) -> str:
     """Join protobuf parts' text fields with newlines."""
     return "\n".join(p.text for p in parts if p.HasField("text"))
 
@@ -43,13 +45,14 @@ def status_update(
     state: TaskState,
     *,
     kind: str | None = None,
-    **metadata: Any,
+    metadata: Mapping[str, object] | None = None,
 ) -> TaskStatusUpdateEvent:
     """Build a TaskStatusUpdateEvent with optional kind and metadata."""
-    meta: dict[str, Any] = {}
+    meta: dict[str, object] = {}
     if kind:
         meta["kind"] = kind
-    meta.update(metadata)
+    if metadata:
+        meta.update(metadata)
     timestamp = timestamp_pb2.Timestamp()
     timestamp.GetCurrentTime()
     return TaskStatusUpdateEvent(
@@ -62,8 +65,8 @@ def status_update(
 
 def function_call_part(
     func_name: str,
-    args: dict[str, Any],
-    result: dict[str, Any],
+    args: Mapping[str, object],
+    result: Mapping[str, object],
 ) -> Part:
     """Build a protobuf Part carrying a function_call data payload."""
     data_value = struct_pb2.Value()

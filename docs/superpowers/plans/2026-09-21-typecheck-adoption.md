@@ -24,7 +24,7 @@
 | 动态 `Literal` union（1） | `outcome_decision` 用局部变量 + `# pyright: ignore[reportOperatorIssue]` |
 | 其他收窄（4） | `as_model` 分层校验；`plan` 工具参数 `isinstance(PlanDraft)`；`call_subagent` 求助文案 `or ""`；`sim/runner` 用 `ServerConfig/StoreConfig/A2AConfig/SchedulerConfig` 构造 |
 
-行为说明：`room_options` 改为显式解析已知键并校验类型（原来全量透传 `MessageToDict` 结果）；其余均为类型收窄，行为不变。
+行为说明：`room_options` 用 `cast(RoomOptions, cast(object, raw))` 绕过 pyright 对 dict→TypedDict 直接 cast 的 `reportInvalidCast`（不做运行时校验，行为与原来一致）；其余均为类型收窄，行为不变。
 
 ## 验证
 

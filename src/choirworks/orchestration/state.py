@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from a2a.types.a2a_pb2 import Task
 
@@ -15,6 +15,27 @@ ACTIVE_NODE_STATUSES = {"dispatched", "working"}
 PENDING_NODE_STATUSES = {"pending", "ready"}
 INPUT_NODE_STATUSES = {"input_required"}
 MAX_METADATA_OUTPUT = 2000
+
+
+class NodeDict(TypedDict):
+    """Serialized :class:`NodeState` (persisted snapshot / full payload)."""
+
+    id: str
+    name: str
+    agent_name: str
+    agent_url: str
+    status: str
+    attempt: int
+    a2a_task_id: str | None
+    output: str | None
+    error: str | None
+    deps: list[str]
+    input_text: str
+    derived: bool
+    question: str | None
+    answer_text: str | None
+    source_message_id: str | None
+    assist_requested_by: str | None
 
 
 @dataclass
@@ -36,7 +57,7 @@ class NodeState:
     source_message_id: str | None = None
     assist_requested_by: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> NodeDict:
         return {
             "id": self.id,
             "name": self.name,
@@ -86,6 +107,38 @@ class MemberDelta(TypedDict):
     reason: str
 
 
+class NodeDelta(TypedDict, total=False):
+    """Wire-format partial update for one node in a ``state_delta`` event."""
+
+    status: str
+    error: str | None
+    a2a_task_id: str | None
+    question: str
+    agent_name: str
+    output: str
+    name: str
+
+
+class InterventionDelta(TypedDict, total=False):
+    """Wire-format partial update for one intervention in a state delta."""
+
+    status: str
+    node_id: str
+    kind: str
+    question: str
+
+
+class MemberDict(TypedDict):
+    """Serialized :class:`Member`."""
+
+    name: str
+    agent_name: str
+    url: str
+    agent_url: str
+    reason: str
+    joined_at: str
+
+
 @dataclass
 class Member:
     name: str
@@ -93,7 +146,7 @@ class Member:
     reason: str
     joined_at: str = field(default_factory=now_iso)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> MemberDict:
         return {
             "name": self.name,
             "agent_name": self.name,
@@ -113,6 +166,21 @@ class Member:
         )
 
 
+class InterventionDict(TypedDict):
+    """Serialized :class:`Intervention`."""
+
+    id: str
+    intervention_id: str
+    node_id: str
+    question: str
+    status: str
+    answer: str | None
+    responder: str | None
+    kind: str
+    target_node_id: str | None
+    created_at: str
+
+
 @dataclass
 class Intervention:
     id: str
@@ -125,7 +193,7 @@ class Intervention:
     target_node_id: str | None = None
     created_at: str = field(default_factory=now_iso)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> InterventionDict:
         return {
             "id": self.id,
             "intervention_id": self.id,
@@ -154,6 +222,16 @@ class Intervention:
         )
 
 
+class QueuedMessageDict(TypedDict):
+    """Serialized :class:`QueuedMessage`."""
+
+    id: str
+    text: str
+    sender: str
+    quote_id: str | None
+    created_at: str
+
+
 @dataclass
 class QueuedMessage:
     id: str
@@ -162,7 +240,7 @@ class QueuedMessage:
     quote_id: str | None = None
     created_at: str = field(default_factory=now_iso)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> QueuedMessageDict:
         return {
             "id": self.id,
             "text": self.text,
@@ -427,7 +505,10 @@ def state_to_json(state: OrchestrationState) -> str:
 
 def state_from_json(raw: str) -> OrchestrationState:
     """Rebuild state from a full snapshot."""
-    data = json.loads(raw)
+    parsed: object = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("state snapshot must be a JSON object")
+    data = cast("dict[str, Any]", parsed)
     state = OrchestrationState()
     state.plan_id = str(data.get("plan_id", ""))
     state.plan_version = int(data.get("plan_version", 1))

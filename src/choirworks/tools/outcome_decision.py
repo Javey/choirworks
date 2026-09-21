@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, create_model
 
@@ -59,11 +59,14 @@ class OutcomeDecision(BaseModel):
 def outcome_decision_schema(
     candidate_names: Sequence[str],
 ) -> type[OutcomeDecision]:
-    fields: dict[str, Any] = {}
-    if candidate_names:
-        target = Literal[*candidate_names] | None  # pyright: ignore[reportOperatorIssue]
-        fields["target_agent"] = (target, None)
-    return create_model("OutcomeDecision", __base__=OutcomeDecision, **fields)
+    if not candidate_names:
+        return OutcomeDecision
+    target = Literal[*candidate_names] | None  # pyright: ignore[reportOperatorIssue]
+    return create_model(
+        "OutcomeDecision",
+        __base__=OutcomeDecision,
+        target_agent=(target, None),
+    )
 
 
 def outcome_decision_tool(schema: type[OutcomeDecision]) -> AgentFunction:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -17,6 +17,7 @@ from a2a.server.tasks.database_task_store import DatabaseTaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, Task, TaskState
 from fastapi import FastAPI, HTTPException, Request
 from google.protobuf.json_format import MessageToDict
+from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from choirworks.a2a.card import build_agent_card
@@ -34,11 +35,38 @@ from choirworks.orchestration.rewind import (
     parse_markers,
     restore_state,
 )
-from choirworks.orchestration.state import state_to_json
+from choirworks.orchestration.state import (
+    OrchestrationState,
+    state_from_json,
+    state_to_json,
+)
 from choirworks.store.contexts import ContextStore
 from choirworks.store.db import Database
 
+if TYPE_CHECKING:
+    from choirworks.sim.fake_agent import FakeAgent
+
 logger = logging.getLogger(__name__)
+
+
+class ConversationSummary(TypedDict):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    task_count: int
+    last_status: str
+
+
+class ConversationPayload(TypedDict):
+    id: str
+    context: JsonValue | None
+    tasks: list[dict[str, JsonValue]]
+
+
+class CreateConversationResponse(TypedDict):
+    conversation_id: str
+    title: str
 
 
 async def create_app(
@@ -124,7 +152,7 @@ async def create_app(
             rest_routes=rest_routes,
         )
 
-        sim_agents: list[Any] = []
+        sim_agents: list[FakeAgent] = []
         if settings.sim.start_agents and settings.sim.agents:
             from choirworks.sim.fake_agent import start_fake_agent
 
@@ -183,12 +211,12 @@ async def create_app(
 
     async def _conversation_payload(
         request: Request, context_id: str
-    ) -> dict[str, Any]:
+    ) -> ConversationPayload:
         tasks = await _context_tasks(request, context_id)
         if not tasks:
             raise HTTPException(status_code=404, detail="conversation not found")
         record = await request.app.state.context_store.get(context_id)
-        context: dict[str, Any] | None = None
+        context: JsonValue | None = None
         markers = parse_markers(record.rewind_markers) if record is not None else []
         if record is not None:
             try:
@@ -206,22 +234,22 @@ async def create_app(
     @app.post("/v1/conversations")
     async def create_conversation(
         body: dict[str, Any], request: Request
-    ) -> dict[str, Any]:
+    ) -> CreateConversationResponse:
         import uuid
         conversation_id = uuid.uuid4().hex
-        title = body.get("title", "")
+        title = str(body.get("title", ""))
         await request.app.state.context_store.create(conversation_id, title=title)
         return {"conversation_id": conversation_id, "title": title}
 
     @app.get("/v1/conversations")
-    async def list_conversations(request: Request) -> list[dict[str, Any]]:
+    async def list_conversations(request: Request) -> list[ConversationSummary]:
         task_store = request.app.state.task_store
         context_store = request.app.state.context_store
         ctx = ServerCallContext()
         records = {
             record.context_id: record for record in await context_store.list()
         }
-        sessions: dict[str, dict[str, Any]] = {
+        sessions: dict[str, ConversationSummary] = {
             context_id: {
                 "id": context_id,
                 "title": record.title,
@@ -229,9 +257,12 @@ async def create_app(
                 "updated_at": record.updated_at,
                 "task_count": 0,
                 "last_status": "",
-                "_latest_state": TaskState.TASK_STATE_UNSPECIFIED,
             }
             for context_id, record in records.items()
+        }
+        latest_state: dict[str, TaskState] = {
+            context_id: TaskState.TASK_STATE_UNSPECIFIED
+            for context_id in sessions
         }
         response = await task_store.list(ListTasksRequest(), ctx)
         tasks_by_context: dict[str, list[str]] = {}
@@ -267,45 +298,43 @@ async def create_app(
                     "updated_at": "",
                     "task_count": 0,
                     "last_status": state_name,
-                    "_latest_state": task.status.state,
                 }
+                latest_state[ctx_id] = task.status.state
             session = sessions[ctx_id]
             session["task_count"] += 1
-            if task.status.state > session["_latest_state"]:
-                session["_latest_state"] = task.status.state
+            if task.status.state > latest_state[ctx_id]:
+                latest_state[ctx_id] = task.status.state
                 session["last_status"] = state_name
-        for s in sessions.values():
-            s.pop("_latest_state", None)
         return list(sessions.values())
 
     @app.get("/v1/conversations/{context_id}")
     async def get_conversation(
         context_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> ConversationPayload:
         return await _conversation_payload(request, context_id)
 
     @app.get("/v1/conversations/{context_id}/replay")
     async def replay_conversation(
         context_id: str, request: Request
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, object]]:
         tasks = await _context_tasks(request, context_id)
         if not tasks:
             raise HTTPException(status_code=404, detail="conversation not found")
         record = await request.app.state.context_store.get(context_id)
-        context: dict[str, object] | None = None
+        state: OrchestrationState | None = None
         markers = parse_markers(record.rewind_markers) if record is not None else []
         if record is not None:
             try:
-                context = json.loads(record.state)
-            except ValueError:
-                context = None
+                state = state_from_json(record.state)
+            except (ValueError, TypeError):
+                state = None
         hidden = hidden_task_ids([task.id for task in tasks], markers)
-        return synthesize_replay_events(tasks, context_id, context, hidden)
+        return synthesize_replay_events(tasks, context_id, state, hidden)
 
     @app.post("/v1/conversations/{context_id}/rewind")
     async def rewind_conversation(
         context_id: str, body: dict[str, Any], request: Request
-    ) -> dict[str, Any]:
+    ) -> ConversationPayload:
         task_id = str(body.get("task_id", ""))
         if not task_id:
             raise HTTPException(status_code=400, detail="task_id is required")

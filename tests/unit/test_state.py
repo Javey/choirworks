@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from choirworks.orchestration.state import (
     Member,
     NodeState,
@@ -108,6 +110,11 @@ def test_full_json_round_trips_everything():
     assert loaded.interventions[resolved.id].answer == "答复"
     assert loaded.queue["n1"][0].id == queued.id
     assert loaded.queue["n1"][0].quote_id == "n1"
+
+
+def test_state_from_json_rejects_non_object_snapshot():
+    with pytest.raises(ValueError):
+        state_from_json("[]")
 
 
 def test_load_state_reads_task_metadata():

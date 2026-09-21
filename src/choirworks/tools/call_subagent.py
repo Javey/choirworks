@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, create_model
 
@@ -10,10 +10,21 @@ from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 
 def _call_subagent_schema(candidate_names: list[str]) -> type[BaseModel]:
-    fields: dict[str, Any] = {}
-    if candidate_names:
-        fields["target_agent"] = (Literal[*candidate_names], ...)  # type: ignore[valid-type]
-    return create_model("CallSubagentArgs", __base__=CallSubagentArgs, **fields)
+    if not candidate_names:
+        return CallSubagentArgs
+    return create_model(
+        "CallSubagentArgs",
+        __base__=CallSubagentArgs,
+        target_agent=(Literal[*candidate_names], ...),  # type: ignore[valid-type]
+    )
+
+
+class CallSubagentData(BaseModel):
+    """Result payload of ``call_subagent``."""
+
+    helper_node_id: str
+    helper: str
+    requester: str
 
 
 class CallSubagentArgs(BaseModel):
@@ -92,11 +103,11 @@ async def execute_call_subagent(
 
     return FunctionResult(
         success=True,
-        data={
-            "helper_node_id": helper_id,
-            "helper": agent.name,
-            "requester": requester_node.agent_name if requester_node else "",
-        },
+        data=CallSubagentData(
+            helper_node_id=helper_id,
+            helper=agent.name,
+            requester=requester_node.agent_name if requester_node else "",
+        ),
     )
 
 

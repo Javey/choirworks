@@ -4,12 +4,26 @@ from pydantic import BaseModel
 
 from choirworks.orchestration.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.create_plan import PlanNodeData
 
 
 class RevisePlanArgs(BaseModel):
     """Arguments for ``revise_plan`` — an incremental patch to the active plan."""
 
     patch: PlanPatch
+
+
+class RevisePlanData(BaseModel):
+    """Result payload of ``revise_plan``."""
+
+    plan_id: str
+    plan_version: int
+    reason: str
+    added: list[str]
+    added_nodes: list[PlanNodeData]
+    invalidated: list[str]
+    skipped_in_flight: list[str]
+    rejected: list[str]
 
 
 async def revise_plan_args_model(ctx: FunctionContext) -> type[BaseModel]:
@@ -39,24 +53,24 @@ async def execute_revise_plan(
 
     return FunctionResult(
         success=True,
-        data={
-            "plan_id": ctx.state.plan_id,
-            "plan_version": ctx.state.plan_version,
-            "reason": plan_args.patch.reason,
-            "added": result.added,
-            "added_nodes": [
-                {
-                    "id": node_id,
-                    "name": ctx.state.nodes[node_id].name,
-                    "agent_name": ctx.state.nodes[node_id].agent_name,
-                    "deps": ctx.state.nodes[node_id].deps,
-                }
+        data=RevisePlanData(
+            plan_id=ctx.state.plan_id,
+            plan_version=ctx.state.plan_version,
+            reason=plan_args.patch.reason,
+            added=result.added,
+            added_nodes=[
+                PlanNodeData(
+                    id=node_id,
+                    name=ctx.state.nodes[node_id].name,
+                    agent_name=ctx.state.nodes[node_id].agent_name,
+                    deps=ctx.state.nodes[node_id].deps,
+                )
                 for node_id in result.added
             ],
-            "invalidated": result.invalidated,
-            "skipped_in_flight": result.skipped_in_flight,
-            "rejected": result.rejected,
-        },
+            invalidated=result.invalidated,
+            skipped_in_flight=result.skipped_in_flight,
+            rejected=result.rejected,
+        ),
     )
 
 

@@ -17,7 +17,10 @@ from choirworks.tools import (
     revise_plan_func,
 )
 from choirworks.tools.base import FunctionContext
+from choirworks.tools.call_subagent import CallSubagentData
 from choirworks.tools.capabilities import ToolEffects
+from choirworks.tools.create_plan import CreatePlanData
+from choirworks.tools.revise_plan import RevisePlanData
 from tests.support.fakes import FakeRegistry
 
 
@@ -106,8 +109,8 @@ async def test_create_plan_builds_nodes_and_joins_members():
     assert state.nodes["n1"].input_text == "research it"
     assert state.nodes["n2"].deps == ["n1"]
     assert effects.joined == [(["research", "writer"], "plan")]
-    assert result.data is not None
-    assert [node["id"] for node in result.data["nodes"]] == ["n1", "n2"]
+    assert isinstance(result.data, CreatePlanData)
+    assert [node.id for node in result.data.nodes] == ["n1", "n2"]
 
 
 async def test_ask_user_marks_node_input_required():
@@ -149,8 +152,8 @@ async def test_call_subagent_spawns_derived_helper():
     )
 
     assert result.success is True
-    assert result.data is not None
-    helper = state.nodes[result.data["helper_node_id"]]
+    assert isinstance(result.data, CallSubagentData)
+    helper = state.nodes[result.data.helper_node_id]
     assert helper.derived is True
     assert helper.assist_requested_by == "n1"
     assert helper.agent_name == "writer"
@@ -168,8 +171,8 @@ async def test_call_subagent_falls_back_to_requester_question():
     )
 
     assert result.success is True
-    assert result.data is not None
-    helper = state.nodes[result.data["helper_node_id"]]
+    assert isinstance(result.data, CallSubagentData)
+    helper = state.nodes[result.data.helper_node_id]
     assert "缺少接口文档" in helper.input_text
 
 
@@ -218,9 +221,9 @@ async def test_revise_plan_reports_patch_effect():
 
     assert result.success is True
     assert effects.patches == [patch]
-    assert result.data is not None
-    assert result.data["added"] == ["x1"]
-    assert result.data["invalidated"] == ["n9"]
-    assert result.data["skipped_in_flight"] == ["n2"]
-    assert result.data["added_nodes"][0]["id"] == "x1"
-    assert result.data["added_nodes"][0]["name"] == "补充"
+    assert isinstance(result.data, RevisePlanData)
+    assert result.data.added == ["x1"]
+    assert result.data.invalidated == ["n9"]
+    assert result.data.skipped_in_flight == ["n2"]
+    assert result.data.added_nodes[0].id == "x1"
+    assert result.data.added_nodes[0].name == "补充"

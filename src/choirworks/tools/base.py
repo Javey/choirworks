@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SerializeAsAny
 
 from choirworks.tools.capabilities import ToolEffects
 
@@ -22,7 +22,7 @@ class FunctionResult(BaseModel):
     """
 
     success: bool
-    data: dict[str, Any] | None = None
+    data: SerializeAsAny[BaseModel] | None = None
     error: str | None = None
 
 

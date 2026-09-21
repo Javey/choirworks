@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from a2a.server.events import EventQueue
 
@@ -113,5 +113,5 @@ class SessionManager:
         snapshot = state_to_json(runtime.state)
         if self._context_store is not None:
             await self._context_store.upsert_state(runtime.context_id, snapshot)
-        metadata: dict[str, Any] = {STATE_JSON_KEY: snapshot}
-        await emit_event(ctx, "state.updated", **metadata)
+        metadata: dict[str, object] = {STATE_JSON_KEY: snapshot}
+        await emit_event(ctx, "state.updated", metadata=metadata)

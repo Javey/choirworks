@@ -13,6 +13,13 @@ from a2a.types.a2a_pb2 import (
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict, ParseDict
 
+from choirworks.orchestration.state import (
+    InterventionDelta,
+    MemberDict,
+    NodeDelta,
+    OrchestrationState,
+)
+
 
 def _struct(d: dict[str, object]) -> struct_pb2.Struct:
     s = struct_pb2.Struct()
@@ -21,44 +28,37 @@ def _struct(d: dict[str, object]) -> struct_pb2.Struct:
 
 
 def _state_delta_event(
-    context: dict[str, object],
+    state: OrchestrationState,
     context_id: str,
     task_id: str,
     task_state: TaskState,
 ) -> TaskStatusUpdateEvent:
-    nodes: dict[str, object] = {}
-    raw_nodes = context.get("nodes")
-    if isinstance(raw_nodes, list):
-        for n in raw_nodes:
-            node = n if isinstance(n, dict) else {}
-            node_id = node.get("id", "")
-            if not node_id:
-                continue
-            nodes[node_id] = {
-                "status": node.get("status", "pending"),
-                "output": node.get("output") or "",
-                "error": node.get("error") or "",
-                "name": node.get("name", ""),
-                "agent_name": node.get("agent_name", ""),
-            }
+    nodes: dict[str, NodeDelta] = {
+        node_id: {
+            "status": node.status,
+            "output": node.output or "",
+            "error": node.error or "",
+            "name": node.name,
+            "agent_name": node.agent_name,
+        }
+        for node_id, node in state.nodes.items()
+        if node_id
+    }
 
-    raw_members = context.get("members")
-    members = list(raw_members) if isinstance(raw_members, list) else []
+    members: list[MemberDict] = [
+        member.to_dict() for member in state.members.values()
+    ]
 
-    interventions: dict[str, object] = {}
-    raw_interventions = context.get("interventions")
-    if isinstance(raw_interventions, list):
-        for iv in raw_interventions:
-            iv_dict = iv if isinstance(iv, dict) else {}
-            iv_id = iv_dict.get("id") or iv_dict.get("intervention_id") or ""
-            if not iv_id:
-                continue
-            interventions[iv_id] = {
-                "status": iv_dict.get("status", "pending"),
-                "node_id": iv_dict.get("node_id", ""),
-                "kind": iv_dict.get("kind", "question"),
-                "question": iv_dict.get("question", ""),
-            }
+    interventions: dict[str, InterventionDelta] = {
+        intervention.id: {
+            "status": intervention.status,
+            "node_id": intervention.node_id,
+            "kind": intervention.kind,
+            "question": intervention.question,
+        }
+        for intervention in state.interventions.values()
+        if intervention.id
+    }
 
     return TaskStatusUpdateEvent(
         task_id=task_id,
@@ -91,7 +91,7 @@ def _artifact_update(
 def synthesize_replay_events(
     tasks: list[Task],
     context_id: str,
-    context: dict[str, object] | None,
+    state: OrchestrationState | None,
     hidden_ids: set[str] | None = None,
 ) -> list[dict[str, object]]:
     hidden = hidden_ids or set()
@@ -137,11 +137,11 @@ def synthesize_replay_events(
                         task.id, context_id, merged,
                     )))
 
-    if context and visible:
+    if state is not None and visible:
         last_task = visible[-1]
         task_state = last_task.status.state
         events.append(StreamResponse(status_update=_state_delta_event(
-            context, context_id, last_task.id, task_state,
+            state, context_id, last_task.id, task_state,
         )))
 
     return [MessageToDict(e, use_integers_for_enums=True) for e in events]
