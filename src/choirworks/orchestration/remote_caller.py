@@ -145,9 +145,37 @@ async def consume_chunks(
                     mapped == "input_required"
                     and chunk.status_update.status.HasField("message")
                 ):
-                    node.question = join_text(
+                    msg_text = join_text(
                         chunk.status_update.status.message.parts
                     )
+                    node.question = msg_text
+                    if msg_text:
+                        art = Artifact(
+                            artifact_id=uuid.uuid4().hex,
+                            name=node.name,
+                            parts=[Part(text=msg_text)],
+                            metadata=struct(
+                                {
+                                    "node_id": node.id,
+                                    "agent_name": node.agent_name,
+                                }
+                            ),
+                        )
+                        await ctx.queue.enqueue_event(
+                            TaskArtifactUpdateEvent(
+                                task_id=ctx.task_id,
+                                context_id=ctx.context_id,
+                                artifact=art,
+                                append=False,
+                                last_chunk=True,
+                                metadata=struct(
+                                    {
+                                        "node_id": node.id,
+                                        "agent_name": node.agent_name,
+                                    }
+                                ),
+                            )
+                        )
         elif chunk.HasField("artifact_update"):
             update = chunk.artifact_update
             piece = join_text(update.artifact.parts)

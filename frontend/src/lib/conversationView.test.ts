@@ -154,7 +154,7 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toBe("预算口径？");
   });
 
-  it("renders call_subagent assist: helper node and requester bubble, no notification", () => {
+  it("renders call_subagent assist as dispatch bubble, not agent message", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
       functionCallEvent(
@@ -169,13 +169,11 @@ describe("applyStreamEvent", () => {
     );
     expect(view.nodes.map((n) => n.id)).toContain("n1-h1");
     expect(view.nodes.find((n) => n.id === "n1-h1")?.input_text).toBe("帮忙写");
-    // The requester's output already @-mentions the helper; the dedicated
-    // "X 请求 Y 协助" system notification is redundant.
     expect(view.notifications.some((n) => n.kind === "assist.dispatched")).toBe(false);
     const msg = view.messages.at(-1);
-    expect(msg?.role).toBe("agent");
-    expect(msg?.sender).toBe("echo");
-    expect(msg?.text).toBe("@writer 帮忙写");
+    expect(msg?.role).toBe("assistant");
+    expect(msg?.group).toBe("dispatch");
+    expect(msg?.text).toBe("- @writer 帮忙写");
   });
 
   it("merges consecutive orchestrator dispatches into one bubble", () => {

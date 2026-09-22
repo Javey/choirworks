@@ -647,10 +647,6 @@ function applyStreamEventInner(
         const instruction =
           typeof funcArgs.instruction === "string" ? funcArgs.instruction : "";
         const resultData = (funcResult.data as ProtoStruct | undefined) ?? {};
-        const resultText = (key: string): string => {
-          const value = resultData[key] ?? funcResult[key];
-          return typeof value === "string" ? value : "";
-        };
 
         // Plan dispatch: orchestrator assigns the next nodes to their agents.
         if (requestedBy === "orchestrator") {
@@ -689,15 +685,13 @@ function applyStreamEventInner(
           };
         }
 
-        // Assistance: a node asks a peer for help.
+        // Assistance: orchestrator LLM routes a blocked node to a peer agent.
+        // Show as a dispatch bubble (same format as plan dispatch), not an
+        // agent message — the orchestrator decided the routing.
         if (view.messages.some((m) => m.id === artifactId)) {
           return view;
         }
-        const helper = resultText("helper");
-        const requester =
-          resultText("requester") ||
-          view.nodes.find((n) => n.id === requestedBy)?.agent_name ||
-          requestedBy;
+        const helper = targetAgent;
         const helperNodeId = String(
           resultData.helper_node_id ?? funcResult.helper_node_id ?? "",
         );
@@ -712,23 +706,39 @@ function applyStreamEventInner(
         const nodes = existing.has(helperNodeId)
           ? view.nodes
           : [...view.nodes, node];
-        const assistMsg: ChatMessage = {
-          id: artifactId,
-          role: "agent",
-          sender: requester || null,
-          text: `@${helper}${instruction ? ` ${instruction}` : ""}`,
-          mentions: helper ? [helper] : [],
+        const line = `- @${helper}${instruction ? ` ${instruction}` : ""}`;
+        const last = view.messages.at(-1);
+        if (last?.group === "dispatch") {
+          if (last.text.split("\n").includes(line)) {
+            return { ...view, nodes, lastSeq: Math.max(view.lastSeq, seq) };
+          }
+          return {
+            ...view,
+            nodes,
+            messages: view.messages.map((m) =>
+              m.id === last.id ? { ...m, text: `${m.text}\n${line}` } : m,
+            ),
+            lastSeq: Math.max(view.lastSeq, seq),
+          };
+        }
+        const dispatchMsg: ChatMessage = {
+          id: `dispatch-${artifactId}`,
+          role: "assistant",
+          sender: null,
+          text: line,
+          mentions: [],
           quote_id: null,
-          node_id: helperNodeId || null,
+          node_id: null,
           task_id: view.taskId,
           created_at: new Date().toISOString(),
           seq,
           thinking: false,
+          group: "dispatch",
         };
         return {
           ...view,
           nodes,
-          messages: [...view.messages, assistMsg],
+          messages: [...view.messages, dispatchMsg],
           lastSeq: Math.max(view.lastSeq, seq),
         };
       }
