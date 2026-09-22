@@ -6,20 +6,28 @@ from datetime import UTC, datetime
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.patch import PatchResult, PlanPatch
-from choirworks.orchestration.state import NodeState, OrchestrationState, pending_interventions
+from choirworks.orchestration.state import (
+    NodeState,
+    OrchestrationState,
+    add_member,
+    pending_interventions,
+)
 from choirworks.tools import (
     AskUserArgs,
     CallSubagentArgs,
+    JoinMembersArgs,
     RevisePlanArgs,
     ask_user_func,
     call_subagent_func,
     create_plan_func,
+    join_members_func,
     revise_plan_func,
 )
 from choirworks.tools.base import FunctionContext
 from choirworks.tools.call_subagent import CallSubagentData
 from choirworks.tools.capabilities import ToolEffects
 from choirworks.tools.create_plan import CreatePlanData
+from choirworks.tools.join_members import JoinMembersData
 from choirworks.tools.revise_plan import RevisePlanData
 from tests.support.fakes import FakeRegistry
 
@@ -111,6 +119,36 @@ async def test_create_plan_builds_nodes_and_joins_members():
     assert effects.joined == [(["research", "writer"], "plan")]
     assert isinstance(result.data, CreatePlanData)
     assert [node.id for node in result.data.nodes] == ["n1", "n2"]
+
+
+async def test_join_members_adds_registered_agents_to_room():
+    state = OrchestrationState()
+
+    result = await join_members_func.execute(
+        make_ctx(state),
+        JoinMembersArgs(names=["writer", "writer", "ghost"], reason="human_mention"),
+    )
+
+    assert result.success is True
+    assert isinstance(result.data, JoinMembersData)
+    assert result.data.joined == ["writer"]
+    assert state.members["writer"].url == "http://writer"
+    assert state.members["writer"].reason == "human_mention"
+    assert "ghost" not in state.members
+
+
+async def test_join_members_skips_existing_member():
+    state = OrchestrationState()
+    add_member(state, "writer", "http://writer", "plan")
+
+    result = await join_members_func.execute(
+        make_ctx(state), JoinMembersArgs(names=["writer"], reason="plan_revision")
+    )
+
+    assert result.success is True
+    assert isinstance(result.data, JoinMembersData)
+    assert result.data.joined == []
+    assert state.members["writer"].reason == "plan"
 
 
 async def test_ask_user_marks_node_input_required():

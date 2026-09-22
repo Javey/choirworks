@@ -17,27 +17,35 @@ async def join_members(
     names: list[str],
     reason: str,
 ) -> None:
-    """Add agents to the room state (de-duplicated) and emit a member delta."""
-    from choirworks.orchestration.events import emit_state_delta
-    from choirworks.orchestration.state import add_member
+    """Add registered agents to the room via the ``join_members`` tool.
 
-    state = ctx.state
-    records = await ctx.registry.list()
-    known = {record.name: record for record in records}
-    new_members: list[MemberDelta] = []
-    for name in dict.fromkeys(names):
-        record = known.get(name)
-        if record is None:
-            continue
-        if not add_member(state, name, record.card_url, reason):
-            continue
-        new_members.append({
+    The tool call runs (and its function-call artifact is emitted) through the
+    standard path; a member ``state_delta`` follows for state sync.  No-op
+    invocations (every requested name is already a member) record nothing.
+    """
+    from choirworks.orchestration.events import emit_state_delta
+    from choirworks.tools import JoinMembersArgs, join_members_func
+    from choirworks.tools.join_members import JoinMembersData
+
+    requested = [name for name in dict.fromkeys(names) if name not in ctx.state.members]
+    if not requested:
+        return
+    result = await execute_function(
+        ctx, join_members_func, JoinMembersArgs(names=requested, reason=reason)
+    )
+    data = result.data
+    joined = data.joined if isinstance(data, JoinMembersData) else []
+    if not joined:
+        return
+    members: list[MemberDelta] = [
+        {
             "agent_name": name,
-            "agent_url": record.card_url,
+            "agent_url": ctx.state.members[name].url,
             "reason": reason,
-        })
-    if new_members:
-        await emit_state_delta(ctx, members=new_members)
+        }
+        for name in joined
+    ]
+    await emit_state_delta(ctx, members=members)
 
 
 async def execute_function(

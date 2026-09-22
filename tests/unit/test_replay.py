@@ -54,6 +54,26 @@ def test_replay_artifact_without_metadata_stays_bare() -> None:
     assert update.get("metadata") in (None, {})
 
 
+def test_replay_interleaves_task_events_with_their_artifacts() -> None:
+    def _task(task_id: str, artifact_text: str) -> Task:
+        task = Task(
+            id=task_id,
+            context_id="c1",
+            status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        )
+        task.artifacts.append(
+            Artifact(artifact_id=f"a-{task_id}", parts=[Part(text=artifact_text)])
+        )
+        return task
+
+    tasks = [_task("t1", "第一轮回复"), _task("t2", "第二轮回复")]
+
+    events = synthesize_replay_events(tasks, "c1", state=None)
+
+    shapes = ["task" if "task" in event else "artifactUpdate" for event in events]
+    assert shapes == ["task", "artifactUpdate", "task", "artifactUpdate"]
+
+
 def test_replay_state_snapshot_becomes_state_delta() -> None:
     state = OrchestrationState()
     state.nodes["n1"] = NodeState(

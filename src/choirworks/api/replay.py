@@ -107,7 +107,6 @@ def synthesize_replay_events(
         del task_copy.artifacts[:]
         events.append(StreamResponse(task=task_copy))
 
-    for task in visible:
         for art in task.artifacts:
             parts = list(art.parts)
             if not parts:

@@ -25,14 +25,14 @@ function statusUpdate(
   };
 }
 
-function viewWithNodes(): ConversationView {
+  function viewWithNodes(): ConversationView {
   let view = emptyConversation;
   view = applyStreamEvent(
     view,
     statusUpdate("state_delta", {
       nodes: {
-        n1: { name: "n1", agent_name: "echo", status: "pending" },
-        n2: { name: "n2", agent_name: "writer", status: "dispatched" },
+        n1: { name: "n1", agent_name: "echo", status: "pending", input_text: "任务一" },
+        n2: { name: "n2", agent_name: "writer", status: "dispatched", input_text: "任务二" },
       },
     }),
     0,
@@ -76,8 +76,8 @@ describe("applyStreamEvent", () => {
       emptyConversation,
       functionCallEvent("create_plan", {
         nodes: [
-          { id: "n1", name: "task1", agent_name: "echo", deps: [] },
-          { id: "n2", name: "task2", agent_name: "writer", deps: ["n1"] },
+          { id: "n1", name: "task1", agent_name: "echo", deps: [], input: { text: "任务一" } },
+          { id: "n2", name: "task2", agent_name: "writer", deps: ["n1"], input: { text: "任务二" } },
         ],
       }),
       1,
@@ -86,6 +86,8 @@ describe("applyStreamEvent", () => {
       ["n1", "pending"],
       ["n2", "pending"],
     ]);
+    expect(view.nodes[0].input_text).toBe("任务一");
+    expect(view.nodes[1].input_text).toBe("任务二");
     expect(view.notifications.at(-1)?.text).toBe("执行计划：2 个节点");
   });
 
@@ -113,7 +115,7 @@ describe("applyStreamEvent", () => {
           success: true,
           reason: "换人",
           added_nodes: [
-            { id: "x1", name: "designer", agent_name: "designer", deps: ["n1"] },
+            { id: "x1", name: "designer", agent_name: "designer", deps: ["n1"], input_text: "新任务" },
           ],
           invalidated: ["n2"],
         },
@@ -126,6 +128,7 @@ describe("applyStreamEvent", () => {
       ["x1", "pending"],
     ]);
     expect(view.nodes[2].agent_name).toBe("designer");
+    expect(view.nodes[2].input_text).toBe("新任务");
     expect(view.notifications.at(-1)?.text).toContain("计划已修订");
   });
 
@@ -163,6 +166,7 @@ describe("applyStreamEvent", () => {
       1,
     );
     expect(view.nodes.map((n) => n.id)).toContain("n1-h1");
+    expect(view.nodes.find((n) => n.id === "n1-h1")?.input_text).toBe("帮忙写");
     expect(view.notifications.at(-1)?.text).toContain("echo");
     expect(view.notifications.at(-1)?.text).toContain("writer");
     const msg = view.messages.at(-1);
@@ -336,19 +340,43 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("无需处理");
   });
 
-  it("applies state_delta: adds new members with notification", () => {
+  it("applies state_delta: adds new members without notification", () => {
     const view = applyStreamEvent(
       emptyConversation,
       statusUpdate("state_delta", {
         members: [
-          { agent_name: "writer", agent_url: "http://x", reason: "plan" },
+          {
+            agent_name: "writer",
+            agent_url: "http://x",
+            reason: "plan",
+            joined_at: "2026-01-01T00:00:00Z",
+          },
         ],
       }),
       1,
     );
     expect(view.members.map((m) => m.agent_name)).toContain("writer");
-    expect(view.notifications.at(-1)?.text).toContain("writer");
-    expect(view.notifications.at(-1)?.text).toContain("加入了群聊");
+    expect(view.members[0].joined_at).toBe("2026-01-01T00:00:00Z");
+    expect(view.notifications.some((n) => n.text.includes("加入了群聊"))).toBe(false);
+  });
+
+  it("renders join_members function call as join notifications", () => {
+    const view = applyStreamEvent(
+      emptyConversation,
+      functionCallEvent(
+        "join_members",
+        { names: ["writer", "reviewer"], reason: "human_mention" },
+        { success: true, data: { joined: ["writer", "reviewer"] } },
+      ),
+      1,
+    );
+    const joins = view.notifications.filter(
+      (n) => n.kind === "room.participant_joined",
+    );
+    expect(joins.map((n) => n.text)).toEqual([
+      "writer 加入了群聊",
+      "reviewer 加入了群聊",
+    ]);
   });
 
   it("replay: state_delta restores members, nodes and interventions", () => {
@@ -356,7 +384,7 @@ describe("applyStreamEvent", () => {
       emptyConversation,
       statusUpdate("state_delta", {
         nodes: {
-          n1: { name: "task1", agent_name: "echo", status: "completed", output: "done" },
+          n1: { name: "task1", agent_name: "echo", status: "completed", output: "done", input_text: "任务一" },
         },
         members: [
           { agent_name: "echo", agent_url: "http://echo", reason: "plan" },
@@ -372,10 +400,11 @@ describe("applyStreamEvent", () => {
     expect(view.nodes.map((n) => n.id)).toEqual(["n1"]);
     expect(view.nodes[0].status).toBe("completed");
     expect(view.nodes[0].output).toBe("done");
+    expect(view.nodes[0].input_text).toBe("任务一");
     expect(Object.keys(view.interventions)).toEqual(["iv1"]);
     expect(view.interventions.iv1.status).toBe("pending");
     expect(view.interventions.iv1.kind).toBe("confirm_cancel");
-    expect(view.notifications.some((n) => n.text.includes("加入了群聊"))).toBe(true);
+    expect(view.notifications.some((n) => n.text.includes("加入了群聊"))).toBe(false);
     expect(view.notifications.some((n) => n.kind === "intervention.requested")).toBe(true);
   });
 
@@ -842,17 +871,18 @@ describe("applyStreamEvent", () => {
     let view = applyStreamEvent(
       emptyConversation,
       functionCallEvent("create_plan", {
-        nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [] }],
+        nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [], input: { text: "任务一" } }],
       }),
       1,
     );
     expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0].input_text).toBe("任务一");
     expect(view.notifications.some((n) => n.kind === "plan.created")).toBe(true);
 
     const snapshotArtifacts = [
       fcArtifact(
         "create_plan",
-        { nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [] }] },
+        { nodes: [{ id: "n1", name: "task1", agent_name: "echo", deps: [], input: { text: "任务一" } }] },
         { success: true },
       ),
       fcArtifact(

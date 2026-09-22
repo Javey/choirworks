@@ -40,6 +40,7 @@ export interface TaskNodeInfo {
   status: string;
   output?: string;
   error?: string;
+  input_text?: string;
 }
 
 export interface InterventionInfo {
@@ -169,6 +170,7 @@ function applyStateDelta(
             status: status ?? n.status,
             output: typeof changes.output === "string" ? changes.output : n.output,
             error: typeof changes.error === "string" ? changes.error : n.error,
+            input_text: typeof changes.input_text === "string" ? changes.input_text : n.input_text,
           };
         });
       } else {
@@ -179,6 +181,7 @@ function applyStateDelta(
           status: status ?? "pending",
           output: typeof changes.output === "string" ? changes.output : undefined,
           error: typeof changes.error === "string" ? changes.error : undefined,
+          input_text: typeof changes.input_text === "string" ? changes.input_text : undefined,
         };
         nodes = [...nodes, newNode];
       }
@@ -203,7 +206,7 @@ function applyStateDelta(
     workingBubbles = view.workingBubbles.filter((b) => !terminalIds.has(b.nodeId));
   }
 
-  // --- members ---
+  // --- members (state sync only; join notifications come from join_members artifacts) ---
   const membersDelta = meta.members as ProtoStruct[] | undefined;
   if (membersDelta && membersDelta.length > 0) {
     const newMembers: RoomMemberDto[] = [];
@@ -215,15 +218,10 @@ function applyStateDelta(
         agent_name: agentName,
         agent_url: String(m.agent_url ?? ""),
         reason: typeof m.reason === "string" ? m.reason : null,
-        joined_at: new Date().toISOString(),
-      });
-      notifications.push({
-        id: `sys-join-${agentName}-${seq}`,
-        kind: "room.participant_joined",
-        text: `${agentName} 加入了群聊`,
-        agent_name: agentName,
-        created_at: new Date().toISOString(),
-        seq,
+        joined_at:
+          typeof m.joined_at === "string" && m.joined_at
+            ? m.joined_at
+            : new Date().toISOString(),
       });
     }
     if (newMembers.length) {
@@ -422,35 +420,6 @@ function applyStreamEventInner(
     );
     const statusMsg = (update.status as ProtoStruct | undefined)?.message as ProtoStruct | undefined;
 
-    if (kind === "room.participant_joined") {
-      const agentName = String(meta.agent_name ?? "");
-      if (agentName && !view.members.some((m) => m.agent_name === agentName)) {
-        const member: RoomMemberDto = {
-          conversation_id: view.contextId,
-          agent_name: agentName,
-          agent_url: String(meta.agent_url ?? ""),
-          reason: typeof meta.reason === "string" ? meta.reason : null,
-          joined_at: new Date().toISOString(),
-        };
-        const notification: SystemNotification = {
-          id: `sys-join-${agentName}-${seq}`,
-          kind,
-          text: `${agentName} 加入了群聊`,
-          agent_name: agentName,
-          created_at: new Date().toISOString(),
-          seq,
-        };
-        return {
-          ...view,
-          state,
-          members: [...view.members, member],
-          notifications: [...view.notifications, notification],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-      return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };
-    }
-
     if (kind === "state_delta") {
       return applyStateDelta(view, meta, state, seq);
     }
@@ -539,6 +508,9 @@ function applyStreamEventInner(
           name: String(n.name ?? ""),
           agent_name: String(n.agent_name ?? ""),
           status: "pending",
+          input_text: typeof (n.input as ProtoStruct | undefined)?.text === "string"
+            ? String((n.input as ProtoStruct).text)
+            : undefined,
         }));
         return {
           ...view,
@@ -565,6 +537,7 @@ function applyStreamEventInner(
           name: String(n.name ?? ""),
           agent_name: String(n.agent_name ?? ""),
           status: "pending",
+          input_text: typeof n.input_text === "string" ? String(n.input_text) : undefined,
         }));
         const existing = new Set(view.nodes.map((n) => n.id));
         const nodes = [
@@ -681,6 +654,7 @@ function applyStreamEventInner(
           name: helper,
           agent_name: helper,
           status: "pending",
+          input_text: instruction || undefined,
         };
         const existing = new Set(view.nodes.map((n) => n.id));
         const nodes = existing.has(helperNodeId)
@@ -710,6 +684,36 @@ function applyStreamEventInner(
             created_at: new Date().toISOString(),
             seq,
           }],
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
+
+      if (funcName === "join_members") {
+        const resultData = (funcResult.data as ProtoStruct | undefined) ?? {};
+        const joinedSource = Array.isArray(resultData.joined)
+          ? resultData.joined
+          : funcArgs.names;
+        const joined = Array.isArray(joinedSource)
+          ? (joinedSource as unknown[]).map(String)
+          : [];
+        const notified = new Set(
+          view.notifications
+            .filter((n) => n.kind === "room.participant_joined")
+            .map((n) => n.agent_name),
+        );
+        const joinNotifications = joined
+          .filter((name) => name && !notified.has(name))
+          .map((name) => ({
+            id: `sys-join-${name}-${seq}`,
+            kind: "room.participant_joined",
+            text: `${name} 加入了群聊`,
+            agent_name: name,
+            created_at: new Date().toISOString(),
+            seq,
+          }));
+        return {
+          ...view,
+          notifications: [...view.notifications, ...joinNotifications],
           lastSeq: Math.max(view.lastSeq, seq),
         };
       }
