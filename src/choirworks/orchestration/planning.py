@@ -31,6 +31,7 @@ async def stream_plan(
     context_brief: str | None = None,
 ) -> ToolCallResult:
     """Stream the planning LLM, emitting thought/text chunks, return the tool call."""
+    logger.info("stream_plan: task=%s request_len=%d", ctx.task_id, len(request))
     tool_call: ToolCallResult | None = None
     reasoning_parts: list[str] = []
     content_parts: list[str] = []
@@ -94,6 +95,10 @@ async def stream_plan(
         )
     if tool_call is None:
         raise PlanningFailed("planner stream ended without a plan")
+    logger.info(
+        "stream_plan done: task=%s reasoning_len=%d content_len=%d tool=%s",
+        ctx.task_id, len(reasoning), len(content), tool_call.function.name,
+    )
     return tool_call
 
 
@@ -106,6 +111,7 @@ async def plan_and_launch(
     """Plan a new turn, create nodes, join members, start the runner."""
     state = ctx.state
     start_new_plan(state, f"plan-{uuid.uuid4().hex[:8]}")
+    logger.info("plan_and_launch: task=%s plan_id=%s", ctx.task_id, state.plan_id)
     context_brief = await ctx.brief_builder.build(
         ctx.context_id, exclude_task_id=ctx.task_id
     )
@@ -131,11 +137,17 @@ async def plan_and_launch(
     )
 
     if not draft.nodes:
+        logger.info("plan_and_launch: task=%s empty plan, completing", ctx.task_id)
         await ctx.sessions.persist(ctx)
         await emit_event(ctx, "", TaskState.TASK_STATE_COMPLETED)
         ctx.sessions.evict_session(ctx.context_id)
         return
 
+    logger.info(
+        "plan_and_launch: task=%s nodes=%d agents=%s",
+        ctx.task_id, len(draft.nodes),
+        [n.agent_name for n in draft.nodes],
+    )
     result = await tool_call.function.execute(func_ctx, tool_call.args)
     await emit_function_call(
         ctx, tool_call.function, tool_call.args, result,

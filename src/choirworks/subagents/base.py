@@ -41,6 +41,10 @@ async def run_subagent[T](
     **tool_kwargs: object,
 ) -> T:
     """Stream the model's reply, retrying on invalid tool calls."""
+    logger.info(
+        "run_subagent: name=%s user_len=%d retries=%d",
+        subagent.name, len(user), subagent.max_retries,
+    )
     func_ctx = FunctionContext(
         runtime=ctx.runtime,
         registry=ctx.registry,
@@ -75,5 +79,13 @@ async def run_subagent[T](
                 " Return a corrected result."
             )
             continue
+        logger.info(
+            "run_subagent done: name=%s tool=%s",
+            subagent.name, subagent.tool_name,
+        )
         return subagent.process(tool_call)
+    logger.warning(
+        "run_subagent exhausted: name=%s retries=%d",
+        subagent.name, subagent.max_retries,
+    )
     return subagent.process(None)

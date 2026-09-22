@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
@@ -19,6 +20,8 @@ from a2a.types import (
 )
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from pydantic import AnyHttpUrl, JsonValue
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteAgentClient:
@@ -92,6 +95,10 @@ class RemoteAgentClient:
         message_id: str | None = None,
     ) -> AsyncIterator[StreamResponse]:
         client = await self._client_for(agent_url)
+        logger.info(
+            "send_text: agent_url=%s text_len=%d task_id=%s",
+            agent_url, len(text), task_id or "(none)",
+        )
         message: Message = new_text_message(
             text, role=Role.ROLE_USER, task_id=task_id, context_id=context_id
         )
@@ -104,15 +111,33 @@ class RemoteAgentClient:
     async def get_task(self, agent_url: str, remote_task_id: str) -> Task | None:
         client = await self._client_for(agent_url)
         try:
-            return await client.get_task(GetTaskRequest(id=remote_task_id))
+            task = await client.get_task(GetTaskRequest(id=remote_task_id))
+            logger.info(
+                "get_task: agent_url=%s task_id=%s state=%s",
+                agent_url, remote_task_id,
+                task.status.state if task else "none",
+            )
+            return task
         except Exception:  # noqa: BLE001 - 远程任务可能已过期/不存在
+            logger.warning(
+                "get_task failed: agent_url=%s task_id=%s",
+                agent_url, remote_task_id,
+            )
             return None
 
     async def cancel_task(self, agent_url: str, remote_task_id: str) -> None:
         client = await self._client_for(agent_url)
         try:
             await client.cancel_task(CancelTaskRequest(id=remote_task_id))
+            logger.info(
+                "cancel_task: agent_url=%s task_id=%s",
+                agent_url, remote_task_id,
+            )
         except Exception:  # noqa: BLE001 - 取消仅为信号，失败不阻塞
+            logger.warning(
+                "cancel_task failed: agent_url=%s task_id=%s",
+                agent_url, remote_task_id,
+            )
             return
 
     async def subscribe_task(

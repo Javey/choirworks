@@ -42,6 +42,10 @@ async def stream_remote(
     continuation: bool,
 ) -> str:
     remote_task_id = node.a2a_task_id if continuation else None
+    logger.info(
+        "stream_remote: node=%s agent_url=%s text_len=%d continuation=%s",
+        node.id, node.agent_url, len(text), continuation,
+    )
     chunks = ctx.remote.send_text(
         node.agent_url,
         text,
@@ -50,12 +54,18 @@ async def stream_remote(
         message_id=f"{ctx.context_id}:{node.id}:{node.attempt}",
     )
     current = await consume_chunks(ctx, node, chunks)
+    logger.info("stream_remote done: node=%s state=%s", node.id, current)
     return await ensure_terminal(ctx, node, current)
 
 
 async def resume_remote(ctx: OrchestrationContext, node: NodeState) -> str:
     if not node.a2a_task_id:
+        logger.warning("resume_remote: node=%s no a2a_task_id", node.id)
         return "failed"
+    logger.info(
+        "resume_remote: node=%s a2a_task_id=%s",
+        node.id, node.a2a_task_id,
+    )
     current = "working"
     try:
         chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
@@ -217,6 +227,10 @@ async def consume_chunks(
     node.output = " ".join(
         artifact.get("text", "") for artifact in artifacts if artifact.get("text")
     ).strip() or None
+    logger.info(
+        "consume_chunks done: node=%s state=%s output_len=%d",
+        node.id, current, len(node.output or ""),
+    )
     return current
 
 

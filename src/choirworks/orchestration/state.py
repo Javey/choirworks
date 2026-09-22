@@ -117,6 +117,7 @@ class NodeDelta(TypedDict, total=False):
     agent_name: str
     output: str
     name: str
+    input_text: str
 
 
 class InterventionDelta(TypedDict, total=False):

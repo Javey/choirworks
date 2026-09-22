@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel
 
 from choirworks.orchestration.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 from choirworks.tools.create_plan import PlanNodeData
+
+logger = logging.getLogger(__name__)
 
 
 class RevisePlanArgs(BaseModel):
@@ -49,8 +53,18 @@ async def execute_revise_plan(
     plan_args = args if isinstance(args, RevisePlanArgs) else RevisePlanArgs.model_validate(
         args.model_dump()
     )
+    logger.info(
+        "revise_plan: add=%d invalidate=%d reason=%s",
+        len(plan_args.patch.add), len(plan_args.patch.invalidate),
+        plan_args.patch.reason or "(none)",
+    )
     result = await ctx.effects.apply_patch_locked(plan_args.patch)
 
+    logger.info(
+        "revise_plan done: added=%d invalidated=%d skipped=%d rejected=%d",
+        len(result.added), len(result.invalidated),
+        len(result.skipped_in_flight), len(result.rejected),
+    )
     return FunctionResult(
         success=True,
         data=RevisePlanData(
@@ -64,6 +78,7 @@ async def execute_revise_plan(
                     name=ctx.state.nodes[node_id].name,
                     agent_name=ctx.state.nodes[node_id].agent_name,
                     deps=ctx.state.nodes[node_id].deps,
+                    input_text=ctx.state.nodes[node_id].input_text,
                 )
                 for node_id in result.added
             ],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from a2a.types.a2a_pb2 import TaskState
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
     from choirworks.orchestration.state import MemberDelta
     from choirworks.tools.base import AgentFunction, FunctionResult
+
+logger = logging.getLogger(__name__)
 
 
 async def join_members(
@@ -30,6 +33,10 @@ async def join_members(
     requested = [name for name in dict.fromkeys(names) if name not in ctx.state.members]
     if not requested:
         return
+    logger.info(
+        "join_members: requested=%s reason=%s",
+        requested, reason,
+    )
     result = await execute_function(
         ctx, join_members_func, JoinMembersArgs(names=requested, reason=reason)
     )
@@ -63,11 +70,18 @@ async def execute_function(
     from choirworks.orchestration.events import emit_function_call
     from choirworks.tools.base import FunctionContext
 
+    logger.info(
+        "execute_function: function=%s", func.name,
+    )
     func_ctx = FunctionContext(
         runtime=ctx.runtime,
         registry=ctx.registry,
         effects=ctx.effects,
     )
     result = await func.execute(func_ctx, args)
+    logger.info(
+        "execute_function done: function=%s success=%s",
+        func.name, result.success,
+    )
     await emit_function_call(ctx, func, args, result, state_name=state_name)
     return result

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, TypeVar
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -87,6 +90,10 @@ class LiteLLMClient:
                     },
                 })
 
+        logger.info(
+            "LLM stream: model=%s system_len=%d user_len=%d tools=%d",
+            self._model, len(system), len(user), len(declarations),
+        )
         response = await self._completion_fn(
             model=self._model,
             messages=[
@@ -120,6 +127,7 @@ class LiteLLMClient:
                         call_names[call.index] = call.function.name
 
         if not fragments:
+            logger.info("LLM stream done: model=%s tool_call=none", self._model)
             return
 
         if len(fragments) > 1:
@@ -133,9 +141,17 @@ class LiteLLMClient:
         payload = "".join(args_fragments)
         schema = schemas[tool_name]
         args = schema.model_validate_json(payload)
+        logger.info(
+            "LLM stream done: model=%s tool_call=%s args_len=%d",
+            self._model, tool_name, len(payload),
+        )
         yield ToolCallResult(function=functions[tool_name], args=args)
 
     async def text(self, *, system: str, user: str) -> str:
+        logger.info(
+            "LLM text: model=%s system_len=%d user_len=%d",
+            self._model, len(system), len(user),
+        )
         response = await self._completion_fn(
             model=self._model,
             messages=[
@@ -147,7 +163,12 @@ class LiteLLMClient:
         )
         if not isinstance(response, ModelResponse):
             raise ValueError("expected a non-streaming response")
-        return response.choices[0].message.content or ""
+        result = response.choices[0].message.content or ""
+        logger.info(
+            "LLM text done: model=%s response_len=%d",
+            self._model, len(result),
+        )
+        return result
 
     def count_tokens(self, text: str) -> int:
         try:

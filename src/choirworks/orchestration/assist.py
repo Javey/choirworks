@@ -23,12 +23,22 @@ async def arbitrate_mentions(
         return
     agents = await ctx.registry.list()
     known = {agent.name: agent for agent in agents}
-    for name in dict.fromkeys(re.findall(r"@([A-Za-z0-9_-]+)", node.output)):
+    mentions = list(dict.fromkeys(re.findall(r"@([A-Za-z0-9_-]+)", node.output)))
+    if mentions:
+        logger.info(
+            "arbitrate_mentions: node=%s mentions=%s",
+            node.id, mentions,
+        )
+    for name in mentions:
         if name == node.agent_name or name not in known:
             continue
         if assist_nodes_for(state, name, node.id):
             continue
         if state.derived_count >= ctx.config.max_derived_nodes:
+            logger.info(
+                "arbitrate_mentions: node=%s max_derived reached, skipping @%s",
+                node.id, name,
+            )
             return
         state.derived_count += 1
         helper_id = f"{node.id}-a{state.derived_count}"
@@ -49,6 +59,7 @@ async def arbitrate_mentions(
             helper_id: {
                 "status": "pending",
                 "agent_name": helper.agent_name,
+                "input_text": helper.input_text,
             },
         })
         await ctx.sessions.persist(ctx)
@@ -61,10 +72,20 @@ async def spawn_assist(
     decision: object,
 ) -> bool:
     """Execute a CallSubagent function based on an assistance decision."""
+    target = getattr(decision, "target_agent", "") or ""
+    instruction = getattr(decision, "instruction", "")
+    logger.info(
+        "spawn_assist: node=%s target=%s instruction_len=%d",
+        node.id, target, len(instruction),
+    )
     args = CallSubagentArgs(
         requested_by=node.id,
-        target_agent=getattr(decision, "target_agent", "") or "",
-        instruction=getattr(decision, "instruction", ""),
+        target_agent=target,
+        instruction=instruction,
     )
     result = await execute_function(ctx, call_subagent_func, args)
+    logger.info(
+        "spawn_assist: node=%s success=%s",
+        node.id, result.success,
+    )
     return result.success

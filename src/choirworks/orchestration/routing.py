@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from choirworks.a2a.room import RoomOptions
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
@@ -10,6 +12,8 @@ from choirworks.orchestration.state import (
     blocked_nodes,
     enqueue,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def route_message(
@@ -36,17 +40,29 @@ async def route_message(
             None,
         )
         if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
+            logger.info(
+                "route_message: task=%s route=enqueue_active node=%s",
+                ctx.task_id, quoted_node.id,
+            )
             enqueue(state,
                 quoted_node.id, text, sender="user", quote_id=str(quote_id)
             )
             await ctx.sessions.persist(ctx)
             return
         if quoted_node is not None and quoted_node.status == "completed":
+            logger.info(
+                "route_message: task=%s route=followup node=%s",
+                ctx.task_id, quoted_node.id,
+            )
             await spawn_followup_node(ctx, text, quoted_node)
             return
 
     if interrupt and active:
         node = active[0]
+        logger.info(
+            "route_message: task=%s route=interrupt node=%s",
+            ctx.task_id, node.id,
+        )
         if node.a2a_task_id:
             await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
         node.status = "canceled"
@@ -65,6 +81,10 @@ async def route_message(
         None,
     )
     if target is not None:
+        logger.info(
+            "route_message: task=%s route=enqueue node=%s",
+            ctx.task_id, target.id,
+        )
         enqueue(state,
             target.id,
             text,
@@ -75,6 +95,9 @@ async def route_message(
         return
 
     from choirworks.orchestration.planning import plan_and_launch
+    logger.info(
+        "route_message: task=%s route=new_plan", ctx.task_id,
+    )
     await plan_and_launch(ctx, text)
 
 
@@ -88,9 +111,17 @@ async def spawn_followup_node(
     """Create a derived follow-up node, emit state, persist, flag runner."""
     state = ctx.state
     if state.derived_count >= ctx.config.max_derived_nodes:
+        logger.info(
+            "spawn_followup_node: max_derived reached, skipping anchor=%s",
+            anchor.id,
+        )
         return
     state.derived_count += 1
     node_id = f"{anchor.id}-f{state.derived_count}"
+    logger.info(
+        "spawn_followup_node: id=%s agent=%s anchor=%s",
+        node_id, anchor.agent_name, anchor.id,
+    )
     followup = NodeState(
         id=node_id,
         name="",
@@ -105,6 +136,7 @@ async def spawn_followup_node(
         node_id: {
             "status": "pending",
             "agent_name": followup.agent_name,
+            "input_text": followup.input_text,
         },
     })
     await ctx.sessions.persist(ctx)

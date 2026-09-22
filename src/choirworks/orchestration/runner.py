@@ -33,6 +33,7 @@ def start_runner(ctx: OrchestrationContext) -> None:
     runtime.runner = asyncio.create_task(
         run_plan(ctx), name=f"choirworks-runner:{ctx.context_id}"
     )
+    logger.info("start_runner: context=%s", ctx.context_id)
 
 
 async def run_plan(ctx: OrchestrationContext) -> None:
@@ -68,6 +69,11 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     batch.append((node, mode))
                 if batch:
                     await _announce_dispatch(ctx, batch)
+                    logger.info(
+                        "run_plan: task=%s dispatched=%s",
+                        task_id,
+                        [(n.id, n.agent_name, m) for n, m in batch],
+                    )
                 for node, mode in batch:
                     node_task = asyncio.create_task(
                         execute_node(ctx, node, mode=mode),
@@ -88,6 +94,10 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     if exception is not None:
                         node.status = "failed"
                         node.error = str(exception)
+                        logger.warning(
+                            "run_plan: task=%s node=%s raised: %s",
+                            task_id, node.id, exception,
+                        )
                         await emit_state_delta(ctx, nodes={
                             node.id: {"status": "failed", "error": node.error},
                         })
@@ -110,11 +120,13 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     if progress:
                         continue
                     await ctx.sessions.persist(ctx)
+                    logger.info("run_plan: task=%s state=input_required", task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_INPUT_REQUIRED,
                     )
                     return
                 if all_completed(state):
+                    logger.info("run_plan: task=%s state=completed", task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_COMPLETED,
                     )
@@ -126,9 +138,17 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         ctx.config.replan_on_failure
                         and state.revision_count < ctx.config.max_revisions
                     ):
+                        logger.info(
+                            "run_plan: task=%s attempting repair "
+                            "revision=%d/%d",
+                            task_id, state.revision_count + 1,
+                            ctx.config.max_revisions,
+                        )
                         recovered = await repair.repair_plan(ctx)
                     if recovered:
+                        logger.info("run_plan: task=%s repair succeeded", task_id)
                         continue
+                    logger.info("run_plan: task=%s state=failed", task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_FAILED,
                     )
@@ -188,7 +208,7 @@ async def _announce_dispatch(
         args = CallSubagentArgs(
             requested_by="orchestrator",
             target_agent=node.agent_name,
-            instruction=node.name,
+            instruction=node.input_text or node.name,
         )
         await emit_function_call(
             ctx, call_subagent_func, args, FunctionResult(success=True)

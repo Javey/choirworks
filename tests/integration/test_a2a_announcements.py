@@ -13,7 +13,7 @@ def _node(node_id: str, name: str, agent_name: str, deps: list[str] | None = Non
         id=node_id,
         name=name,
         agent_name=agent_name,
-        input={"text": name},
+        input={"text": f"具体任务：{name}"},
         deps=list(deps or []),
     )
 
@@ -83,7 +83,8 @@ async def test_serial_plan_announces_each_wave_in_order(tmp_path, echo_agent):
             "orchestrator",
         ]
         assert [c["function_args"]["target_agent"] for c in calls] == ["echo", "echo"]
-        assert [c["function_args"]["instruction"] for c in calls] == ["第一步", "第二步"]
+        expected = ["具体任务：第一步", "具体任务：第二步"]
+        assert [c["function_args"]["instruction"] for c in calls] == expected
 
         replay = await http.get(f"/v1/conversations/{task.context_id}/replay")
         assert replay.status_code == 200, replay.text
@@ -114,7 +115,8 @@ async def test_parallel_plan_announces_one_wave(tmp_path, echo_agent):
         task = await _send_and_wait(client, "并行任务", tmp_path)
 
         calls = _subagent_calls(task)
-        assert [c["function_args"]["instruction"] for c in calls] == ["并行甲", "并行乙"]
+        expected = ["具体任务：并行甲", "具体任务：并行乙"]
+        assert [c["function_args"]["instruction"] for c in calls] == expected
 
 
 async def test_retry_does_not_reannounce(tmp_path):
@@ -135,7 +137,7 @@ async def test_retry_does_not_reannounce(tmp_path):
             task = await _send_and_wait(client, "重试任务", tmp_path)
 
             calls = _subagent_calls(task)
-            assert [c["function_args"]["instruction"] for c in calls] == ["重试任务"]
+            assert [c["function_args"]["instruction"] for c in calls] == ["具体任务：重试任务"]
             assert len(calls) == 1
     finally:
         await flaky.stop()
@@ -170,7 +172,7 @@ async def test_llm_requested_assist_announces_requester(tmp_path):
             assert len(calls) == 2
             dispatch, assist = calls
             assert dispatch["function_args"]["requested_by"] == "orchestrator"
-            assert dispatch["function_args"]["instruction"] == "评估方案"
+            assert dispatch["function_args"]["instruction"] == "具体任务：评估方案"
             assert assist["function_args"]["requested_by"] == "n1"
             assert assist["function_args"]["target_agent"] == "echo"
             assert assist["function_args"]["instruction"] == "评估技术方案"

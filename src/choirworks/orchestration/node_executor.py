@@ -44,9 +44,13 @@ async def execute_node(
     continuation = mode == "continue"
     if mode != "resume":
         node.attempt += 1
+    logger.info(
+        "execute_node: node=%s agent=%s mode=%s attempt=%d",
+        node.id, node.agent_name, mode, node.attempt,
+    )
     if mode == "dispatch":
         await emit_state_delta(ctx, nodes={
-            node.id: {"status": "dispatched"},
+            node.id: {"status": "dispatched", "input_text": node.input_text},
         })
     elif mode == "resume":
         await emit_state_delta(ctx, nodes={
@@ -74,11 +78,13 @@ async def execute_node(
     if current == "completed":
         await _handle_completed(ctx, node)
     elif current == "canceled":
+        logger.info("execute_node: node=%s canceled", node.id)
         node.status = "canceled"
         await emit_state_delta(ctx, nodes={
             node.id: {"status": "canceled"},
         })
     elif current == "input_required":
+        logger.info("execute_node: node=%s input_required", node.id)
         node.status = "input_required"
         await emit_state_delta(ctx, nodes={
             node.id: {
@@ -111,6 +117,10 @@ async def execute_node(
 
 async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
     decision = await _interpret_outcome(ctx, node)
+    logger.info(
+        "handle_completed: node=%s intent=%s",
+        node.id, decision.intent,
+    )
     if decision.intent == "need_info":
         node.status = "input_required"
         node.question = decision.question or node.output

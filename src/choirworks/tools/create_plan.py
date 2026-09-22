@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Literal
 
@@ -9,6 +10,8 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
+logger = logging.getLogger(__name__)
+
 
 class PlanNodeData(BaseModel):
     """Wire payload for one plan node in a tool result."""
@@ -17,6 +20,7 @@ class PlanNodeData(BaseModel):
     name: str
     agent_name: str
     deps: list[str]
+    input_text: str
 
 
 class CreatePlanData(BaseModel):
@@ -65,6 +69,11 @@ async def execute_create_plan(
     )
     state = ctx.state
 
+    logger.info(
+        "create_plan: nodes=%d agents=%s",
+        len(draft.nodes), [n.agent_name for n in draft.nodes],
+    )
+
     agents = await ctx.registry.list()
     agent_urls = {agent.name: agent.card_url for agent in agents}
 
@@ -95,6 +104,7 @@ async def execute_create_plan(
                     name=n.name,
                     agent_name=n.agent_name,
                     deps=n.deps,
+                    input_text=n.input_text,
                 )
                 for n in state.nodes.values()
             ],

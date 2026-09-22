@@ -23,6 +23,10 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
     """Ask the repair subagent for a patch and apply it."""
     state = ctx.state
     failed_ids = [node.id for node in failed_nodes(state)]
+    logger.info(
+        "repair_plan: context=%s failed_nodes=%s",
+        ctx.context_id, failed_ids,
+    )
     agents = await ctx.registry.list()
     if not agents:
         return False
@@ -33,10 +37,15 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
         logger.exception("plan repair failed for %s", ctx.context_id)
         return False
     if decision is None or decision.patch is None:
+        logger.info("repair_plan: context=%s no patch returned", ctx.context_id)
         return False
     patch = decision.patch
     patch.invalidate = list(dict.fromkeys([*patch.invalidate, *failed_ids]))
     result = await revise_plan(ctx, patch)
+    logger.info(
+        "repair_plan: context=%s added=%d invalidated=%d",
+        ctx.context_id, len(result.added), len(result.invalidated),
+    )
     return bool(result.added or result.invalidated)
 
 

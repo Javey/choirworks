@@ -116,6 +116,10 @@ async def _decide_assistance(
 
 
 async def request_human(ctx: OrchestrationContext, node: NodeState) -> None:
+    logger.info(
+        "request_human: node=%s agent=%s question_len=%d",
+        node.id, node.agent_name, len(node.question or node.output or ""),
+    )
     args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
     await execute_function(
         ctx, ask_user_func, args,
@@ -135,6 +139,10 @@ async def answer_intervention(
     intervention.status = "resolved"
     intervention.answer = text
     intervention.responder = "human"
+    logger.info(
+        "answer_intervention: id=%s kind=%s affirmative=%s",
+        intervention.id, intervention.kind, _is_affirmative(text),
+    )
     if intervention.kind == "confirm_cancel":
         target = state.nodes.get(intervention.target_node_id or "")
         if target is not None and _is_affirmative(text):
@@ -170,6 +178,11 @@ async def cancel_node(
     ctx: OrchestrationContext,
     node: NodeState,
 ) -> None:
+    logger.info(
+        "cancel_node: node=%s invalidated=%s",
+        node.id,
+        [n.id for n in blocked_nodes(ctx.state)],
+    )
     state = ctx.state
     if node.a2a_task_id and node.agent_url:
         await cancel_remote_task(ctx, node.agent_url, node.a2a_task_id)

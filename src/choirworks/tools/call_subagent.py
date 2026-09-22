@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, create_model
@@ -7,6 +8,8 @@ from pydantic import BaseModel, create_model
 from choirworks.core.context import build_peer_fallback_input
 from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+
+logger = logging.getLogger(__name__)
 
 
 def _call_subagent_schema(candidate_names: list[str]) -> type[BaseModel]:
@@ -61,6 +64,11 @@ async def execute_call_subagent(
         args.model_dump()
     )
     state = ctx.state
+
+    logger.info(
+        "call_subagent: requested_by=%s target=%s instruction_len=%d",
+        call_args.requested_by, call_args.target_agent, len(call_args.instruction),
+    )
 
     if call_args.requested_by == "orchestrator":
         return FunctionResult(
