@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyStreamEvent,
   emptyConversation,
+  mergeConsecutiveJoins,
   type ConversationView,
+  type TimelineItem,
 } from "./conversationView";
 
 type ProtoStruct = Record<string, unknown>;
@@ -152,7 +154,7 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toBe("预算口径？");
   });
 
-  it("renders call_subagent assist: helper node, notification and requester bubble", () => {
+  it("renders call_subagent assist: helper node and requester bubble, no notification", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
       functionCallEvent(
@@ -167,8 +169,9 @@ describe("applyStreamEvent", () => {
     );
     expect(view.nodes.map((n) => n.id)).toContain("n1-h1");
     expect(view.nodes.find((n) => n.id === "n1-h1")?.input_text).toBe("帮忙写");
-    expect(view.notifications.at(-1)?.text).toContain("echo");
-    expect(view.notifications.at(-1)?.text).toContain("writer");
+    // The requester's output already @-mentions the helper; the dedicated
+    // "X 请求 Y 协助" system notification is redundant.
+    expect(view.notifications.some((n) => n.kind === "assist.dispatched")).toBe(false);
     const msg = view.messages.at(-1);
     expect(msg?.role).toBe("agent");
     expect(msg?.sender).toBe("echo");
@@ -975,5 +978,77 @@ describe("applyStreamEvent", () => {
     const msgCount = view.messages.length;
     view = applyStreamEvent(view, snap, 2);
     expect(view.messages.length).toBe(msgCount);
+  });
+});
+
+describe("mergeConsecutiveJoins", () => {
+  const join = (name: string, seq: number): TimelineItem => ({
+    type: "notification",
+    seq,
+    data: {
+      id: `sys-join-${name}-${seq}`,
+      kind: "room.participant_joined",
+      text: `${name} 加入了群聊`,
+      agent_name: name,
+      created_at: "",
+      seq,
+    },
+  });
+  const userMsg = (seq: number): TimelineItem => ({
+    type: "message",
+    seq,
+    data: {
+      id: `m${seq}`,
+      role: "user",
+      sender: null,
+      text: "hi",
+      mentions: [],
+      quote_id: null,
+      node_id: null,
+      task_id: null,
+      created_at: "",
+      seq,
+      thinking: false,
+    },
+  });
+
+  it("merges a batch run of join notifications into one line", () => {
+    const merged = mergeConsecutiveJoins([
+      join("product-manager", 1),
+      join("developer", 2),
+      join("code-reviewer", 3),
+      join("qa-engineer", 4),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].seq).toBe(1);
+    expect(merged[0].data.text).toBe(
+      "product-manager、developer、code-reviewer、qa-engineer 加入了群聊",
+    );
+  });
+
+  it("merges adjacent joins across different events", () => {
+    const merged = mergeConsecutiveJoins([join("a", 1), join("b", 5)]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].data.text).toBe("a、b 加入了群聊");
+  });
+
+  it("keeps a single join notification untouched", () => {
+    const merged = mergeConsecutiveJoins([join("a", 1)]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].data.text).toBe("a 加入了群聊");
+  });
+
+  it("splits runs interrupted by other timeline items", () => {
+    const merged = mergeConsecutiveJoins([
+      join("a", 1),
+      join("b", 2),
+      userMsg(3),
+      join("c", 4),
+      join("d", 5),
+    ]);
+    expect(merged).toHaveLength(3);
+    expect(merged[0].data.text).toBe("a、b 加入了群聊");
+    expect(merged[1].type).toBe("message");
+    expect(merged[2].data.text).toBe("c、d 加入了群聊");
   });
 });

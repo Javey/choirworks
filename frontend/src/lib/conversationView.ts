@@ -33,6 +33,53 @@ export interface WorkingBubble {
   text: string;
 }
 
+export type TimelineItem =
+  | { type: "message"; seq: number; data: ChatMessage }
+  | { type: "notification"; seq: number; data: SystemNotification }
+  | { type: "working"; seq: number; data: WorkingBubble };
+
+/**
+ * Coalesce timeline-adjacent "X 加入了群聊" notifications into one row
+ * (e.g. a batch join from planning). Runs interrupted by any other item
+ * stay split. Data-level notifications are untouched.
+ */
+export function mergeConsecutiveJoins(items: TimelineItem[]): TimelineItem[] {
+  const merged: TimelineItem[] = [];
+  let run: SystemNotification[] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    if (run.length === 1) {
+      merged.push({ type: "notification", seq: run[0].seq, data: run[0] });
+    } else {
+      const names = [
+        ...new Set(run.map((n) => n.agent_name).filter((v): v is string => Boolean(v))),
+      ];
+      merged.push({
+        type: "notification",
+        seq: run[0].seq,
+        data: {
+          id: `sys-join-merged-${run[0].seq}`,
+          kind: "room.participant_joined",
+          text: `${names.join("、")} 加入了群聊`,
+          created_at: run[run.length - 1].created_at,
+          seq: run[0].seq,
+        },
+      });
+    }
+    run = [];
+  };
+  for (const item of items) {
+    if (item.type === "notification" && item.data.kind === "room.participant_joined") {
+      run.push(item.data);
+      continue;
+    }
+    flush();
+    merged.push(item);
+  }
+  flush();
+  return merged;
+}
+
 export interface TaskNodeInfo {
   id: string;
   name: string;
@@ -682,13 +729,6 @@ function applyStreamEventInner(
           ...view,
           nodes,
           messages: [...view.messages, assistMsg],
-          notifications: [...view.notifications, {
-            id: `sys-assist-${seq}`,
-            kind: "assist.dispatched",
-            text: `${requester} 请求 ${helper} 协助`,
-            created_at: new Date().toISOString(),
-            seq,
-          }],
           lastSeq: Math.max(view.lastSeq, seq),
         };
       }
