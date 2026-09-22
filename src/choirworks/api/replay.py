@@ -55,6 +55,7 @@ def _state_delta_event(
             "node_id": intervention.node_id,
             "kind": intervention.kind,
             "question": intervention.question,
+            "responder": intervention.responder or "",
         }
         for intervention in state.interventions.values()
         if intervention.id

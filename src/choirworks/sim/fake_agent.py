@@ -5,7 +5,7 @@ import contextlib
 from dataclasses import dataclass
 
 import uvicorn
-from a2a.helpers import get_message_text, new_task_from_user_message
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -110,10 +110,10 @@ class ScriptedExecutor(AgentExecutor):
         return f"echo:{text}"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        text = get_message_text(context.message) if context.message else ""
-        instruction = (
-            text.split("[当前任务]")[-1].strip() if "[当前任务]" in text else text
-        )
+        instruction = ""
+        if context.message and context.message.parts:
+            instruction = context.message.parts[0].text or ""
+        instruction = instruction.strip()
         if context.current_task is None:
             message = context.message
             if message is None:
@@ -154,13 +154,7 @@ class ScriptedExecutor(AgentExecutor):
                 await asyncio.sleep(0.5)
             if self._behavior == "delay":
                 await asyncio.sleep(0.4)
-            output_text = (
-                instruction
-                if self._behavior
-                in ("research", "write", "collaborate", "inquire", "review", "assist")
-                else text
-            )
-            await self._emit_artifact(updater, self._success_text(output_text))
+            await self._emit_artifact(updater, self._success_text(instruction))
             await updater.complete()
         else:
             task = context.current_task

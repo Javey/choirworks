@@ -17,7 +17,7 @@ from choirworks.tools.outcome_decision import OutcomeDecision
 logger = logging.getLogger(__name__)
 
 
-async def build_node_text(ctx: OrchestrationContext, node: NodeState) -> str:
+async def build_node_text(ctx: OrchestrationContext, node: NodeState) -> list[str]:
     agents = await ctx.registry.list()
     by_name = {agent.name: agent for agent in agents}
     if node.answer_text is not None:

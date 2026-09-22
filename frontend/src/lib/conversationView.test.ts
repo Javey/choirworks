@@ -340,6 +340,65 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("无需处理");
   });
 
+  it("resolved by helper emits no notification, resolved by human does", () => {
+    const pending = statusUpdate("state_delta", {
+      interventions: {
+        iv1: { status: "pending", node_id: "n1", kind: "question" },
+      },
+    });
+    let view = applyStreamEvent(viewWithNodes(), pending, 1);
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: {
+            status: "resolved",
+            node_id: "n1",
+            kind: "question",
+            responder: "3-h1",
+          },
+        },
+      }),
+      2,
+    );
+    expect(view.interventions.iv1.status).toBe("resolved");
+    expect(view.notifications.some((n) => n.kind === "intervention.resolved")).toBe(false);
+
+    let view2 = applyStreamEvent(viewWithNodes(), pending, 1);
+    view2 = applyStreamEvent(
+      view2,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: {
+            status: "resolved",
+            node_id: "n1",
+            kind: "question",
+            responder: "human",
+          },
+        },
+      }),
+      2,
+    );
+    expect(
+      view2.notifications.some((n) => n.text === "人工答复已回填，任务继续"),
+    ).toBe(true);
+
+    // Legacy deltas without responder keep the human-answer wording.
+    let view3 = applyStreamEvent(viewWithNodes(), pending, 1);
+    view3 = applyStreamEvent(
+      view3,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: { status: "resolved", node_id: "n1", kind: "question" },
+        },
+      }),
+      2,
+    );
+    expect(
+      view3.notifications.some((n) => n.text === "人工答复已回填，任务继续"),
+    ).toBe(true);
+  });
+
   it("applies state_delta: adds new members without notification", () => {
     const view = applyStreamEvent(
       emptyConversation,

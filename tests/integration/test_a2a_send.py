@@ -127,7 +127,7 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         resumed = await wait_for_task(
             client, task_id, {TaskState.TASK_STATE_COMPLETED}
         )
-        assert "这是答复" in task_nodes(resumed)["n1"]["output"]
+        assert "answered:" in task_nodes(resumed)["n1"]["output"]
         history_text = " ".join(
             part.text for msg in resumed.history for part in msg.parts if part.HasField("text")
         )

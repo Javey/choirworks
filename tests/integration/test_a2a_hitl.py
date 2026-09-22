@@ -74,7 +74,7 @@ async def test_llm_routes_to_human(tmp_path, ask_agent):
         task = await wait_for_task(
             client, task_id, {TaskState.TASK_STATE_COMPLETED}
         )
-        assert "人工答复" in task_artifact_text(task)
+        assert "answered:" in task_artifact_text(task)
 
 
 async def test_text_marker_needs_info_routes_to_human(tmp_path):

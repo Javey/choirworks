@@ -88,7 +88,8 @@ def test_replay_state_snapshot_becomes_state_delta() -> None:
         name="researcher", url="http://agent", reason="plan"
     )
     state.interventions["i1"] = Intervention(
-        id="i1", node_id="n1", question="需要确认吗", status="resolved"
+        id="i1", node_id="n1", question="需要确认吗", status="resolved",
+        responder="human",
     )
     task = _task_with_artifact({})
 
@@ -102,3 +103,4 @@ def test_replay_state_snapshot_becomes_state_delta() -> None:
     assert metadata["nodes"]["n1"]["output"] == "调研结果"
     assert metadata["members"][0]["name"] == "researcher"
     assert metadata["interventions"]["i1"]["status"] == "resolved"
+    assert metadata["interventions"]["i1"]["responder"] == "human"

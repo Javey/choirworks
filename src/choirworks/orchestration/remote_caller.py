@@ -37,14 +37,15 @@ _REMOTE_STATE_MAP: dict[int, str] = {
 async def stream_remote(
     ctx: OrchestrationContext,
     node: NodeState,
-    text: str,
+    text: str | list[str],
     *,
     continuation: bool,
 ) -> str:
     remote_task_id = node.a2a_task_id if continuation else None
+    text_list = text if isinstance(text, list) else [text]
     logger.info(
-        "stream_remote: node=%s agent_url=%s text_len=%d continuation=%s",
-        node.id, node.agent_url, len(text), continuation,
+        "stream_remote: node=%s agent_url=%s parts=%d continuation=%s",
+        node.id, node.agent_url, len(text_list), continuation,
     )
     chunks = ctx.remote.send_text(
         node.agent_url,

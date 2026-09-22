@@ -127,6 +127,7 @@ class InterventionDelta(TypedDict, total=False):
     node_id: str
     kind: str
     question: str
+    responder: str
 
 
 class MemberDict(TypedDict):

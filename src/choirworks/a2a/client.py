@@ -6,12 +6,11 @@ from collections.abc import AsyncIterator
 import httpx
 from a2a.client import A2ACardResolver, Client, ClientConfig, create_client
 from a2a.client.errors import AgentCardResolutionError
-from a2a.helpers import new_text_message
+from a2a.helpers import new_message, new_text_part
 from a2a.types import (
     AgentCard,
     CancelTaskRequest,
     GetTaskRequest,
-    Message,
     Role,
     SendMessageRequest,
     StreamResponse,
@@ -88,19 +87,23 @@ class RemoteAgentClient:
     async def send_text(
         self,
         agent_url: str,
-        text: str,
+        text: str | list[str],
         *,
         task_id: str | None = None,
         context_id: str | None = None,
         message_id: str | None = None,
     ) -> AsyncIterator[StreamResponse]:
         client = await self._client_for(agent_url)
+        text_list = text if isinstance(text, list) else [text]
         logger.info(
-            "send_text: agent_url=%s text_len=%d task_id=%s",
-            agent_url, len(text), task_id or "(none)",
+            "send_text: agent_url=%s parts=%d task_id=%s",
+            agent_url, len(text_list), task_id or "(none)",
         )
-        message: Message = new_text_message(
-            text, role=Role.ROLE_USER, task_id=task_id, context_id=context_id
+        message = new_message(
+            parts=[new_text_part(t) for t in text_list],
+            task_id=task_id,
+            context_id=context_id,
+            role=Role.ROLE_USER,
         )
         if message_id is not None:
             message.message_id = message_id

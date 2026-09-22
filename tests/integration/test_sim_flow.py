@@ -51,7 +51,7 @@ async def test_sim_plan_chain_hands_off_results(tmp_path):
             assert nodes["n1"]["status"] == "completed"
             assert nodes["n2"]["status"] == "completed"
             # The developer received the product-manager output via handoff.
-            assert "调研结果" in nodes["n2"]["output"]
+            assert "完成接口实现" in nodes["n2"]["output"]
     finally:
         await pm.stop()
         await dev.stop()

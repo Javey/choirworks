@@ -65,6 +65,7 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
                         "status": "resolved",
                         "node_id": node.id,
                         "kind": intervention.kind,
+                        "responder": helper.id,
                     },
                 },
             )
@@ -152,6 +153,7 @@ async def answer_intervention(
                 "status": "resolved",
                 "node_id": intervention.node_id,
                 "kind": "confirm_cancel",
+                "responder": "human",
             },
         })
         await ctx.sessions.persist(ctx)
@@ -168,6 +170,7 @@ async def answer_intervention(
                 "status": "resolved",
                 "node_id": intervention.node_id,
                 "kind": intervention.kind,
+                "responder": "human",
             },
         },
     )

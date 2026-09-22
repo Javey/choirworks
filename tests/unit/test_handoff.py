@@ -42,15 +42,16 @@ def state_with(*nodes: NodeState) -> OrchestrationState:
 def test_dispatch_text_contains_instruction():
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(target, node("n1", status="pending"))
-    text = build_dispatch_text(target, state, agents={})
-    assert "撰写报告" in text
+    parts = build_dispatch_text(target, state, agents={})
+    assert parts[0] == "撰写报告"
 
 
 def test_dispatch_text_includes_direct_dep_output():
     dep = node("n1", agent_name="researcher", status="completed", output="调研结果")
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(dep, target)
-    text = build_dispatch_text(target, state, agents={})
+    parts = build_dispatch_text(target, state, agents={})
+    text = "\n\n".join(parts)
     assert "researcher" in text
     assert "调研结果" in text
     assert QUOTED_CONTENT_BEGIN in text
@@ -62,7 +63,8 @@ def test_dispatch_text_skips_indirect_deps():
     dep = node("n1", status="completed", output="中间产出", deps=["n0"])
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(root, dep, target)
-    text = build_dispatch_text(target, state, agents={})
+    parts = build_dispatch_text(target, state, agents={})
+    text = "\n\n".join(parts)
     assert "中间产出" in text
     assert "根产出" not in text
 
@@ -71,7 +73,8 @@ def test_dispatch_text_skips_unfinished_deps():
     dep = node("n1", status="working", output="半成品")
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(dep, target)
-    text = build_dispatch_text(target, state, agents={})
+    parts = build_dispatch_text(target, state, agents={})
+    text = "\n\n".join(parts)
     assert "半成品" not in text
 
 
@@ -79,7 +82,8 @@ def test_dispatch_text_truncates_long_dep_output():
     dep = node("n1", status="completed", output="长" * (HANDOFF_MAX_CHARS + 50))
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(dep, target)
-    text = build_dispatch_text(target, state, agents={})
+    parts = build_dispatch_text(target, state, agents={})
+    text = "\n\n".join(parts)
     assert "长" * HANDOFF_MAX_CHARS in text
     assert "长" * (HANDOFF_MAX_CHARS + 50) not in text
     assert "已截断" in text
@@ -90,11 +94,12 @@ def test_dispatch_text_roster_only_known_members():
     state = state_with(target)
     add_member(state, "researcher", "http://researcher", "plan")
     add_member(state, "ghost", "http://ghost", "plan")
-    text = build_dispatch_text(
+    parts = build_dispatch_text(
         target,
         state,
         agents={"researcher": make_agent("researcher", "负责调研")},
     )
+    text = "\n\n".join(parts)
     assert "researcher" in text
     assert "负责调研" in text
     assert "ghost" not in text
@@ -102,8 +107,8 @@ def test_dispatch_text_roster_only_known_members():
 
 def test_dispatch_text_contains_convention():
     target = node("n1", input_text="开始")
-    text = build_dispatch_text(target, state_with(target), agents={})
-    assert RECEIPT_CONVENTION in text
+    parts = build_dispatch_text(target, state_with(target), agents={})
+    assert RECEIPT_CONVENTION in parts
 
 
 def test_continuation_text_appends_answer():
@@ -112,13 +117,15 @@ def test_continuation_text_appends_answer():
     dep = node("n1", agent_name="researcher", status="completed", output="调研结果")
     target = node("n2", input_text="撰写报告", deps=["n1"])
     state = state_with(dep, target)
-    text = build_continuation_text(
+    parts = build_continuation_text(
         target,
         state,
         agents={},
         question="预算口径是哪个？",
         answer="按上季度口径",
     )
+    assert parts[0] == "撰写报告"
+    text = "\n\n".join(parts)
     assert "调研结果" in text
     assert "预算口径是哪个？" in text
     assert "按上季度口径" in text
