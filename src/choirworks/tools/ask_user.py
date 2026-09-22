@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import logging
-
+import structlog
 from pydantic import BaseModel
 
 from choirworks.orchestration.state import add_intervention
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class AskUserArgs(BaseModel):
@@ -47,12 +46,12 @@ async def execute_ask_user(
     state = ctx.state
     node = state.nodes.get(ask_args.node_id)
     if node is None:
-        logger.warning("ask_user: unknown node=%s", ask_args.node_id)
+        logger.warning("ask_user: unknown node", node_id=ask_args.node_id)
         return FunctionResult(success=False, error=f"unknown node: {ask_args.node_id}")
 
     logger.info(
-        "ask_user: node=%s agent=%s question_len=%d",
-        node.id, node.agent_name, len(ask_args.question),
+        "ask_user",
+        node_id=node.id, agent=node.agent_name, question_len=len(ask_args.question),
     )
     node.status = "input_required"
     node.question = ask_args.question

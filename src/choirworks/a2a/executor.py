@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 
+import structlog
 from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -40,7 +40,7 @@ from choirworks.orchestration.state import (
 from choirworks.store.contexts import ContextStore
 from choirworks.tools.capabilities import ToolEffects
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _is_resume_message(message: Message | None) -> bool:
@@ -137,7 +137,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         context_id = context.context_id or ""
 
         if _is_resume_message(context.message):
-            logger.info("execute: task=%s resume", task_id)
+            logger.info("execute resume", task_id=task_id)
             await self._resume_task(context, event_queue)
             return
 
@@ -168,8 +168,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if pending_interventions(state):
                 if text:
                     logger.info(
-                        "execute: task=%s route=intervention text_len=%d",
-                        task_id, len(text),
+                        "execute route=intervention",
+                        task_id=task_id, text_len=len(text),
                     )
                     orch_ctx = self._build_ctx(runtime)
                     await answer_intervention(orch_ctx, text)
@@ -180,30 +180,30 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
             if runtime.runner is not None and not runtime.runner.done():
                 logger.info(
-                    "execute: task=%s route=active_runner text_len=%d",
-                    task_id, len(text),
+                    "execute route=active_runner",
+                    task_id=task_id, text_len=len(text),
                 )
                 await route_message(self._build_ctx(runtime), text, room)
                 return
 
             if has_pending_work(state):
                 logger.info(
-                    "execute: task=%s route=pending_work text_len=%d",
-                    task_id, len(text),
+                    "execute route=pending_work",
+                    task_id=task_id, text_len=len(text),
                 )
                 await route_message(self._build_ctx(runtime), text, room)
                 self._start_runner(runtime)
                 return
 
             if not text:
-                logger.info("execute: task=%s route=empty_complete", task_id)
+                logger.info("execute route=empty_complete", task_id=task_id)
                 await updater.complete()
                 self._session_mgr.evict_session(context_id)
                 return
 
             logger.info(
-                "execute: task=%s route=plan_and_launch text_len=%d",
-                task_id, len(text),
+                "execute route=plan_and_launch",
+                task_id=task_id, text_len=len(text),
             )
             await updater.start_work()
             await plan_and_launch(self._build_ctx(runtime), text, room=room)
@@ -213,7 +213,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     ) -> None:
         task_id = context.task_id or ""
         context_id = context.context_id or ""
-        logger.info("cancel: task=%s", task_id)
+        logger.info("cancel", task_id=task_id)
         await event_queue.enqueue_event(
             status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
         )
@@ -235,12 +235,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             for node in list(state.nodes.values()):
                 if node.status == "canceled" and node.a2a_task_id:
                     await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
-            logger.info("cancel: task=%s canceled_nodes=%d", task_id, canceled)
+            logger.info("cancel", task_id=task_id, canceled_nodes=canceled)
         self._session_mgr.evict_session(context_id)
 
     async def shutdown(self) -> None:
         runtimes = list(self._sessions.values())
-        logger.info("shutdown: runtimes=%d", len(runtimes))
+        logger.info("shutdown", runtimes=len(runtimes))
         for runtime in runtimes:
             if runtime.runner is not None:
                 runtime.runner.cancel()
@@ -262,12 +262,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         state = await self._session_mgr.load_state(runtime.context_id)
         if state is None:
-            logger.warning("resume: task=%s state not found", runtime.task_id)
+            logger.warning("resume state not found", task_id=runtime.task_id)
             ctx = self._build_ctx(runtime)
             await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
             self._session_mgr.evict_session(runtime.context_id)
             return
-        logger.info("resume: task=%s state loaded", runtime.task_id)
+        logger.info("resume state loaded", task_id=runtime.task_id)
         async with runtime.lock:
             runtime.state = state
         await self._resume(runtime)
@@ -276,8 +276,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         expired = normalize_cancel_requests(runtime.state)
         if expired:
             logger.info(
-                "resume: task=%s expired_interventions=%d",
-                runtime.task_id, len(expired),
+                "resume expired interventions",
+                task_id=runtime.task_id, expired_interventions=len(expired),
             )
             ctx = self._build_ctx(runtime)
             await emit_state_delta(ctx, interventions={
@@ -292,9 +292,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if node.status in ACTIVE_NODE_STATUSES:
                 node.status = "resume" if node.a2a_task_id else "pending"
         logger.info(
-            "resume: task=%s nodes=%s",
-            runtime.task_id,
-            {n.id: n.status for n in runtime.state.nodes.values()},
+            "resume nodes",
+            task_id=runtime.task_id,
+            nodes={n.id: n.status for n in runtime.state.nodes.values()},
         )
         await self._persist(runtime)
         self._start_runner(runtime)

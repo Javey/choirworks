@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 
 import httpx
+import structlog
 from a2a.client import A2ACardResolver, Client, ClientConfig, create_client
 from a2a.client.errors import AgentCardResolutionError
 from a2a.helpers import new_message, new_text_part
@@ -20,7 +20,7 @@ from a2a.types import (
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from pydantic import AnyHttpUrl, JsonValue
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class RemoteAgentClient:
@@ -96,8 +96,10 @@ class RemoteAgentClient:
         client = await self._client_for(agent_url)
         text_list = text if isinstance(text, list) else [text]
         logger.info(
-            "send_text: agent_url=%s parts=%d task_id=%s",
-            agent_url, len(text_list), task_id or "(none)",
+            "send_text",
+            agent_url=agent_url,
+            parts=len(text_list),
+            task_id=task_id or "(none)",
         )
         message = new_message(
             parts=[new_text_part(t) for t in text_list],
@@ -116,15 +118,17 @@ class RemoteAgentClient:
         try:
             task = await client.get_task(GetTaskRequest(id=remote_task_id))
             logger.info(
-                "get_task: agent_url=%s task_id=%s state=%s",
-                agent_url, remote_task_id,
-                task.status.state if task else "none",
+                "get_task",
+                agent_url=agent_url,
+                task_id=remote_task_id,
+                state=task.status.state if task else "none",
             )
             return task
         except Exception:  # noqa: BLE001 - 远程任务可能已过期/不存在
             logger.warning(
-                "get_task failed: agent_url=%s task_id=%s",
-                agent_url, remote_task_id,
+                "get_task failed",
+                agent_url=agent_url,
+                task_id=remote_task_id,
             )
             return None
 
@@ -133,13 +137,15 @@ class RemoteAgentClient:
         try:
             await client.cancel_task(CancelTaskRequest(id=remote_task_id))
             logger.info(
-                "cancel_task: agent_url=%s task_id=%s",
-                agent_url, remote_task_id,
+                "cancel_task",
+                agent_url=agent_url,
+                task_id=remote_task_id,
             )
         except Exception:  # noqa: BLE001 - 取消仅为信号，失败不阻塞
             logger.warning(
-                "cancel_task failed: agent_url=%s task_id=%s",
-                agent_url, remote_task_id,
+                "cancel_task failed",
+                agent_url=agent_url,
+                task_id=remote_task_id,
             )
             return
 

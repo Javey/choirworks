@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
+import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.orchestration import intervention, repair
@@ -23,7 +23,7 @@ from choirworks.orchestration.state import (
     ready_nodes,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def start_runner(ctx: OrchestrationContext) -> None:
@@ -33,7 +33,7 @@ def start_runner(ctx: OrchestrationContext) -> None:
     runtime.runner = asyncio.create_task(
         run_plan(ctx), name=f"choirworks-runner:{ctx.context_id}"
     )
-    logger.info("start_runner: context=%s", ctx.context_id)
+    logger.info("start_runner", context_id=ctx.context_id)
 
 
 async def run_plan(ctx: OrchestrationContext) -> None:
@@ -70,9 +70,9 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 if batch:
                     await _announce_dispatch(ctx, batch)
                     logger.info(
-                        "run_plan: task=%s dispatched=%s",
-                        task_id,
-                        [(n.id, n.agent_name, m) for n, m in batch],
+                        "run_plan dispatched",
+                        task_id=task_id,
+                        dispatched=[(n.id, n.agent_name, m) for n, m in batch],
                     )
                 for node, mode in batch:
                     node_task = asyncio.create_task(
@@ -95,8 +95,8 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         node.status = "failed"
                         node.error = str(exception)
                         logger.warning(
-                            "run_plan: task=%s node=%s raised: %s",
-                            task_id, node.id, exception,
+                            "run_plan raised",
+                            task_id=task_id, node_id=node.id, error=exception,
                         )
                         await emit_state_delta(ctx, nodes={
                             node.id: {"status": "failed", "error": node.error},
@@ -120,13 +120,13 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     if progress:
                         continue
                     await ctx.sessions.persist(ctx)
-                    logger.info("run_plan: task=%s state=input_required", task_id)
+                    logger.info("run_plan state=input_required", task_id=task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_INPUT_REQUIRED,
                     )
                     return
                 if all_completed(state):
-                    logger.info("run_plan: task=%s state=completed", task_id)
+                    logger.info("run_plan state=completed", task_id=task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_COMPLETED,
                     )
@@ -139,16 +139,16 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         and state.revision_count < ctx.config.max_revisions
                     ):
                         logger.info(
-                            "run_plan: task=%s attempting repair "
-                            "revision=%d/%d",
-                            task_id, state.revision_count + 1,
-                            ctx.config.max_revisions,
+                            "run_plan attempting repair",
+                            task_id=task_id,
+                            revision=state.revision_count + 1,
+                            max_revisions=ctx.config.max_revisions,
                         )
                         recovered = await repair.repair_plan(ctx)
                     if recovered:
-                        logger.info("run_plan: task=%s repair succeeded", task_id)
+                        logger.info("run_plan repair succeeded", task_id=task_id)
                         continue
-                    logger.info("run_plan: task=%s state=failed", task_id)
+                    logger.info("run_plan state=failed", task_id=task_id)
                     await emit_event(
                         ctx, "", TaskState.TASK_STATE_FAILED,
                     )
@@ -162,12 +162,12 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         await asyncio.sleep(0)
                         continue
                     logger.warning(
-                        "Runner stalled for task %s: %s",
-                        task_id,
-                        {node.id: node.status for node in state.nodes.values()},
+                        "Runner stalled for task",
+                        task_id=task_id,
+                        nodes={node.id: node.status for node in state.nodes.values()},
                     )
                 else:
-                    logger.warning("Runner stalled for task %s", task_id)
+                    logger.warning("Runner stalled for task", task_id=task_id)
                 await emit_event(
                     ctx, "", TaskState.TASK_STATE_FAILED,
                 )
@@ -176,7 +176,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.exception("Runner failed for task %s", task_id)
+        logger.exception("Runner failed for task", task_id=task_id)
         if context_id in ctx.sessions.sessions:
             try:
                 await ctx.sessions.persist(ctx)
@@ -184,7 +184,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     ctx, "", TaskState.TASK_STATE_FAILED,
                 )
             except Exception:
-                logger.exception("Failed to emit task failure for %s", task_id)
+                logger.exception("Failed to emit task failure for", task_id=task_id)
             ctx.sessions.evict_session(context_id)
     finally:
         runtime.runner = None

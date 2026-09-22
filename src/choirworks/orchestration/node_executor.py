@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+
+import structlog
 
 from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.assist import arbitrate_mentions
@@ -14,7 +15,7 @@ from choirworks.orchestration.state import NodeState, expire_cancel_requests, ta
 from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
 from choirworks.tools.outcome_decision import OutcomeDecision
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def build_node_text(ctx: OrchestrationContext, node: NodeState) -> list[str]:
@@ -45,8 +46,8 @@ async def execute_node(
     if mode != "resume":
         node.attempt += 1
     logger.info(
-        "execute_node: node=%s agent=%s mode=%s attempt=%d",
-        node.id, node.agent_name, mode, node.attempt,
+        "execute_node",
+        node_id=node.id, agent=node.agent_name, mode=mode, attempt=node.attempt,
     )
     if mode == "dispatch":
         await emit_state_delta(ctx, nodes={
@@ -78,13 +79,13 @@ async def execute_node(
     if current == "completed":
         await _handle_completed(ctx, node)
     elif current == "canceled":
-        logger.info("execute_node: node=%s canceled", node.id)
+        logger.info("execute_node canceled", node_id=node.id)
         node.status = "canceled"
         await emit_state_delta(ctx, nodes={
             node.id: {"status": "canceled"},
         })
     elif current == "input_required":
-        logger.info("execute_node: node=%s input_required", node.id)
+        logger.info("execute_node input_required", node_id=node.id)
         node.status = "input_required"
         await emit_state_delta(ctx, nodes={
             node.id: {
@@ -96,7 +97,7 @@ async def execute_node(
     else:
         node.status = "failed"
         logger.warning(
-            "Node %s (%s) failed: %s", node.id, node.agent_name, node.error
+            "Node failed", node_id=node.id, agent=node.agent_name, error=node.error
         )
         await emit_state_delta(ctx, nodes={
             node.id: {"status": "failed", "error": node.error or "unknown error"},
@@ -118,8 +119,7 @@ async def execute_node(
 async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
     decision = await _interpret_outcome(ctx, node)
     logger.info(
-        "handle_completed: node=%s intent=%s",
-        node.id, decision.intent,
+        "handle_completed", node_id=node.id, intent=decision.intent,
     )
     if decision.intent == "need_info":
         node.status = "input_required"
@@ -139,8 +139,8 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
                     await revise_plan(ctx, decision.patch)
             else:
                 logger.warning(
-                    "Revision limit reached for %s, skipping",
-                    ctx.context_id,
+                    "Revision limit reached, skipping",
+                    context_id=ctx.context_id,
                 )
         node.status = "completed"
         await emit_state_delta(ctx, nodes={
@@ -178,7 +178,7 @@ async def _interpret_outcome(
             exclude_agent=node.agent_name,
         )
     except Exception:
-        logger.exception("outcome interpretation failed for %s", node.id)
+        logger.exception("outcome interpretation failed", node_id=node.id)
         return OutcomeDecision(intent="deliver")
 
 

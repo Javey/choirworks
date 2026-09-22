@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypedDict
 
+import structlog
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
@@ -46,7 +46,7 @@ from choirworks.store.db import Database
 if TYPE_CHECKING:
     from choirworks.sim.fake_agent import FakeAgent
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ConversationSummary(TypedDict):
@@ -174,7 +174,7 @@ async def create_app(
                 )
                 sim_agents.append(agent)
                 await registry.register(name, agent.url)
-            logger.info("Started %d sim agent(s)", len(sim_agents))
+            logger.info("Started sim agent(s)", count=len(sim_agents))
 
         from choirworks.a2a.recovery import recover_tasks
 

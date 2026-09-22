@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING
 
+import structlog
 from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
-from choirworks.core.llm import LiteLLMClient
+from choirworks.core.llm import LiteLLMClient, ToolParseError
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.registry import AgentRegistry
 
 if TYPE_CHECKING:
     from choirworks.tools.base import FunctionContext, ToolCallResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class PlanNodeDraft(BaseModel):
@@ -147,10 +147,10 @@ async def plan(
     for attempt in range(max_retries + 1):
         if attempt > 0:
             logger.warning(
-                "plan validation failed (attempt %d/%d): %s",
-                attempt,
-                max_retries + 1,
-                last_error,
+                "plan validation failed",
+                attempt=attempt,
+                max_attempts=max_retries + 1,
+                error=last_error,
             )
 
         tool_call: ToolCallResult | None = None
@@ -172,11 +172,19 @@ async def plan(
             if not isinstance(tool_call.args, PlanDraft):
                 raise ValueError("model did not return a plan draft")
             validate_plan(tool_call.args, agents, max_nodes)
-        except (PlanValidationError, ValidationError, ValueError) as exc:
+        except (PlanValidationError, ValidationError, ToolParseError, ValueError) as exc:
             last_error = exc
+            if isinstance(exc, ToolParseError):
+                prev_payload = exc.payload
+            elif tool_call is not None:
+                prev_payload = tool_call.args.model_dump_json()
+            else:
+                prev_payload = ""
             user += (
-                f"\n\nPrevious plan was invalid: {exc}."
-                " Return a corrected plan."
+                f"\n\nYour previous tool call was invalid.\n"
+                f"Tool call args:\n{prev_payload}\n\n"
+                f"Error: {exc}\n"
+                "Return a corrected tool call."
             )
             continue
 

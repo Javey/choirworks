@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import structlog
 
 from choirworks.a2a.room import RoomOptions
 from choirworks.orchestration.context import OrchestrationContext
@@ -13,7 +13,7 @@ from choirworks.orchestration.state import (
     enqueue,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def route_message(
@@ -41,8 +41,8 @@ async def route_message(
         )
         if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
             logger.info(
-                "route_message: task=%s route=enqueue_active node=%s",
-                ctx.task_id, quoted_node.id,
+                "route_message route=enqueue_active",
+                task_id=ctx.task_id, node_id=quoted_node.id,
             )
             enqueue(state,
                 quoted_node.id, text, sender="user", quote_id=str(quote_id)
@@ -51,8 +51,8 @@ async def route_message(
             return
         if quoted_node is not None and quoted_node.status == "completed":
             logger.info(
-                "route_message: task=%s route=followup node=%s",
-                ctx.task_id, quoted_node.id,
+                "route_message route=followup",
+                task_id=ctx.task_id, node_id=quoted_node.id,
             )
             await spawn_followup_node(ctx, text, quoted_node)
             return
@@ -60,8 +60,8 @@ async def route_message(
     if interrupt and active:
         node = active[0]
         logger.info(
-            "route_message: task=%s route=interrupt node=%s",
-            ctx.task_id, node.id,
+            "route_message route=interrupt",
+            task_id=ctx.task_id, node_id=node.id,
         )
         if node.a2a_task_id:
             await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
@@ -82,8 +82,8 @@ async def route_message(
     )
     if target is not None:
         logger.info(
-            "route_message: task=%s route=enqueue node=%s",
-            ctx.task_id, target.id,
+            "route_message route=enqueue",
+            task_id=ctx.task_id, node_id=target.id,
         )
         enqueue(state,
             target.id,
@@ -96,7 +96,7 @@ async def route_message(
 
     from choirworks.orchestration.planning import plan_and_launch
     logger.info(
-        "route_message: task=%s route=new_plan", ctx.task_id,
+        "route_message route=new_plan", task_id=ctx.task_id,
     )
     await plan_and_launch(ctx, text)
 
@@ -112,15 +112,15 @@ async def spawn_followup_node(
     state = ctx.state
     if state.derived_count >= ctx.config.max_derived_nodes:
         logger.info(
-            "spawn_followup_node: max_derived reached, skipping anchor=%s",
-            anchor.id,
+            "spawn_followup_node max_derived reached, skipping",
+            anchor_id=anchor.id,
         )
         return
     state.derived_count += 1
     node_id = f"{anchor.id}-f{state.derived_count}"
     logger.info(
-        "spawn_followup_node: id=%s agent=%s anchor=%s",
-        node_id, anchor.agent_name, anchor.id,
+        "spawn_followup_node",
+        node_id=node_id, agent=anchor.agent_name, anchor_id=anchor.id,
     )
     followup = NodeState(
         id=node_id,

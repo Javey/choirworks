@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
 import re
+
+import structlog
 
 from choirworks.core.context import build_assist_input
 from choirworks.orchestration.context import OrchestrationContext
@@ -10,7 +11,7 @@ from choirworks.orchestration.flows import execute_function, join_members
 from choirworks.orchestration.state import NodeState, assist_nodes_for
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def arbitrate_mentions(
@@ -26,8 +27,9 @@ async def arbitrate_mentions(
     mentions = list(dict.fromkeys(re.findall(r"@([A-Za-z0-9_-]+)", node.output)))
     if mentions:
         logger.info(
-            "arbitrate_mentions: node=%s mentions=%s",
-            node.id, mentions,
+            "arbitrate_mentions",
+            node=node.id,
+            mentions=mentions,
         )
     for name in mentions:
         if name == node.agent_name or name not in known:
@@ -36,8 +38,9 @@ async def arbitrate_mentions(
             continue
         if state.derived_count >= ctx.config.max_derived_nodes:
             logger.info(
-                "arbitrate_mentions: node=%s max_derived reached, skipping @%s",
-                node.id, name,
+                "arbitrate_mentions max_derived reached, skipping",
+                node=node.id,
+                name=name,
             )
             return
         state.derived_count += 1
@@ -75,8 +78,10 @@ async def spawn_assist(
     target = getattr(decision, "target_agent", "") or ""
     instruction = getattr(decision, "instruction", "")
     logger.info(
-        "spawn_assist: node=%s target=%s instruction_len=%d",
-        node.id, target, len(instruction),
+        "spawn_assist",
+        node=node.id,
+        target=target,
+        instruction_len=len(instruction),
     )
     args = CallSubagentArgs(
         requested_by=node.id,
@@ -85,7 +90,8 @@ async def spawn_assist(
     )
     result = await execute_function(ctx, call_subagent_func, args)
     logger.info(
-        "spawn_assist: node=%s success=%s",
-        node.id, result.success,
+        "spawn_assist",
+        node=node.id,
+        success=result.success,
     )
     return result.success

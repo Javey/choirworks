@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from choirworks.core.llm import LiteLLMClient
+import structlog
+
+from choirworks.core.llm import LiteLLMClient, ToolParseError
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +43,10 @@ async def run_subagent[T](
 ) -> T:
     """Stream the model's reply, retrying on invalid tool calls."""
     logger.info(
-        "run_subagent: name=%s user_len=%d retries=%d",
-        subagent.name, len(user), subagent.max_retries,
+        "run_subagent",
+        name=subagent.name,
+        user_len=len(user),
+        retries=subagent.max_retries,
     )
     func_ctx = FunctionContext(
         runtime=ctx.runtime,
@@ -55,8 +58,11 @@ async def run_subagent[T](
     for attempt in range(subagent.max_retries + 1):
         if attempt > 0:
             logger.warning(
-                "%s validation failed (attempt %d/%d): %s",
-                subagent.name, attempt, subagent.max_retries + 1, last_error,
+                "validation failed",
+                name=subagent.name,
+                attempt=attempt,
+                max_attempts=subagent.max_retries + 1,
+                error=last_error,
             )
         tools = await subagent.build_tools(ctx, **tool_kwargs)
         tool_call: ToolCallResult | None = None
@@ -72,20 +78,30 @@ async def run_subagent[T](
                     tool_call = item
             if tool_call is None:
                 raise ValueError(f"model did not call the {subagent.tool_name} tool")
-        except ValueError as exc:
+        except (ValueError, ToolParseError) as exc:
             last_error = exc
+            if isinstance(exc, ToolParseError):
+                prev_payload = exc.payload
+            elif tool_call is not None:
+                prev_payload = tool_call.args.model_dump_json()
+            else:
+                prev_payload = ""
             current_user += (
-                f"\n\nPrevious call was invalid: {exc}."
-                " Return a corrected result."
+                f"\n\nYour previous tool call was invalid.\n"
+                f"Tool call args:\n{prev_payload}\n\n"
+                f"Error: {exc}\n"
+                "Return a corrected tool call."
             )
             continue
         logger.info(
-            "run_subagent done: name=%s tool=%s",
-            subagent.name, subagent.tool_name,
+            "run_subagent done",
+            name=subagent.name,
+            tool=subagent.tool_name,
         )
         return subagent.process(tool_call)
     logger.warning(
-        "run_subagent exhausted: name=%s retries=%d",
-        subagent.name, subagent.max_retries,
+        "run_subagent exhausted",
+        name=subagent.name,
+        retries=subagent.max_retries,
     )
     return subagent.process(None)

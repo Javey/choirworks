@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import logging
-
+import structlog
 from pydantic import BaseModel
 
 from choirworks.orchestration.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 from choirworks.tools.create_plan import PlanNodeData
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class RevisePlanArgs(BaseModel):
@@ -54,16 +53,16 @@ async def execute_revise_plan(
         args.model_dump()
     )
     logger.info(
-        "revise_plan: add=%d invalidate=%d reason=%s",
-        len(plan_args.patch.add), len(plan_args.patch.invalidate),
-        plan_args.patch.reason or "(none)",
+        "revise_plan",
+        add_count=len(plan_args.patch.add), invalidate_count=len(plan_args.patch.invalidate),
+        reason=plan_args.patch.reason or "(none)",
     )
     result = await ctx.effects.apply_patch_locked(plan_args.patch)
 
     logger.info(
-        "revise_plan done: added=%d invalidated=%d skipped=%d rejected=%d",
-        len(result.added), len(result.invalidated),
-        len(result.skipped_in_flight), len(result.rejected),
+        "revise_plan done",
+        added=len(result.added), invalidated=len(result.invalidated),
+        skipped=len(result.skipped_in_flight), rejected=len(result.rejected),
     )
     return FunctionResult(
         success=True,

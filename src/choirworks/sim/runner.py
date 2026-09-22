@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 
+import structlog
 import uvicorn
 
 from choirworks.api.app import create_app
@@ -18,6 +20,16 @@ from choirworks.config import (
 from choirworks.core.llm import LiteLLMClient
 from choirworks.sim.fake_agent import FakeAgent, start_fake_agent
 from choirworks.sim.litellm_mock import sim_acompletion
+
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="%H:%M:%S"),
+        structlog.dev.ConsoleRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    cache_logger_on_first_use=True,
+)
 
 SIM_AGENTS: list[tuple[str, str]] = [
     ("product-manager", "collaborate"),

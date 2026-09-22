@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+import structlog
 from a2a.types.a2a_pb2 import (
     Artifact,
     Part,
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
     from choirworks.tools.base import AgentFunction, FunctionResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def emit_event(
@@ -36,8 +36,8 @@ async def emit_event(
     metadata: Mapping[str, object] | None = None,
 ) -> None:
     logger.info(
-        "emit_event: task=%s kind=%s state=%s",
-        ctx.task_id, kind or "(none)", state_name,
+        "emit_event",
+        task_id=ctx.task_id, kind=kind or "(none)", state=state_name,
     )
     await ctx.queue.enqueue_event(
         status_update(
@@ -68,8 +68,7 @@ async def emit_state_delta(
     if not delta:
         return
     logger.info(
-        "emit_state_delta: task=%s keys=%s",
-        ctx.task_id, list(delta.keys()),
+        "emit_state_delta", task_id=ctx.task_id, keys=list(delta.keys()),
     )
     await emit_event(ctx, "state_delta", state_name, metadata=delta)
 
@@ -86,8 +85,9 @@ async def emit_thought_chunk(
     part = Part(text=text)
     ParseDict({"cw_thought": True}, part.metadata)
     logger.info(
-        "emit_thought_chunk: task=%s artifact=%s len=%d append=%s last=%s",
-        ctx.task_id, artifact_id, len(text), append, last_chunk,
+        "emit_thought_chunk",
+        task_id=ctx.task_id, artifact_id=artifact_id, length=len(text),
+        append=append, last_chunk=last_chunk,
     )
     await ctx.queue.enqueue_event(
         TaskArtifactUpdateEvent(
@@ -114,8 +114,9 @@ async def emit_text_chunk(
 ) -> None:
     part = Part(text=text)
     logger.info(
-        "emit_text_chunk: task=%s artifact=%s len=%d append=%s last=%s",
-        ctx.task_id, artifact_id, len(text), append, last_chunk,
+        "emit_text_chunk",
+        task_id=ctx.task_id, artifact_id=artifact_id, length=len(text),
+        append=append, last_chunk=last_chunk,
     )
     await ctx.queue.enqueue_event(
         TaskArtifactUpdateEvent(
@@ -141,8 +142,8 @@ async def emit_function_call(
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> None:
     logger.info(
-        "emit_function_call: task=%s function=%s success=%s",
-        ctx.task_id, func.name, result.success,
+        "emit_function_call",
+        task_id=ctx.task_id, function=func.name, success=result.success,
     )
     part = function_call_part(
         func.name, args.model_dump(), result.model_dump()
@@ -171,8 +172,8 @@ async def emit_function_error(
     state_name: TaskState = TaskState.TASK_STATE_FAILED,
 ) -> None:
     logger.warning(
-        "emit_function_error: task=%s function=%s error=%s",
-        ctx.task_id, func.name, error,
+        "emit_function_error",
+        task_id=ctx.task_id, function=func.name, error=error,
     )
     part = function_call_part(
         func.name, {}, {"success": False, "error": error}

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import logging
-
+import structlog
 from a2a.helpers import new_data_message
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -19,7 +18,7 @@ from choirworks.orchestration.rewind import hidden_task_ids, parse_markers
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 TERMINAL_STATES = {
     TaskState.TASK_STATE_COMPLETED,
@@ -84,12 +83,12 @@ async def recover_tasks(
                 )
                 recovered += 1
             except Exception:  # noqa: BLE001 - one bad task must not stop recovery
-                logger.exception("Failed to recover task %s", task.id)
+                logger.exception("Failed to recover task", task_id=task.id)
         page_token = page.next_page_token
         if not page_token:
             break
     if recovered:
-        logger.info("Recovered %d in-flight task(s)", recovered)
+        logger.info("Recovered in-flight task(s)", count=recovered)
     return recovered
 
 

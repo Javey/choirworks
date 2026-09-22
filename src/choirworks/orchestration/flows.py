@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
+import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 if TYPE_CHECKING:
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from choirworks.orchestration.state import MemberDelta
     from choirworks.tools.base import AgentFunction, FunctionResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def join_members(
@@ -34,8 +34,9 @@ async def join_members(
     if not requested:
         return
     logger.info(
-        "join_members: requested=%s reason=%s",
-        requested, reason,
+        "join_members",
+        requested=requested,
+        reason=reason,
     )
     result = await execute_function(
         ctx, join_members_func, JoinMembersArgs(names=requested, reason=reason)
@@ -71,7 +72,8 @@ async def execute_function(
     from choirworks.tools.base import FunctionContext
 
     logger.info(
-        "execute_function: function=%s", func.name,
+        "execute_function",
+        function=func.name,
     )
     func_ctx = FunctionContext(
         runtime=ctx.runtime,
@@ -80,8 +82,9 @@ async def execute_function(
     )
     result = await func.execute(func_ctx, args)
     logger.info(
-        "execute_function done: function=%s success=%s",
-        func.name, result.success,
+        "execute_function done",
+        function=func.name,
+        success=result.success,
     )
     await emit_function_call(ctx, func, args, result, state_name=state_name)
     return result

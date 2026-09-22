@@ -1,23 +1,33 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, TypeVar
 
 import litellm
+import structlog
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 from litellm.types.utils import ChatCompletionDeltaToolCall, Delta, ModelResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
     from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
 type CompletionResult = ModelResponse | CustomStreamWrapper
 type CompletionFn = Callable[..., Awaitable[CompletionResult]]
+
+
+class ToolParseError(ValueError):
+    """JSON parse/validation failure carrying the raw payload for retry context."""
+
+    def __init__(self, tool_name: str, payload: str, cause: Exception):
+        super().__init__(str(cause))
+        self.tool_name = tool_name
+        self.payload = payload
+        self.cause = cause
 
 
 class LiteLLMClient:
@@ -91,8 +101,11 @@ class LiteLLMClient:
                 })
 
         logger.info(
-            "LLM stream: model=%s system_len=%d user_len=%d tools=%d",
-            self._model, len(system), len(user), len(declarations),
+            "LLM stream",
+            model=self._model,
+            system_len=len(system),
+            user_len=len(user),
+            tools=len(declarations),
         )
         response = await self._completion_fn(
             model=self._model,
@@ -127,7 +140,7 @@ class LiteLLMClient:
                         call_names[call.index] = call.function.name
 
         if not fragments:
-            logger.info("LLM stream done: model=%s tool_call=none", self._model)
+            logger.info("LLM stream done", model=self._model, tool_call="none")
             return
 
         if len(fragments) > 1:
@@ -140,17 +153,24 @@ class LiteLLMClient:
 
         payload = "".join(args_fragments)
         schema = schemas[tool_name]
-        args = schema.model_validate_json(payload)
+        try:
+            args = schema.model_validate_json(payload)
+        except (ValidationError, ValueError) as exc:
+            raise ToolParseError(tool_name, payload, exc) from exc
         logger.info(
-            "LLM stream done: model=%s tool_call=%s args_len=%d",
-            self._model, tool_name, len(payload),
+            "LLM stream done",
+            model=self._model,
+            tool_call=tool_name,
+            args_len=len(payload),
         )
         yield ToolCallResult(function=functions[tool_name], args=args)
 
     async def text(self, *, system: str, user: str) -> str:
         logger.info(
-            "LLM text: model=%s system_len=%d user_len=%d",
-            self._model, len(system), len(user),
+            "LLM text",
+            model=self._model,
+            system_len=len(system),
+            user_len=len(user),
         )
         response = await self._completion_fn(
             model=self._model,
@@ -165,8 +185,9 @@ class LiteLLMClient:
             raise ValueError("expected a non-streaming response")
         result = response.choices[0].message.content or ""
         logger.info(
-            "LLM text done: model=%s response_len=%d",
-            self._model, len(result),
+            "LLM text done",
+            model=self._model,
+            response_len=len(result),
         )
         return result
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import structlog
 
 from choirworks.core.context import build_repair_user
 from choirworks.orchestration.context import OrchestrationContext
@@ -16,7 +16,7 @@ from choirworks.subagents import REPAIR_SUBAGENT, run_subagent
 from choirworks.tools import revise_plan_func
 from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def repair_plan(ctx: OrchestrationContext) -> bool:
@@ -24,8 +24,9 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
     state = ctx.state
     failed_ids = [node.id for node in failed_nodes(state)]
     logger.info(
-        "repair_plan: context=%s failed_nodes=%s",
-        ctx.context_id, failed_ids,
+        "repair_plan",
+        context=ctx.context_id,
+        failed_nodes=failed_ids,
     )
     agents = await ctx.registry.list()
     if not agents:
@@ -34,17 +35,19 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
     try:
         decision = await run_subagent(ctx.llm, REPAIR_SUBAGENT, ctx, user)
     except Exception:
-        logger.exception("plan repair failed for %s", ctx.context_id)
+        logger.exception("plan repair failed", context=ctx.context_id)
         return False
     if decision is None or decision.patch is None:
-        logger.info("repair_plan: context=%s no patch returned", ctx.context_id)
+        logger.info("repair_plan no patch returned", context=ctx.context_id)
         return False
     patch = decision.patch
     patch.invalidate = list(dict.fromkeys([*patch.invalidate, *failed_ids]))
     result = await revise_plan(ctx, patch)
     logger.info(
-        "repair_plan: context=%s added=%d invalidated=%d",
-        ctx.context_id, len(result.added), len(result.invalidated),
+        "repair_plan",
+        context=ctx.context_id,
+        added=len(result.added),
+        invalidated=len(result.invalidated),
     )
     return bool(result.added or result.invalidated)
 
@@ -76,7 +79,7 @@ async def apply_patch_locked(
     state = ctx.state
     result = apply_patch(state, patch, agent_urls)
     for rejected in result.rejected:
-        logger.warning("Patch rejected for %s: %s", ctx.context_id, rejected)
+        logger.warning("Patch rejected", context=ctx.context_id, rejected=rejected)
     new_interventions: dict[str, InterventionDelta] = {}
     for node_id in result.skipped_in_flight:
         node = state.nodes.get(node_id)

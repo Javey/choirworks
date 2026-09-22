@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import logging
 import uuid
 
+import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.room import RoomOptions
@@ -20,7 +20,7 @@ from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.state import start_new_plan
 from choirworks.tools import FunctionContext, ToolCallResult, create_plan_func
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def stream_plan(
@@ -31,7 +31,7 @@ async def stream_plan(
     context_brief: str | None = None,
 ) -> ToolCallResult:
     """Stream the planning LLM, emitting thought/text chunks, return the tool call."""
-    logger.info("stream_plan: task=%s request_len=%d", ctx.task_id, len(request))
+    logger.info("stream_plan", task=ctx.task_id, request_len=len(request))
     tool_call: ToolCallResult | None = None
     reasoning_parts: list[str] = []
     content_parts: list[str] = []
@@ -96,8 +96,11 @@ async def stream_plan(
     if tool_call is None:
         raise PlanningFailed("planner stream ended without a plan")
     logger.info(
-        "stream_plan done: task=%s reasoning_len=%d content_len=%d tool=%s",
-        ctx.task_id, len(reasoning), len(content), tool_call.function.name,
+        "stream_plan done",
+        task=ctx.task_id,
+        reasoning_len=len(reasoning),
+        content_len=len(content),
+        tool=tool_call.function.name,
     )
     return tool_call
 
@@ -111,7 +114,7 @@ async def plan_and_launch(
     """Plan a new turn, create nodes, join members, start the runner."""
     state = ctx.state
     start_new_plan(state, f"plan-{uuid.uuid4().hex[:8]}")
-    logger.info("plan_and_launch: task=%s plan_id=%s", ctx.task_id, state.plan_id)
+    logger.info("plan_and_launch", task=ctx.task_id, plan_id=state.plan_id)
     context_brief = await ctx.brief_builder.build(
         ctx.context_id, exclude_task_id=ctx.task_id
     )
@@ -123,7 +126,7 @@ async def plan_and_launch(
     try:
         tool_call = await stream_plan(ctx, text, func_ctx, context_brief=context_brief or None)
     except PlanningFailed as exc:
-        logger.warning("Planning failed for task %s: %s", ctx.task_id, exc)
+        logger.warning("Planning failed for task", task=ctx.task_id, error=exc)
         await ctx.sessions.persist(ctx)
         await emit_function_error(
             ctx, create_plan_func, str(exc),
@@ -137,16 +140,17 @@ async def plan_and_launch(
     )
 
     if not draft.nodes:
-        logger.info("plan_and_launch: task=%s empty plan, completing", ctx.task_id)
+        logger.info("plan_and_launch empty plan, completing", task=ctx.task_id)
         await ctx.sessions.persist(ctx)
         await emit_event(ctx, "", TaskState.TASK_STATE_COMPLETED)
         ctx.sessions.evict_session(ctx.context_id)
         return
 
     logger.info(
-        "plan_and_launch: task=%s nodes=%d agents=%s",
-        ctx.task_id, len(draft.nodes),
-        [n.agent_name for n in draft.nodes],
+        "plan_and_launch",
+        task=ctx.task_id,
+        nodes=len(draft.nodes),
+        agents=[n.agent_name for n in draft.nodes],
     )
     result = await tool_call.function.execute(func_ctx, tool_call.args)
     await emit_function_call(

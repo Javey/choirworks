@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from collections.abc import AsyncIterator
 
+import structlog
 from a2a.types import StreamResponse
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -18,7 +18,7 @@ from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.state import NodeState
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 _REMOTE_STATE_MAP: dict[int, str] = {
@@ -44,8 +44,8 @@ async def stream_remote(
     remote_task_id = node.a2a_task_id if continuation else None
     text_list = text if isinstance(text, list) else [text]
     logger.info(
-        "stream_remote: node=%s agent_url=%s parts=%d continuation=%s",
-        node.id, node.agent_url, len(text_list), continuation,
+        "stream_remote",
+        node_id=node.id, agent_url=node.agent_url, parts=len(text_list), continuation=continuation,
     )
     chunks = ctx.remote.send_text(
         node.agent_url,
@@ -55,24 +55,23 @@ async def stream_remote(
         message_id=f"{ctx.context_id}:{node.id}:{node.attempt}",
     )
     current = await consume_chunks(ctx, node, chunks)
-    logger.info("stream_remote done: node=%s state=%s", node.id, current)
+    logger.info("stream_remote done", node_id=node.id, state=current)
     return await ensure_terminal(ctx, node, current)
 
 
 async def resume_remote(ctx: OrchestrationContext, node: NodeState) -> str:
     if not node.a2a_task_id:
-        logger.warning("resume_remote: node=%s no a2a_task_id", node.id)
+        logger.warning("resume_remote no a2a_task_id", node_id=node.id)
         return "failed"
     logger.info(
-        "resume_remote: node=%s a2a_task_id=%s",
-        node.id, node.a2a_task_id,
+        "resume_remote", node_id=node.id, a2a_task_id=node.a2a_task_id,
     )
     current = "working"
     try:
         chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
         current = await consume_chunks(ctx, node, chunks)
     except Exception as exc:
-        logger.debug("Resume subscribe failed for %s: %s", node.id, exc)
+        logger.debug("Resume subscribe failed", node_id=node.id, error=exc)
     return await ensure_terminal(ctx, node, current)
 
 
@@ -105,7 +104,7 @@ async def ensure_terminal(
             chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
             current = await consume_chunks(ctx, node, chunks)
         except Exception as exc:
-            logger.debug("Follow subscribe failed for %s: %s", node.id, exc)
+            logger.debug("Follow subscribe failed", node_id=node.id, error=exc)
             await asyncio.sleep(0.2)
     return current
 
@@ -229,8 +228,8 @@ async def consume_chunks(
         artifact.get("text", "") for artifact in artifacts if artifact.get("text")
     ).strip() or None
     logger.info(
-        "consume_chunks done: node=%s state=%s output_len=%d",
-        node.id, current, len(node.output or ""),
+        "consume_chunks done",
+        node_id=node.id, state=current, output_len=len(node.output or ""),
     )
     return current
 

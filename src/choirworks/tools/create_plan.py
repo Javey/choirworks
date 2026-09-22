@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from typing import Literal
 
+import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class PlanNodeData(BaseModel):
@@ -70,8 +70,8 @@ async def execute_create_plan(
     state = ctx.state
 
     logger.info(
-        "create_plan: nodes=%d agents=%s",
-        len(draft.nodes), [n.agent_name for n in draft.nodes],
+        "create_plan",
+        nodes=len(draft.nodes), agents=[n.agent_name for n in draft.nodes],
     )
 
     agents = await ctx.registry.list()

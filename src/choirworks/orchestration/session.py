@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import structlog
 from a2a.server.events import EventQueue
 
 from choirworks.orchestration.events import emit_event
@@ -20,7 +20,7 @@ from choirworks.store.contexts import ContextStore
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -66,7 +66,7 @@ class SessionManager:
         try:
             return state_from_json(record.state)
         except (ValueError, TypeError):
-            logger.warning("Invalid context state for %s", context_id)
+            logger.warning("Invalid context state", context_id=context_id)
             return None
 
     async def ensure_session(
@@ -88,8 +88,8 @@ class SessionManager:
                 )
                 self._sessions[context_id] = runtime
                 logger.info(
-                    "ensure_session: created context=%s restored=%s",
-                    context_id, state is not None,
+                    "ensure_session: created",
+                    context_id=context_id, restored=state is not None,
                 )
         runtime.task_id = task_id
         runtime.queue = event_queue
@@ -100,7 +100,7 @@ class SessionManager:
         if runtime is not None:
             runtime.runner = None
             runtime.node_tasks.clear()
-            logger.info("evict_session: context=%s", context_id)
+            logger.info("evict_session", context_id=context_id)
 
     def session_is_active(self, context_id: str) -> bool:
         runtime = self._sessions.get(context_id)

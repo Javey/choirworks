@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import logging
-
+import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.core.context import build_assistance_decision_user
@@ -24,7 +23,7 @@ from choirworks.tools import ask_user_func
 from choirworks.tools.ask_user import AskUserArgs
 from choirworks.tools.outcome_decision import OutcomeDecision
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _AFFIRMATIVE_ANSWERS = {"确认", "确定", "打断", "是", "yes", "y", "ok"}
 
@@ -112,14 +111,16 @@ async def _decide_assistance(
             exclude_agent=node.agent_name,
         )
     except Exception:
-        logger.exception("assistance decision failed for %s", node.id)
+        logger.exception("assistance decision failed", node=node.id)
         return OutcomeDecision(intent="need_info")
 
 
 async def request_human(ctx: OrchestrationContext, node: NodeState) -> None:
     logger.info(
-        "request_human: node=%s agent=%s question_len=%d",
-        node.id, node.agent_name, len(node.question or node.output or ""),
+        "request_human",
+        node=node.id,
+        agent=node.agent_name,
+        question_len=len(node.question or node.output or ""),
     )
     args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
     await execute_function(
@@ -141,8 +142,10 @@ async def answer_intervention(
     intervention.answer = text
     intervention.responder = "human"
     logger.info(
-        "answer_intervention: id=%s kind=%s affirmative=%s",
-        intervention.id, intervention.kind, _is_affirmative(text),
+        "answer_intervention",
+        id=intervention.id,
+        kind=intervention.kind,
+        affirmative=_is_affirmative(text),
     )
     if intervention.kind == "confirm_cancel":
         target = state.nodes.get(intervention.target_node_id or "")
@@ -182,9 +185,9 @@ async def cancel_node(
     node: NodeState,
 ) -> None:
     logger.info(
-        "cancel_node: node=%s invalidated=%s",
-        node.id,
-        [n.id for n in blocked_nodes(ctx.state)],
+        "cancel_node",
+        node=node.id,
+        invalidated=[n.id for n in blocked_nodes(ctx.state)],
     )
     state = ctx.state
     if node.a2a_task_id and node.agent_url:
