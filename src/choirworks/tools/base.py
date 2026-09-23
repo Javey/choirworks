@@ -6,12 +6,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, SerializeAsAny
 
-from choirworks.tools.capabilities import ToolEffects
-
 if TYPE_CHECKING:
-    from choirworks.orchestration.registry import AgentRegistry
-    from choirworks.orchestration.session import SessionRuntime
-    from choirworks.orchestration.state import OrchestrationState
+    from choirworks.orchestration.context import OrchestrationContext
 
 
 class FunctionResult(BaseModel):
@@ -39,24 +35,6 @@ class ToolCallResult:
 
 
 @dataclass(frozen=True, slots=True)
-class FunctionContext:
-    """Dependencies handed to every :class:`AgentFunction` at call time.
-
-    Bundles the session runtime, the agent registry, and the side effects the
-    orchestrator permits a tool to perform (:class:`ToolEffects`).  Tools
-    therefore never reach back into the executor.
-    """
-
-    runtime: SessionRuntime
-    registry: AgentRegistry
-    effects: ToolEffects
-
-    @property
-    def state(self) -> OrchestrationState:
-        return self.runtime.state
-
-
-@dataclass(frozen=True, slots=True)
 class AgentFunction:
     """A callable capability that the orchestrator model can invoke.
 
@@ -79,6 +57,6 @@ class AgentFunction:
 
     name: str
     description: str
-    args_model: Callable[[FunctionContext], Awaitable[type[BaseModel]]]
-    execute: Callable[[FunctionContext, BaseModel], Awaitable[FunctionResult]]
+    args_model: Callable[[OrchestrationContext], Awaitable[type[BaseModel]]]
+    execute: Callable[[OrchestrationContext, BaseModel], Awaitable[FunctionResult]]
     is_long_running: bool = False

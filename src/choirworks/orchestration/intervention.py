@@ -107,7 +107,6 @@ async def _decide_assistance(ctx: OrchestrationContext, node: NodeState) -> Outc
     )
     try:
         return await run_subagent(
-            ctx.llm,
             ASSISTANCE_SUBAGENT,
             ctx,
             user,

@@ -42,7 +42,16 @@ def make_ctx(agents: list[AgentRecord]) -> tuple[OrchestrationContext, FakeQueue
         lock=asyncio.Lock(),
     )
     deps = SimpleNamespace(registry=FakeRegistry(agents))
-    ctx = OrchestrationContext(runtime=runtime, deps=deps, effects=SimpleNamespace())
+    ctx = OrchestrationContext(
+        runtime=runtime,
+        registry=deps.registry,
+        remote=SimpleNamespace(),
+        llm=SimpleNamespace(),
+        sessions=SimpleNamespace(),
+        config=SimpleNamespace(),
+        brief_builder=SimpleNamespace(),
+        effects=SimpleNamespace(),
+    )
     return ctx, queue
 
 

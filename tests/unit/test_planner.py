@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 import pytest
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import (
     PlanDraft,
     PlanningFailed,
@@ -14,10 +13,11 @@ from choirworks.core.planner import (
     validate_plan,
 )
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.store.db import Database
-from choirworks.tools import FunctionContext, ToolCallResult
-from tests.support.fakes import FakeLLM, make_func_ctx
+from choirworks.tools import ToolCallResult
+from tests.support.fakes import FakeLLM, make_orch_ctx
 
 
 def make_agent(name: str, skills: list[str]) -> AgentRecord:
@@ -110,15 +110,13 @@ async def make_registry(tmp_path, agents):
 
 
 async def collect_plan(
-    llm: LiteLLMClient,
-    registry: AgentRegistry,
     request: str,
-    ctx: FunctionContext,
+    ctx: OrchestrationContext,
     **kwargs,
 ):
     chunks: list[str] = []
     tool_call: ToolCallResult | None = None
-    async for item in plan(llm, registry, request, ctx=ctx, **kwargs):
+    async for item in plan(request, ctx=ctx, **kwargs):
         if isinstance(item, ToolCallResult):
             tool_call = item
         else:
@@ -136,8 +134,8 @@ async def test_planner_streams_thinking(tmp_path):
     llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        ctx = make_func_ctx(registry)
-        thinking, tool_call = await collect_plan(llm, registry, "研究并写一份报告", ctx)
+        ctx = make_orch_ctx(registry, llm=llm)
+        thinking, tool_call = await collect_plan("研究并写一份报告", ctx)
         assert thinking == "思考：将请求拆解为 1 个节点。"
         draft = tool_call.args
         assert isinstance(draft, PlanDraft)
@@ -154,8 +152,8 @@ async def test_planner_retries_with_feedback(tmp_path):
     llm = FakeLLM(structured_results=[bad, good])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        ctx = make_func_ctx(registry)
-        thinking, tool_call = await collect_plan(llm, registry, "x", ctx)
+        ctx = make_orch_ctx(registry, llm=llm)
+        thinking, tool_call = await collect_plan("x", ctx)
         assert "unknown skill" in llm.stream_calls[1]["user"]
         assert thinking == "思考：将请求拆解为 1 个节点。" * 2
     finally:
@@ -168,9 +166,9 @@ async def test_planner_fails_after_retries(tmp_path):
     llm = FakeLLM(structured_results=[bad, bad, bad])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        ctx = make_func_ctx(registry)
+        ctx = make_orch_ctx(registry, llm=llm)
         with pytest.raises(PlanningFailed):
-            await collect_plan(llm, registry, "x", ctx)
+            await collect_plan("x", ctx)
         assert len(llm.stream_calls) == 3
     finally:
         await remote.close()
@@ -180,9 +178,9 @@ async def test_planner_fails_after_retries(tmp_path):
 async def test_planner_rejects_when_no_agents(tmp_path):
     db, remote, registry = await make_registry(tmp_path, [])
     try:
-        ctx = make_func_ctx(registry)
+        ctx = make_orch_ctx(registry, llm=FakeLLM())
         with pytest.raises(PlanningFailed, match="no agents"):
-            await collect_plan(FakeLLM(), registry, "x", ctx)
+            await collect_plan("x", ctx)
     finally:
         await remote.close()
         await db.close()
@@ -192,8 +190,8 @@ async def test_planner_passes_constrained_schema_to_tool(tmp_path):
     llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
-        ctx = make_func_ctx(registry)
-        await collect_plan(llm, registry, "x", ctx)
+        ctx = make_orch_ctx(registry, llm=llm)
+        await collect_plan("x", ctx)
         call = llm.stream_calls[0]
         tool = call["tools"][0]
         assert tool.name == "create_plan"

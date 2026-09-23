@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.context import build_peer_fallback_input
 from choirworks.orchestration.state import NodeState
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
 
@@ -43,13 +46,13 @@ class CallSubagentArgs(BaseModel):
     instruction: str = ""
 
 
-async def call_subagent_args_model(ctx: FunctionContext) -> type[BaseModel]:
+async def call_subagent_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
     agents = await ctx.registry.list()
     candidates = [agent.name for agent in agents]
     return _call_subagent_schema(candidates)
 
 
-async def execute_call_subagent(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``call_subagent`` — spawn a derived helper node handled by a peer agent.
 
     When the orchestrator decides a node needs assistance from another agent,

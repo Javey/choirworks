@@ -3,7 +3,6 @@ from __future__ import annotations
 from choirworks.tools.ask_user import AskUserArgs, ask_user_func
 from choirworks.tools.base import (
     AgentFunction,
-    FunctionContext,
     FunctionResult,
     ToolCallResult,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "CallSubagentArgs",
     "call_subagent_func",
     "create_plan_func",
-    "FunctionContext",
     "FunctionResult",
     "JoinMembersArgs",
     "RevisePlanArgs",

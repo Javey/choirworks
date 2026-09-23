@@ -20,7 +20,6 @@ from choirworks.a2a.wire import status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.deps import Deps
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import join_members
 from choirworks.orchestration.intervention import answer_intervention
@@ -103,14 +102,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
 
         self._session_mgr = SessionManager(context_store)
-        self._deps = Deps(
-            registry=registry,
-            remote=remote,
-            llm=llm,
-            sessions=self._session_mgr,
-            config=self._config,
-            brief_builder=self._brief_builder,
-        )
+        self._registry = registry
+        self._remote = remote
+        self._llm = llm
 
     # ------------------------------------------------------------- lifecycle
 
@@ -168,8 +162,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                         text_len=len(text),
                     )
                     orch_ctx = self._build_ctx(runtime)
+                    runtime.runner_start_requested = False
                     await answer_intervention(orch_ctx, text)
-                    if getattr(runtime, "runner_start_requested", False):
+                    if runtime.runner_start_requested:
                         runtime.runner_start_requested = False
                         self._start_runner(runtime)
                 return
@@ -236,7 +231,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await self._persist(runtime)
             for node in list(state.nodes.values()):
                 if node.status == NodeStatus.CANCELED and node.a2a_task_id:
-                    await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
+                    await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
             logger.info("cancel", task_id=task_id, context_id=context_id, canceled_nodes=canceled)
         self._session_mgr.evict_session(context_id)
 
@@ -308,14 +303,22 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
-        runtime.runner_start_requested = False
         effects = ToolEffects(
             max_derived_nodes=self._config.max_derived_nodes,
             join_members=lambda names, reason: self._join_members(runtime, names, reason),
             persist=lambda: self._persist(runtime),
             apply_patch_locked=lambda patch: self._apply_patch_locked(runtime, patch),
         )
-        return OrchestrationContext(runtime=runtime, deps=self._deps, effects=effects)
+        return OrchestrationContext(
+            runtime=runtime,
+            registry=self._registry,
+            remote=self._remote,
+            llm=self._llm,
+            sessions=self._session_mgr,
+            config=self._config,
+            brief_builder=self._brief_builder,
+            effects=effects,
+        )
 
     def _start_runner(self, runtime: SessionRuntime) -> None:
         start_runner(self._build_ctx(runtime))

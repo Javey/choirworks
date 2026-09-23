@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.patch import PatchResult, PlanPatch
 from choirworks.orchestration.state import (
     NodeState,
@@ -24,7 +25,6 @@ from choirworks.tools import (
     join_members_func,
     revise_plan_func,
 )
-from choirworks.tools.base import FunctionContext
 from choirworks.tools.call_subagent import CallSubagentData
 from choirworks.tools.capabilities import ToolEffects
 from choirworks.tools.create_plan import CreatePlanData
@@ -73,19 +73,27 @@ class RecordingEffects:
         )
 
 
-@dataclass
-class FakeRuntime:
-    state: OrchestrationState
-
-
 def make_ctx(
     state: OrchestrationState,
     effects: RecordingEffects | None = None,
-) -> FunctionContext:
+) -> OrchestrationContext:
     effects = effects or RecordingEffects()
-    return FunctionContext(
-        runtime=FakeRuntime(state),  # type: ignore[arg-type]
+    runtime = SimpleNamespace(
+        state=state,
+        task_id="t1",
+        context_id="c1",
+        queue=None,
+        lock=None,
+        runner_start_requested=False,
+    )
+    return OrchestrationContext(
+        runtime=runtime,  # type: ignore[arg-type]
         registry=FakeRegistry(AGENTS),  # type: ignore[arg-type]
+        remote=SimpleNamespace(),  # type: ignore[arg-type]
+        llm=SimpleNamespace(),  # type: ignore[arg-type]
+        sessions=SimpleNamespace(),  # type: ignore[arg-type]
+        config=SimpleNamespace(),  # type: ignore[arg-type]
+        brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
         effects=effects.as_tool_effects(),
     )
 

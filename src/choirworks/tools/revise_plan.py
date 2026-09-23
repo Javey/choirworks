@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 from pydantic import BaseModel
 
 from choirworks.orchestration.patch import PlanPatch
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
 from choirworks.tools.create_plan import PlanNodeData
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
 
@@ -29,11 +34,11 @@ class RevisePlanData(BaseModel):
     rejected: list[str]
 
 
-async def revise_plan_args_model(ctx: FunctionContext) -> type[BaseModel]:
+async def revise_plan_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
     return RevisePlanArgs
 
 
-async def execute_revise_plan(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+async def execute_revise_plan(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``revise_plan`` — apply an incremental patch to the running plan.
 
     The model calls this when an agent's outcome suggests the plan needs

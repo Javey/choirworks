@@ -10,15 +10,14 @@ from choirworks.core.planner import PlanDraft, PlanningFailed, plan
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
-    emit_function_call,
     emit_function_error,
     emit_text_chunk,
     emit_thought_chunk,
 )
-from choirworks.orchestration.flows import join_members
+from choirworks.orchestration.flows import execute_function, join_members
 from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.state import start_new_plan
-from choirworks.tools import FunctionContext, ToolCallResult, create_plan_func
+from choirworks.tools import ToolCallResult, create_plan_func
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +25,6 @@ logger = structlog.get_logger(__name__)
 async def stream_plan(
     ctx: OrchestrationContext,
     request: str,
-    func_ctx: FunctionContext,
     *,
     context_brief: str | None = None,
 ) -> ToolCallResult:
@@ -42,10 +40,8 @@ async def stream_plan(
     thought_id = uuid.uuid4().hex
     text_id = uuid.uuid4().hex
     async for item in plan(
-        ctx.llm,
-        ctx.registry,
         request,
-        ctx=func_ctx,
+        ctx=ctx,
         context=context_brief,
         max_nodes=ctx.config.max_nodes,
         max_retries=ctx.config.max_plan_retries,
@@ -121,13 +117,8 @@ async def plan_and_launch(
         "plan_and_launch", task=ctx.task_id, context_id=ctx.context_id, plan_id=state.plan_id
     )
     context_brief = await ctx.brief_builder.build(ctx.context_id, exclude_task_id=ctx.task_id)
-    func_ctx = FunctionContext(
-        runtime=ctx.runtime,
-        registry=ctx.registry,
-        effects=ctx.effects,
-    )
     try:
-        tool_call = await stream_plan(ctx, text, func_ctx, context_brief=context_brief or None)
+        tool_call = await stream_plan(ctx, text, context_brief=context_brief or None)
     except PlanningFailed as exc:
         logger.warning(
             "Planning failed for task", task=ctx.task_id, context_id=ctx.context_id, error=exc
@@ -164,14 +155,7 @@ async def plan_and_launch(
         nodes=len(draft.nodes),
         agents=[n.agent_name for n in draft.nodes],
     )
-    result = await tool_call.function.execute(func_ctx, tool_call.args)
-    await emit_function_call(
-        ctx,
-        tool_call.function,
-        tool_call.args,
-        result,
-        state_name=TaskState.TASK_STATE_WORKING,
-    )
+    await execute_function(ctx, tool_call.function, tool_call.args)
 
     agents = await ctx.registry.list()
     agent_urls = {agent.name: agent.card_url for agent in agents}

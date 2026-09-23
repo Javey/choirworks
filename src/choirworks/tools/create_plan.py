@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.orchestration.state import NodeState
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
 
@@ -48,12 +51,12 @@ def constrained_plan_schema(agent_names: Sequence[str]) -> type[PlanDraft]:
     )
 
 
-async def create_plan_args_model(ctx: FunctionContext) -> type[BaseModel]:
+async def create_plan_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
     agents = await ctx.registry.list()
     return constrained_plan_schema([agent.name for agent in agents])
 
 
-async def execute_create_plan(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+async def execute_create_plan(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``create_plan`` — turn the model's plan draft into live orchestration state.
 
     The model calls this function (via :meth:`LiteLLMClient.stream` with a

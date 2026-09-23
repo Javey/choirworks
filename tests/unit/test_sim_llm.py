@@ -6,14 +6,15 @@ from pydantic import BaseModel
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.sim.litellm_mock import sim_acompletion
-from choirworks.tools import FunctionContext, ToolCallResult, create_plan_func
+from choirworks.tools import ToolCallResult, create_plan_func
 from choirworks.tools.outcome_decision import (
     OutcomeDecision,
     outcome_decision_schema,
     outcome_decision_tool,
 )
-from tests.support.fakes import FakeRegistry, make_func_ctx
+from tests.support.fakes import FakeRegistry, make_orch_ctx
 
 
 def agent(name: str) -> AgentRecord:
@@ -56,7 +57,7 @@ def _as[T: BaseModel](item: ToolCallResult, model: type[T]) -> T:
 
 
 async def tool_result(
-    client: LiteLLMClient, *, system: str, user: str, tool, ctx: FunctionContext
+    client: LiteLLMClient, *, system: str, user: str, tool, ctx: OrchestrationContext
 ) -> ToolCallResult:
     result = None
     async for item in client.stream(
@@ -75,7 +76,7 @@ async def tool_result(
 async def plan_for(request: str) -> PlanDraft:
     client = make_client()
     tool = create_plan_func
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
         system="plan",
@@ -117,7 +118,7 @@ async def test_broken_plan_triggers_replan_without_auditor():
     replan_prompt += "\n\nReason for replanning:\nnode 'n1' failed: boom"
     client = make_client()
     tool = create_plan_func
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
         system="plan",
@@ -141,7 +142,7 @@ async def test_assistance_decision_routes_to_pm_for_developer():
     client = make_client()
     schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "developer"])
     tool = outcome_decision_tool(schema)
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
         system="assistance",
@@ -166,7 +167,7 @@ async def test_assistance_decision_routes_to_qa_for_pm():
     client = make_client()
     schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "product-manager"])
     tool = outcome_decision_tool(schema)
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
         system="assistance",
@@ -188,7 +189,7 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
     client = make_client()
     schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "code-reviewer"])
     tool = outcome_decision_tool(schema)
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
         system="assistance",
@@ -211,7 +212,7 @@ async def test_coordination_plan_runs_pm_and_developer_in_parallel():
 async def test_stream_with_sim_yields_valid_plan():
     client = make_client()
     tool = create_plan_func
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     items = [
         item
         async for item in client.stream(
@@ -260,7 +261,7 @@ async def test_stream_no_tool_call_yields_no_result():
 
     client = make_client()
     tool = replace(outcome_decision_tool(Answer), name="Answer")  # type: ignore[arg-type]
-    ctx = make_func_ctx(FakeRegistry(AGENTS))
+    ctx = make_orch_ctx(FakeRegistry(AGENTS))
     items = [
         item
         async for item in client.stream(

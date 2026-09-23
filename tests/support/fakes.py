@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 from litellm.types.utils import Delta
 
 from choirworks.core.planner import PlanDraft
 from choirworks.models.domain import AgentRecord
-from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.state import OrchestrationState
+from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.capabilities import ToolEffects
 
 
@@ -25,17 +28,35 @@ async def _noop(*args: object, **kwargs: object) -> None:
     return None
 
 
-def make_func_ctx(registry: object, *, max_derived_nodes: int = 5) -> FunctionContext:
-    """Build a FunctionContext for a fake executor: no runtime, no-op effects."""
+def make_orch_ctx(
+    registry: object,
+    llm: object | None = None,
+    *,
+    max_derived_nodes: int = 5,
+) -> OrchestrationContext:
+    """Build an OrchestrationContext for a fake executor: no session, no-op effects."""
+    runtime = SimpleNamespace(
+        state=OrchestrationState(),
+        task_id="t1",
+        context_id="c1",
+        queue=None,
+        lock=None,
+        runner_start_requested=False,
+    )
     effects = ToolEffects(
         max_derived_nodes=max_derived_nodes,
         join_members=_noop,
         persist=_noop,
         apply_patch_locked=_noop,  # type: ignore[arg-type]
     )
-    return FunctionContext(
-        runtime=None,  # type: ignore[arg-type]
+    return OrchestrationContext(
+        runtime=runtime,  # type: ignore[arg-type]
         registry=registry,  # type: ignore[arg-type]
+        remote=SimpleNamespace(),  # type: ignore[arg-type]
+        llm=llm if llm is not None else SimpleNamespace(),  # type: ignore[arg-type]
+        sessions=SimpleNamespace(),  # type: ignore[arg-type]
+        config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
+        brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
         effects=effects,
     )
 
@@ -64,7 +85,7 @@ class FakeLLM:
         system: str,
         user: str,
         tools: list[AgentFunction] | None = None,
-        ctx: FunctionContext | None = None,
+        ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
     ) -> AsyncIterator[Delta | ToolCallResult]:
         """Direct LLM client interface — streams reasoning deltas then the tool call."""

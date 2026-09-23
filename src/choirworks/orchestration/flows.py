@@ -65,22 +65,16 @@ async def execute_function(
 ) -> FunctionResult:
     """Execute an AgentFunction and emit the function-call event.
 
-    Builds the FunctionContext, calls execute, emits the result artifact,
+    Calls execute with the orchestration context, emits the result artifact,
     and returns the FunctionResult for the caller to inspect.
     """
     from choirworks.orchestration.events import emit_function_call
-    from choirworks.tools.base import FunctionContext
 
     logger.info(
         "execute_function",
         function=func.name,
     )
-    func_ctx = FunctionContext(
-        runtime=ctx.runtime,
-        registry=ctx.registry,
-        effects=ctx.effects,
-    )
-    result = await func.execute(func_ctx, args)
+    result = await func.execute(ctx, args)
     logger.info(
         "execute_function done",
         function=func.name,

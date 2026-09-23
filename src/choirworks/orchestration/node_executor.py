@@ -212,7 +212,6 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
     )
     try:
         return await run_subagent(
-            ctx.llm,
             OUTCOME_SUBAGENT,
             ctx,
             user,

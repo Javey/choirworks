@@ -10,7 +10,8 @@ from litellm.types.utils import ChatCompletionDeltaToolCall, Delta, ModelRespons
 from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
-    from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+    from choirworks.orchestration.context import OrchestrationContext
+    from choirworks.tools.base import AgentFunction, ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -67,7 +68,7 @@ class LiteLLMClient:
         system: str,
         user: str,
         tools: list[AgentFunction] | None = None,
-        ctx: FunctionContext | None = None,
+        ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
     ) -> AsyncIterator[Delta | ToolCallResult]:
         """Stream ``Delta`` chunks, then yield a ``ToolCallResult`` if the

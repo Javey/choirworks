@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from a2a.server.events import EventQueue
 
-from choirworks.orchestration.deps import Deps
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import OrchestrationState
 from choirworks.tools.capabilities import ToolEffects
@@ -33,14 +32,20 @@ class ExecutorConfig:
 
 @dataclass(frozen=True, slots=True)
 class OrchestrationContext:
-    """One turn's orchestration context: runtime + deps + tool effects.
+    """One turn's orchestration context: session runtime + collaborators + effects.
 
-    Immutable; shared read-only collaborators live in :class:`Deps` and are
-    re-exposed as properties so call sites stay terse.
+    Immutable; the long-lived collaborators are held directly, so call sites
+    read ``ctx.registry`` / ``ctx.llm`` without an extra layer, and the
+    session runtime's hot fields are re-exposed as properties.
     """
 
     runtime: SessionRuntime
-    deps: Deps
+    registry: AgentRegistry
+    remote: RemoteAgentClient
+    llm: LiteLLMClient
+    sessions: SessionManager
+    config: ExecutorConfig
+    brief_builder: ContextBriefBuilder
     effects: ToolEffects
 
     @property
@@ -62,27 +67,3 @@ class OrchestrationContext:
     @property
     def lock(self) -> asyncio.Lock:
         return self.runtime.lock
-
-    @property
-    def registry(self) -> AgentRegistry:
-        return self.deps.registry
-
-    @property
-    def remote(self) -> RemoteAgentClient:
-        return self.deps.remote
-
-    @property
-    def llm(self) -> LiteLLMClient:
-        return self.deps.llm
-
-    @property
-    def sessions(self) -> SessionManager:
-        return self.deps.sessions
-
-    @property
-    def config(self) -> ExecutorConfig:
-        return self.deps.config
-
-    @property
-    def brief_builder(self) -> ContextBriefBuilder:
-        return self.deps.brief_builder

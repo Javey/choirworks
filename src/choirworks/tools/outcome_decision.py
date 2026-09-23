@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, create_model
 
 from choirworks.orchestration.patch import PlanPatch
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 OUTCOME_SYSTEM = """You are the orchestrator of a multi-agent group.
 Read an agent's final reply and decide what it means for the plan:
@@ -77,10 +80,10 @@ def outcome_decision_tool(schema: type[OutcomeDecision]) -> AgentFunction:
     in a closure so the dynamic enum constraint stays per-call.
     """
 
-    async def args_model(ctx: FunctionContext) -> type[BaseModel]:
+    async def args_model(ctx: OrchestrationContext) -> type[BaseModel]:
         return schema
 
-    async def execute(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+    async def execute(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
         return FunctionResult(success=True)
 
     return AgentFunction(

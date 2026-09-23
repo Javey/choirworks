@@ -8,12 +8,12 @@ from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
-from choirworks.core.llm import LiteLLMClient, ToolParseError
+from choirworks.core.llm import ToolParseError
 from choirworks.models.domain import AgentRecord
-from choirworks.orchestration.registry import AgentRegistry
 
 if TYPE_CHECKING:
-    from choirworks.tools.base import FunctionContext, ToolCallResult
+    from choirworks.orchestration.context import OrchestrationContext
+    from choirworks.tools.base import ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -112,11 +112,9 @@ Rules:
 
 
 async def plan(
-    llm: LiteLLMClient,
-    registry: AgentRegistry,
     request: str,
     *,
-    ctx: FunctionContext,
+    ctx: OrchestrationContext,
     reason: str | None = None,
     context: str | None = None,
     max_nodes: int = 20,
@@ -129,7 +127,7 @@ async def plan(
         ``ToolCallResult`` whose ``args`` is a :class:`PlanDraft`.
         The caller validates and executes the tool.
     """
-    agents = await registry.list()
+    agents = await ctx.registry.list()
     if not agents:
         raise PlanningFailed("no agents registered; register at least one A2A agent first")
     capabilities = build_planner_capabilities(agents)
@@ -151,7 +149,7 @@ async def plan(
         try:
             from choirworks.tools.create_plan import create_plan_func
 
-            async for item in llm.stream(
+            async for item in ctx.llm.stream(
                 system=SYSTEM_PROMPT,
                 user=user,
                 tools=[create_plan_func],

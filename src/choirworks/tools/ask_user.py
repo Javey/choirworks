@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 from pydantic import BaseModel
 
 from choirworks.orchestration.state import NodeStatus, add_intervention
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
 
@@ -25,11 +30,11 @@ class AskUserData(BaseModel):
     question: str
 
 
-async def ask_user_args_model(ctx: FunctionContext) -> type[BaseModel]:
+async def ask_user_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
     return AskUserArgs
 
 
-async def execute_ask_user(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``ask_user`` — the model requests human input to unblock a node.
 
     The orchestrator's outcome-interpretation layer decides an agent's reply

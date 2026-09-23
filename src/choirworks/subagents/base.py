@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 import structlog
 
-from choirworks.core.llm import LiteLLMClient, ToolParseError
+from choirworks.core.llm import ToolParseError
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.tools.base import AgentFunction, FunctionContext, ToolCallResult
+from choirworks.tools.base import AgentFunction, ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -35,7 +35,6 @@ class Subagent[T]:
 
 
 async def run_subagent[T](
-    llm: LiteLLMClient,
     subagent: Subagent[T],
     ctx: OrchestrationContext,
     user: str,
@@ -47,11 +46,6 @@ async def run_subagent[T](
         name=subagent.name,
         user_len=len(user),
         retries=subagent.max_retries,
-    )
-    func_ctx = FunctionContext(
-        runtime=ctx.runtime,
-        registry=ctx.registry,
-        effects=ctx.effects,
     )
     last_error: Exception | None = None
     current_user = user
@@ -67,11 +61,11 @@ async def run_subagent[T](
         tools = await subagent.build_tools(ctx, **tool_kwargs)
         tool_call: ToolCallResult | None = None
         try:
-            async for item in llm.stream(
+            async for item in ctx.llm.stream(
                 system=subagent.system_prompt,
                 user=current_user,
                 tools=tools,
-                ctx=func_ctx,
+                ctx=ctx,
                 tool_choice={"type": "function", "function": {"name": subagent.tool_name}},
             ):
                 if isinstance(item, ToolCallResult):

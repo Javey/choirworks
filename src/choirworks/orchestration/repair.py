@@ -33,7 +33,7 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
         return False
     user = build_repair_user(state.nodes.values(), agents)
     try:
-        decision = await run_subagent(ctx.llm, REPAIR_SUBAGENT, ctx, user)
+        decision = await run_subagent(REPAIR_SUBAGENT, ctx, user)
     except Exception:
         logger.exception("plan repair failed", context=ctx.context_id)
         return False

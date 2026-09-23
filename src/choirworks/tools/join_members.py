@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel
 
 from choirworks.orchestration.state import add_member
-from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
+from choirworks.tools.base import AgentFunction, FunctionResult
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 
 class JoinMembersArgs(BaseModel):
@@ -19,11 +24,11 @@ class JoinMembersData(BaseModel):
     joined: list[str]
 
 
-async def join_members_args_model(ctx: FunctionContext) -> type[BaseModel]:
+async def join_members_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
     return JoinMembersArgs
 
 
-async def execute_join_members(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
+async def execute_join_members(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``join_members`` — add registered agents to the collaboration room.
 
     Pure state change: resolves the names against the registry, adds

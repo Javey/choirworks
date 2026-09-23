@@ -43,7 +43,16 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         runner_start_requested=False,
     )
     deps = SimpleNamespace(registry=FakeRegistry([]))
-    ctx = OrchestrationContext(runtime=runtime, deps=deps, effects=SimpleNamespace())
+    ctx = OrchestrationContext(
+        runtime=runtime,
+        registry=deps.registry,
+        remote=SimpleNamespace(),
+        llm=SimpleNamespace(),
+        sessions=SimpleNamespace(),
+        config=SimpleNamespace(),
+        brief_builder=SimpleNamespace(),
+        effects=SimpleNamespace(),
+    )
     return ctx, queue
 
 
