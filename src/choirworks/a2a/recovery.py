@@ -30,7 +30,7 @@ TERMINAL_STATES = {
 async def recover_tasks(
     request_handler: DefaultRequestHandler,
     task_store: TaskStore,
-    context_store: ContextStore | None = None,
+    context_store: ContextStore,
 ) -> int:
     """Re-attach to non-terminal work after a process restart.
 
@@ -51,7 +51,7 @@ async def recover_tasks(
         if context_id in seen_contexts:
             continue
         if load_state(task) is None:
-            if context_store is None or await context_store.get(context_id) is None:
+            if await context_store.get(context_id) is None:
                 continue
         seen_contexts.add(context_id)
         message = new_data_message(

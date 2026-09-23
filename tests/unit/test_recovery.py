@@ -82,7 +82,9 @@ def test_is_resume_message_detects_data_message():
 
 async def test_recover_tasks_sends_structured_resume_message():
     handler = RecordingHandler()
-    recovered = await recover_tasks(handler, FakeTaskStore([_persisted_task()]))
+    recovered = await recover_tasks(
+        handler, FakeTaskStore([_persisted_task()]), FakeContextStore({})
+    )
 
     assert recovered == 1
     [request] = handler.requests
@@ -159,6 +161,7 @@ async def test_recover_tasks_resumes_once_per_context():
                 _persisted_task("t3", "c2"),
             ]
         ),
+        FakeContextStore({}),
     )
 
     assert recovered == 2
