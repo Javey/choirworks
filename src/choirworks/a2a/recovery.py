@@ -6,7 +6,6 @@ from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks.task_store import TaskStore
 from a2a.types.a2a_pb2 import (
-    ListTasksRequest,
     Role,
     SendMessageConfiguration,
     SendMessageRequest,
@@ -14,6 +13,7 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
+from choirworks.a2a.tasks import iter_all_tasks
 from choirworks.orchestration.rewind import hidden_task_ids, parse_markers
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
@@ -48,45 +48,36 @@ async def recover_tasks(
         if context_store is not None
         else {}
     )
-    page_token = ""
-    while True:
-        page = await task_store.list(
-            ListTasksRequest(page_size=100, page_token=page_token),
-            ServerCallContext(),
+    async for task in iter_all_tasks(task_store):
+        if task.status.state in TERMINAL_STATES:
+            continue
+        context_id = task.context_id or task.id
+        if context_id in seen_contexts:
+            continue
+        if task.id in hidden.get(context_id, set()):
+            continue
+        if load_state(task) is None:
+            if context_store is None or await context_store.get(context_id) is None:
+                continue
+        seen_contexts.add(context_id)
+        message = new_data_message(
+            {"kind": "resume"},
+            role=Role.ROLE_USER,
+            task_id=task.id,
+            context_id=task.context_id,
         )
-        for task in page.tasks:
-            if task.status.state in TERMINAL_STATES:
-                continue
-            context_id = task.context_id or task.id
-            if context_id in seen_contexts:
-                continue
-            if task.id in hidden.get(context_id, set()):
-                continue
-            if load_state(task) is None:
-                if context_store is None or await context_store.get(context_id) is None:
-                    continue
-            seen_contexts.add(context_id)
-            message = new_data_message(
-                {"kind": "resume"},
-                role=Role.ROLE_USER,
-                task_id=task.id,
-                context_id=task.context_id,
+        ParseDict({"choirworks.resume": {"kind": "resume"}}, message.metadata)
+        request = SendMessageRequest(
+            message=message,
+            configuration=SendMessageConfiguration(return_immediately=True),
+        )
+        try:
+            await request_handler.on_message_send(
+                request, ServerCallContext()
             )
-            ParseDict({"choirworks.resume": {"kind": "resume"}}, message.metadata)
-            request = SendMessageRequest(
-                message=message,
-                configuration=SendMessageConfiguration(return_immediately=True),
-            )
-            try:
-                await request_handler.on_message_send(
-                    request, ServerCallContext()
-                )
-                recovered += 1
-            except Exception:  # noqa: BLE001 - one bad task must not stop recovery
-                logger.exception("Failed to recover task", task_id=task.id)
-        page_token = page.next_page_token
-        if not page_token:
-            break
+            recovered += 1
+        except Exception:  # noqa: BLE001 - one bad task must not stop recovery
+            logger.exception("Failed to recover task", task_id=task.id)
     if recovered:
         logger.info("Recovered in-flight task(s)", count=recovered)
     return recovered
@@ -99,18 +90,9 @@ async def _hidden_by_context(
         record.context_id: record for record in await context_store.list()
     }
     ids_by_context: dict[str, list[str]] = {}
-    page_token = ""
-    while True:
-        page = await task_store.list(
-            ListTasksRequest(page_size=100, page_token=page_token),
-            ServerCallContext(),
-        )
-        for task in page.tasks:
-            context_id = task.context_id or task.id
-            ids_by_context.setdefault(context_id, []).append(task.id)
-        page_token = page.next_page_token
-        if not page_token:
-            break
+    async for task in iter_all_tasks(task_store):
+        context_id = task.context_id or task.id
+        ids_by_context.setdefault(context_id, []).append(task.id)
     return {
         context_id: hidden_task_ids(
             list(reversed(ids)),

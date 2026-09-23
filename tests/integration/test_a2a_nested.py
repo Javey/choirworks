@@ -1,6 +1,4 @@
-from a2a.server.context import ServerCallContext
 from a2a.types import (
-    ListTasksRequest,
     Message,
     Part,
     Role,
@@ -8,6 +6,7 @@ from a2a.types import (
     TaskState,
 )
 
+from choirworks.a2a.tasks import list_all_tasks
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from tests.support.fakes import FakeLLM
@@ -75,7 +74,5 @@ async def test_outer_dispatches_task_to_inner_instance(tmp_path, echo_agent):
                 if part.HasField("text")
             )
             assert "echo:hi" in artifact_text
-            inner_tasks = await inner_app.state.task_store.list(
-                ListTasksRequest(), ServerCallContext()
-            )
-            assert len(inner_tasks.tasks) == 1
+            inner_tasks = await list_all_tasks(inner_app.state.task_store)
+            assert len(inner_tasks) == 1

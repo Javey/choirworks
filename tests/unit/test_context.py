@@ -127,7 +127,9 @@ class FakeTaskStore:
         self._tasks = tasks
 
     async def list(self, params, ctx):
-        return SimpleNamespace(tasks=self._tasks)
+        return SimpleNamespace(
+            tasks=list(reversed(self._tasks)), next_page_token=""
+        )
 
 
 def brief_builder(llm, tasks, **kwargs) -> ContextBriefBuilder:

@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
-from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
     create_agent_card_routes,
@@ -14,7 +13,7 @@ from a2a.server.routes import (
 )
 from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
 from a2a.server.tasks.database_task_store import DatabaseTaskStore
-from a2a.types.a2a_pb2 import ListTasksRequest, Task, TaskState
+from a2a.types.a2a_pb2 import TaskState
 from fastapi import FastAPI, HTTPException, Request
 from google.protobuf.json_format import MessageToDict
 from pydantic import JsonValue
@@ -23,6 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from choirworks.a2a.card import build_agent_card
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.executor import ChoirWorksAgentExecutor
+from choirworks.a2a.tasks import list_all_tasks
 from choirworks.api import agents as agents_routes
 from choirworks.api.replay import synthesize_replay_events
 from choirworks.config import Settings
@@ -200,19 +200,12 @@ async def create_app(
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    async def _context_tasks(request: Request, context_id: str) -> list[Task]:
-        """Context tasks ordered oldest first."""
-        params = ListTasksRequest()
-        params.context_id = context_id
-        response = await request.app.state.task_store.list(
-            params, ServerCallContext()
-        )
-        return list(reversed(response.tasks))
-
     async def _conversation_payload(
         request: Request, context_id: str
     ) -> ConversationPayload:
-        tasks = await _context_tasks(request, context_id)
+        tasks = await list_all_tasks(
+            request.app.state.task_store, context_id=context_id, reverse=True
+        )
         if not tasks:
             raise HTTPException(status_code=404, detail="conversation not found")
         record = await request.app.state.context_store.get(context_id)
@@ -245,7 +238,6 @@ async def create_app(
     async def list_conversations(request: Request) -> list[ConversationSummary]:
         task_store = request.app.state.task_store
         context_store = request.app.state.context_store
-        ctx = ServerCallContext()
         records = {
             record.context_id: record for record in await context_store.list()
         }
@@ -264,9 +256,9 @@ async def create_app(
             context_id: TaskState.TASK_STATE_UNSPECIFIED
             for context_id in sessions
         }
-        response = await task_store.list(ListTasksRequest(), ctx)
+        tasks = await list_all_tasks(task_store)
         tasks_by_context: dict[str, list[str]] = {}
-        for task in response.tasks:
+        for task in tasks:
             ctx_id = task.context_id or task.id
             tasks_by_context.setdefault(ctx_id, []).append(task.id)
         hidden_by_context = {
@@ -278,7 +270,7 @@ async def create_app(
             )
             for ctx_id, ids in tasks_by_context.items()
         }
-        for task in response.tasks:
+        for task in tasks:
             ctx_id = task.context_id or task.id
             if task.id in hidden_by_context[ctx_id]:
                 continue
@@ -317,7 +309,9 @@ async def create_app(
     async def replay_conversation(
         context_id: str, request: Request
     ) -> list[dict[str, object]]:
-        tasks = await _context_tasks(request, context_id)
+        tasks = await list_all_tasks(
+            request.app.state.task_store, context_id=context_id, reverse=True
+        )
         if not tasks:
             raise HTTPException(status_code=404, detail="conversation not found")
         record = await request.app.state.context_store.get(context_id)
@@ -347,7 +341,9 @@ async def create_app(
         record = await context_store.get(context_id)
         if record is None:
             raise HTTPException(status_code=404, detail="conversation not found")
-        tasks = await _context_tasks(request, context_id)
+        tasks = await list_all_tasks(
+            request.app.state.task_store, context_id=context_id, reverse=True
+        )
         if not tasks:
             raise HTTPException(status_code=404, detail="conversation not found")
         index = {task.id: position for position, task in enumerate(tasks)}

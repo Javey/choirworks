@@ -5,11 +5,11 @@ from __future__ import annotations
 # which splits prompt construction into dedicated modules.
 from collections.abc import Iterable, Mapping, Sequence
 
-from a2a.server.context import ServerCallContext
 from a2a.server.tasks.task_store import TaskStore
-from a2a.types.a2a_pb2 import ListTasksRequest, Role
+from a2a.types.a2a_pb2 import Role
 
 from choirworks.a2a.room import message_text, room_options
+from choirworks.a2a.tasks import list_all_tasks
 from choirworks.core.fencing import (
     QUOTED_CONTENT_PREAMBLE,
     cap_description,
@@ -280,13 +280,14 @@ class ContextBriefBuilder:
         if not context_id or self._task_store is None:
             return ""
         try:
-            params = ListTasksRequest(context_id=context_id, page_size=50)
-            page = await self._task_store.list(params, ServerCallContext())
+            tasks = await list_all_tasks(
+                self._task_store, context_id=context_id, reverse=True
+            )
         except Exception:  # noqa: BLE001 - context is best effort
             return ""
 
         timeline: list[str] = []
-        for task in page.tasks:
+        for task in tasks:
             if task.id == exclude_task_id:
                 continue
             for msg in task.history or []:
