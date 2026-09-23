@@ -13,7 +13,7 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.tasks import list_all_tasks
+from choirworks.a2a.tasks import iter_all_tasks
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
@@ -44,9 +44,7 @@ async def recover_tasks(
     seen_contexts: set[str] = set()
 
     # Single DB query; iter_all_tasks filters rewind-hidden tasks in-stream.
-    tasks = await list_all_tasks(task_store)
-
-    for task in tasks:
+    async for task in iter_all_tasks(task_store):
         if task.status.state in TERMINAL_STATES:
             continue
         context_id = task.context_id
