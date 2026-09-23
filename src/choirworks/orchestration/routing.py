@@ -34,25 +34,24 @@ async def route_message(
             (
                 node
                 for node in state.nodes.values()
-                if node.id == quote_id
-                or f"{ctx.task_id}:{node.id}" == quote_id
+                if node.id == quote_id or f"{ctx.task_id}:{node.id}" == quote_id
             ),
             None,
         )
         if quoted_node is not None and quoted_node.status in ACTIVE_NODE_STATUSES:
             logger.info(
                 "route_message route=enqueue_active",
-                task_id=ctx.task_id, node_id=quoted_node.id,
+                task_id=ctx.task_id,
+                node_id=quoted_node.id,
             )
-            enqueue(state,
-                quoted_node.id, text, sender="user", quote_id=str(quote_id)
-            )
+            enqueue(state, quoted_node.id, text, sender="user", quote_id=str(quote_id))
             await ctx.sessions.persist(ctx)
             return
         if quoted_node is not None and quoted_node.status == "completed":
             logger.info(
                 "route_message route=followup",
-                task_id=ctx.task_id, node_id=quoted_node.id,
+                task_id=ctx.task_id,
+                node_id=quoted_node.id,
             )
             await spawn_followup_node(ctx, text, quoted_node)
             return
@@ -61,7 +60,8 @@ async def route_message(
         node = active[0]
         logger.info(
             "route_message route=interrupt",
-            task_id=ctx.task_id, node_id=node.id,
+            task_id=ctx.task_id,
+            node_id=node.id,
         )
         if node.a2a_task_id:
             await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
@@ -69,23 +69,32 @@ async def route_message(
         invalidated = blocked_nodes(state)
         for blocked in invalidated:
             blocked.status = "invalidated"
-        await emit_state_delta(ctx, nodes={
-            node.id: {"status": "canceled", "agent_name": node.agent_name},
-            **{b.id: {"status": "invalidated"} for b in invalidated},
-        })
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {"status": "canceled", "agent_name": node.agent_name},
+                **{b.id: {"status": "invalidated"} for b in invalidated},
+            },
+        )
         await spawn_followup_node(ctx, text, node, deps=[])
         return
 
-    target = active[0] if active else next(
-        (n for n in state.nodes.values() if n.status in {"pending", "ready"}),
-        None,
+    target = (
+        active[0]
+        if active
+        else next(
+            (n for n in state.nodes.values() if n.status in {"pending", "ready"}),
+            None,
+        )
     )
     if target is not None:
         logger.info(
             "route_message route=enqueue",
-            task_id=ctx.task_id, node_id=target.id,
+            task_id=ctx.task_id,
+            node_id=target.id,
         )
-        enqueue(state,
+        enqueue(
+            state,
             target.id,
             text,
             sender="user",
@@ -95,8 +104,10 @@ async def route_message(
         return
 
     from choirworks.orchestration.planning import plan_and_launch
+
     logger.info(
-        "route_message route=new_plan", task_id=ctx.task_id,
+        "route_message route=new_plan",
+        task_id=ctx.task_id,
     )
     await plan_and_launch(ctx, text)
 
@@ -120,7 +131,9 @@ async def spawn_followup_node(
     node_id = f"{anchor.id}-f{state.derived_count}"
     logger.info(
         "spawn_followup_node",
-        node_id=node_id, agent=anchor.agent_name, anchor_id=anchor.id,
+        node_id=node_id,
+        agent=anchor.agent_name,
+        anchor_id=anchor.id,
     )
     followup = NodeState(
         id=node_id,
@@ -132,12 +145,15 @@ async def spawn_followup_node(
         derived=True,
     )
     state.nodes[node_id] = followup
-    await emit_state_delta(ctx, nodes={
-        node_id: {
-            "status": "pending",
-            "agent_name": followup.agent_name,
-            "input_text": followup.input_text,
+    await emit_state_delta(
+        ctx,
+        nodes={
+            node_id: {
+                "status": "pending",
+                "agent_name": followup.agent_name,
+                "input_text": followup.input_text,
+            },
         },
-    })
+    )
     await ctx.sessions.persist(ctx)
     ctx.runtime.runner_start_requested = True

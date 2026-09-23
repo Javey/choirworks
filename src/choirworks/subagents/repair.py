@@ -19,9 +19,7 @@ from choirworks.tools.outcome_decision import (
 )
 
 
-async def build_repair_tools(
-    ctx: OrchestrationContext, **kwargs: object
-) -> list[AgentFunction]:
+async def build_repair_tools(ctx: OrchestrationContext, **kwargs: object) -> list[AgentFunction]:
     agents = await ctx.registry.list()
     schema = outcome_decision_schema([a.name for a in agents])
     return [outcome_decision_tool(schema)]

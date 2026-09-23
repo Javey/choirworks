@@ -58,9 +58,7 @@ async def _conversation_payload(
     task_store: TaskStore,
     context_store: ContextStore,
 ) -> ConversationPayload:
-    tasks = await list_all_tasks(
-        task_store, context_id=context_id, reverse=True
-    )
+    tasks = await list_all_tasks(task_store, context_id=context_id, reverse=True)
     if not tasks:
         raise HTTPException(status_code=404, detail="conversation not found")
     record = await context_store.get(context_id)
@@ -70,10 +68,7 @@ async def _conversation_payload(
             context = json.loads(record.state)
         except ValueError:
             context = None
-    visible_dicts = [
-        MessageToDict(task, preserving_proto_field_name=True)
-        for task in tasks
-    ]
+    visible_dicts = [MessageToDict(task, preserving_proto_field_name=True) for task in tasks]
     return {"id": context_id, "context": context, "tasks": visible_dicts}
 
 
@@ -93,9 +88,7 @@ async def list_conversations(
     task_store: TaskStore = Depends(get_task_store),
     context_store: ContextStore = Depends(get_context_store),
 ) -> list[ConversationSummary]:
-    records = {
-        record.context_id: record for record in await context_store.list()
-    }
+    records = {record.context_id: record for record in await context_store.list()}
     sessions: dict[str, ConversationSummary] = {
         context_id: {
             "id": context_id,
@@ -108,8 +101,7 @@ async def list_conversations(
         for context_id, record in records.items()
     }
     latest_state: dict[str, TaskState] = {
-        context_id: TaskState.TASK_STATE_UNSPECIFIED
-        for context_id in sessions
+        context_id: TaskState.TASK_STATE_UNSPECIFIED for context_id in sessions
     }
     tasks = await list_all_tasks(task_store)
     for task in tasks:
@@ -118,9 +110,7 @@ async def list_conversations(
         if ctx_id not in sessions:
             title = ""
             if task.metadata.fields:
-                meta = MessageToDict(
-                    task.metadata, preserving_proto_field_name=True
-                )
+                meta = MessageToDict(task.metadata, preserving_proto_field_name=True)
                 if meta.get("title"):
                     title = meta["title"]
             sessions[ctx_id] = {
@@ -155,9 +145,7 @@ async def replay_conversation(
     task_store: TaskStore = Depends(get_task_store),
     context_store: ContextStore = Depends(get_context_store),
 ) -> list[dict[str, object]]:
-    tasks = await list_all_tasks(
-        task_store, context_id=context_id, reverse=True
-    )
+    tasks = await list_all_tasks(task_store, context_id=context_id, reverse=True)
     if not tasks:
         raise HTTPException(status_code=404, detail="conversation not found")
     record = await context_store.get(context_id)
@@ -182,24 +170,18 @@ async def rewind_conversation(
     if not task_id:
         raise HTTPException(status_code=400, detail="task_id is required")
     if executor.session_is_active(context_id):
-        raise HTTPException(
-            status_code=409, detail="会话正在执行中，无法回退"
-        )
+        raise HTTPException(status_code=409, detail="会话正在执行中，无法回退")
     record = await context_store.get(context_id)
     if record is None:
         raise HTTPException(status_code=404, detail="conversation not found")
-    tasks = await list_all_tasks(
-        task_store, context_id=context_id, reverse=True
-    )
+    tasks = await list_all_tasks(task_store, context_id=context_id, reverse=True)
     if not tasks:
         raise HTTPException(status_code=404, detail="conversation not found")
     index = {task.id: position for position, task in enumerate(tasks)}
     if task_id not in index:
         raise HTTPException(status_code=404, detail="task not found")
     if not is_human_turn(tasks[index[task_id]]):
-        raise HTTPException(
-            status_code=400, detail="只有人类消息开启的回合可以回退"
-        )
+        raise HTTPException(status_code=400, detail="只有人类消息开启的回合可以回退")
     try:
         state = restore_state(tasks, task_id)
     except RewindUnavailable as exc:

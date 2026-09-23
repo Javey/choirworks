@@ -23,9 +23,7 @@ async def join_members_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return JoinMembersArgs
 
 
-async def execute_join_members(
-    ctx: FunctionContext, args: BaseModel
-) -> FunctionResult:
+async def execute_join_members(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
     """``join_members`` — add registered agents to the collaboration room.
 
     Pure state change: resolves the names against the registry, adds
@@ -34,8 +32,10 @@ async def execute_join_members(
     tool.  NOTE: if this function is ever exposed in a model's tool list, the
     calling path must emit that delta as well.
     """
-    join_args = args if isinstance(args, JoinMembersArgs) else (
-        JoinMembersArgs.model_validate(args.model_dump())
+    join_args = (
+        args
+        if isinstance(args, JoinMembersArgs)
+        else (JoinMembersArgs.model_validate(args.model_dump()))
     )
     state = ctx.state
     records = await ctx.registry.list()

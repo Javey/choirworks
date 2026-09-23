@@ -33,9 +33,7 @@ async def revise_plan_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return RevisePlanArgs
 
 
-async def execute_revise_plan(
-    ctx: FunctionContext, args: BaseModel
-) -> FunctionResult:
+async def execute_revise_plan(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
     """``revise_plan`` — apply an incremental patch to the running plan.
 
     The model calls this when an agent's outcome suggests the plan needs
@@ -49,20 +47,25 @@ async def execute_revise_plan(
       intervention, not a model intent.
     * ``node.invalidated`` — state transition on the node.
     """
-    plan_args = args if isinstance(args, RevisePlanArgs) else RevisePlanArgs.model_validate(
-        args.model_dump()
+    plan_args = (
+        args
+        if isinstance(args, RevisePlanArgs)
+        else RevisePlanArgs.model_validate(args.model_dump())
     )
     logger.info(
         "revise_plan",
-        add_count=len(plan_args.patch.add), invalidate_count=len(plan_args.patch.invalidate),
+        add_count=len(plan_args.patch.add),
+        invalidate_count=len(plan_args.patch.invalidate),
         reason=plan_args.patch.reason or "(none)",
     )
     result = await ctx.effects.apply_patch_locked(plan_args.patch)
 
     logger.info(
         "revise_plan done",
-        added=len(result.added), invalidated=len(result.invalidated),
-        skipped=len(result.skipped_in_flight), rejected=len(result.rejected),
+        added=len(result.added),
+        invalidated=len(result.invalidated),
+        skipped=len(result.skipped_in_flight),
+        rejected=len(result.rejected),
     )
     return FunctionResult(
         success=True,

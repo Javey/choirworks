@@ -294,10 +294,7 @@ def ready_nodes(state: OrchestrationState) -> list[NodeState]:
     for node in state.nodes.values():
         if node.status not in ("pending", "ready", "recover"):
             continue
-        if all(
-            dep in state.nodes and state.nodes[dep].status == "completed"
-            for dep in node.deps
-        ):
+        if all(dep in state.nodes and state.nodes[dep].status == "completed" for dep in node.deps):
             ready.append(node)
     return ready
 
@@ -329,9 +326,7 @@ def failed_nodes(state: OrchestrationState) -> list[NodeState]:
 def all_completed(state: OrchestrationState) -> bool:
     """True when every task is settled: completed or canceled."""
     active = [n for n in state.nodes.values() if n.status != "invalidated"]
-    return bool(active) and all(
-        n.status in {"completed", "canceled"} for n in active
-    )
+    return bool(active) and all(n.status in {"completed", "canceled"} for n in active)
 
 
 def has_failures(state: OrchestrationState) -> bool:
@@ -361,9 +356,7 @@ def pending_interventions(state: OrchestrationState) -> list[Intervention]:
     return [iv for iv in state.interventions.values() if iv.status == "pending"]
 
 
-def pending_intervention_for(
-    state: OrchestrationState, node_id: str
-) -> Intervention | None:
+def pending_intervention_for(state: OrchestrationState, node_id: str) -> Intervention | None:
     for intervention in state.interventions.values():
         if intervention.node_id == node_id and intervention.status == "pending":
             return intervention
@@ -373,18 +366,14 @@ def pending_intervention_for(
 # ----------------------------------------------------------------- transitions
 
 
-def add_member(
-    state: OrchestrationState, name: str, url: str, reason: str
-) -> bool:
+def add_member(state: OrchestrationState, name: str, url: str, reason: str) -> bool:
     if name in state.members:
         return False
     state.members[name] = Member(name=name, url=url, reason=reason)
     return True
 
 
-def add_intervention(
-    state: OrchestrationState, node_id: str, question: str
-) -> Intervention:
+def add_intervention(state: OrchestrationState, node_id: str, question: str) -> Intervention:
     intervention = Intervention(
         id=f"iv{state.next_intervention}",
         node_id=node_id,
@@ -417,9 +406,7 @@ def add_cancel_request(
     return intervention
 
 
-def expire_cancel_requests(
-    state: OrchestrationState, node_id: str
-) -> list[Intervention]:
+def expire_cancel_requests(state: OrchestrationState, node_id: str) -> list[Intervention]:
     expired = []
     for intervention in state.interventions.values():
         if (
@@ -487,22 +474,25 @@ def start_new_plan(state: OrchestrationState, plan_id: str) -> None:
 
 def state_to_json(state: OrchestrationState) -> str:
     """Full snapshot: nodes, members, interventions and queue."""
-    return json.dumps({
-        "plan_id": state.plan_id,
-        "plan_version": state.plan_version,
-        "nodes": [n.to_dict() for n in state.nodes.values()],
-        "members": [m.to_dict() for m in state.members.values()],
-        "interventions": [iv.to_dict() for iv in state.interventions.values()],
-        "queue": {
-            node_id: [qm.to_dict() for qm in messages]
-            for node_id, messages in state.queue.items()
+    return json.dumps(
+        {
+            "plan_id": state.plan_id,
+            "plan_version": state.plan_version,
+            "nodes": [n.to_dict() for n in state.nodes.values()],
+            "members": [m.to_dict() for m in state.members.values()],
+            "interventions": [iv.to_dict() for iv in state.interventions.values()],
+            "queue": {
+                node_id: [qm.to_dict() for qm in messages]
+                for node_id, messages in state.queue.items()
+            },
+            "derived_count": state.derived_count,
+            "patch_count": state.patch_count,
+            "revision_count": state.revision_count,
+            "next_intervention": state.next_intervention,
+            "next_message": state.next_message,
         },
-        "derived_count": state.derived_count,
-        "patch_count": state.patch_count,
-        "revision_count": state.revision_count,
-        "next_intervention": state.next_intervention,
-        "next_message": state.next_message,
-    }, ensure_ascii=False)
+        ensure_ascii=False,
+    )
 
 
 def state_from_json(raw: str) -> OrchestrationState:
@@ -524,9 +514,7 @@ def state_from_json(raw: str) -> OrchestrationState:
         intervention = Intervention.from_dict(iv)
         state.interventions[intervention.id] = intervention
     for node_id, messages in (data.get("queue") or {}).items():
-        state.queue[str(node_id)] = [
-            QueuedMessage.from_dict(message) for message in messages
-        ]
+        state.queue[str(node_id)] = [QueuedMessage.from_dict(message) for message in messages]
     state.derived_count = int(data.get("derived_count", 0))
     state.patch_count = int(data.get("patch_count", 0))
     state.revision_count = int(data.get("revision_count", 0))

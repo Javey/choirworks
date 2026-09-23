@@ -61,9 +61,7 @@ class ScriptedExecutor(AgentExecutor):
 
     async def _emit_artifact(self, updater: TaskUpdater, text: str) -> None:
         if self._chunk_size <= 0:
-            await updater.add_artifact(
-                parts=[Part(text=text)], name="response", last_chunk=True
-            )
+            await updater.add_artifact(parts=[Part(text=text)], name="response", last_chunk=True)
             return
         from uuid import uuid4
 
@@ -134,9 +132,7 @@ class ScriptedExecutor(AgentExecutor):
                 )
                 return
             if self._behavior == "needs_info_text" and self._calls == 1:
-                await self._emit_artifact(
-                    updater, "[cw:need_info] 需要补充需求信息。"
-                )
+                await self._emit_artifact(updater, "[cw:need_info] 需要补充需求信息。")
                 await updater.complete()
                 return
             if self._behavior in ("fail", "flaky_always") or (

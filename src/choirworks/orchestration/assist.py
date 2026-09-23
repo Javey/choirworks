@@ -58,13 +58,16 @@ async def arbitrate_mentions(
         )
         state.nodes[helper_id] = helper
         await join_members(ctx, [name], "agent_mention")
-        await emit_state_delta(ctx, nodes={
-            helper_id: {
-                "status": "pending",
-                "agent_name": helper.agent_name,
-                "input_text": helper.input_text,
+        await emit_state_delta(
+            ctx,
+            nodes={
+                helper_id: {
+                    "status": "pending",
+                    "agent_name": helper.agent_name,
+                    "input_text": helper.input_text,
+                },
             },
-        })
+        )
         await ctx.sessions.persist(ctx)
         ctx.runtime.runner_start_requested = True
 

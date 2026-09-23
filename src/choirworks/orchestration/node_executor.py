@@ -47,16 +47,26 @@ async def execute_node(
         node.attempt += 1
     logger.info(
         "execute_node",
-        node_id=node.id, agent=node.agent_name, mode=mode, attempt=node.attempt,
+        context_id=ctx.context_id,
+        node_id=node.id,
+        agent=node.agent_name,
+        mode=mode,
+        attempt=node.attempt,
     )
     if mode == "dispatch":
-        await emit_state_delta(ctx, nodes={
-            node.id: {"status": "dispatched", "input_text": node.input_text},
-        })
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {"status": "dispatched", "input_text": node.input_text},
+            },
+        )
     elif mode == "recover":
-        await emit_state_delta(ctx, nodes={
-            node.id: {"status": "recover", "a2a_task_id": node.a2a_task_id},
-        })
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {"status": "recover", "a2a_task_id": node.a2a_task_id},
+            },
+        )
     current = "working"
     try:
         async with asyncio.timeout(ctx.config.node_timeout):
@@ -64,9 +74,7 @@ async def execute_node(
                 current = await recover_remote(ctx, node)
             else:
                 text = await build_node_text(ctx, node)
-                current = await stream_remote(
-                    ctx, node, text, continuation=continuation
-                )
+                current = await stream_remote(ctx, node, text, continuation=continuation)
     except TimeoutError:
         node.error = f"node timed out after {ctx.config.node_timeout}s"
         node.status = "failed"
@@ -79,59 +87,81 @@ async def execute_node(
     if current == "completed":
         await _handle_completed(ctx, node)
     elif current == "canceled":
-        logger.info("execute_node canceled", node_id=node.id)
+        logger.info("execute_node canceled", context_id=ctx.context_id, node_id=node.id)
         node.status = "canceled"
-        await emit_state_delta(ctx, nodes={
-            node.id: {"status": "canceled"},
-        })
-    elif current == "input_required":
-        logger.info("execute_node input_required", node_id=node.id)
-        node.status = "input_required"
-        await emit_state_delta(ctx, nodes={
-            node.id: {
-                "status": "input_required",
-                "question": node.question or "",
-                "agent_name": node.agent_name,
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {"status": "canceled"},
             },
-        })
+        )
+    elif current == "input_required":
+        logger.info("execute_node input_required", context_id=ctx.context_id, node_id=node.id)
+        node.status = "input_required"
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {
+                    "status": "input_required",
+                    "question": node.question or "",
+                    "agent_name": node.agent_name,
+                },
+            },
+        )
     else:
         node.status = "failed"
         logger.warning(
-            "Node failed", node_id=node.id, agent=node.agent_name, error=node.error
+            "Node failed",
+            context_id=ctx.context_id,
+            node_id=node.id,
+            agent=node.agent_name,
+            error=node.error,
         )
-        await emit_state_delta(ctx, nodes={
-            node.id: {"status": "failed", "error": node.error or "unknown error"},
-        })
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {"status": "failed", "error": node.error or "unknown error"},
+            },
+        )
 
     expired = expire_cancel_requests(ctx.state, node.id)
     if expired:
-        await emit_state_delta(ctx, interventions={
-            iv.id: {
-                "status": "expired",
-                "node_id": node.id,
-                "kind": "confirm_cancel",
-            }
-            for iv in expired
-        })
+        await emit_state_delta(
+            ctx,
+            interventions={
+                iv.id: {
+                    "status": "expired",
+                    "node_id": node.id,
+                    "kind": "confirm_cancel",
+                }
+                for iv in expired
+            },
+        )
     await ctx.sessions.persist(ctx)
 
 
 async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
     decision = await _interpret_outcome(ctx, node)
     logger.info(
-        "handle_completed", node_id=node.id, intent=decision.intent,
+        "handle_completed",
+        context_id=ctx.context_id,
+        node_id=node.id,
+        intent=decision.intent,
     )
     if decision.intent == "need_info":
         node.status = "input_required"
         node.question = decision.question or node.output
         node.a2a_task_id = None
-        await emit_state_delta(ctx, nodes={
-            node.id: {
-                "status": "input_required",
-                "question": node.question or "",
-                "agent_name": node.agent_name,
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {
+                    "status": "input_required",
+                    "question": node.question or "",
+                    "agent_name": node.agent_name,
+                },
             },
-        })
+        )
     else:
         if decision.intent == "revise" and decision.patch is not None:
             if ctx.state.revision_count < ctx.config.max_revisions:
@@ -143,21 +173,23 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
                     context_id=ctx.context_id,
                 )
         node.status = "completed"
-        await emit_state_delta(ctx, nodes={
-            node.id: {
-                "status": "completed",
-                "agent_name": node.agent_name,
-                "output": (node.output or "")[:200],
+        await emit_state_delta(
+            ctx,
+            nodes={
+                node.id: {
+                    "status": "completed",
+                    "agent_name": node.agent_name,
+                    "output": (node.output or "")[:200],
+                },
             },
-        })
+        )
         await arbitrate_mentions(ctx, node)
         await _deliver_queued(ctx, node)
 
 
-async def _interpret_outcome(
-    ctx: OrchestrationContext, node: NodeState
-) -> OutcomeDecision:
+async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> OutcomeDecision:
     from choirworks.orchestration.markers import parse_marker
+
     marker = parse_marker(node.output)
     if marker is not None:
         return OutcomeDecision(intent=marker.intent, question=marker.text)
@@ -166,6 +198,7 @@ async def _interpret_outcome(
     agents = await ctx.registry.list()
     candidates = [agent for agent in agents if agent.name != node.agent_name]
     from choirworks.core.context import build_outcome_user
+
     user = build_outcome_user(
         node.agent_name,
         node.input_text,
@@ -174,11 +207,16 @@ async def _interpret_outcome(
     )
     try:
         return await run_subagent(
-            ctx.llm, OUTCOME_SUBAGENT, ctx, user,
+            ctx.llm,
+            OUTCOME_SUBAGENT,
+            ctx,
+            user,
             exclude_agent=node.agent_name,
         )
     except Exception:
-        logger.exception("outcome interpretation failed", node_id=node.id)
+        logger.exception(
+            "outcome interpretation failed", context_id=ctx.context_id, node_id=node.id
+        )
         return OutcomeDecision(intent="deliver")
 
 

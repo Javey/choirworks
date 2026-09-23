@@ -45,7 +45,11 @@ async def stream_remote(
     text_list = text if isinstance(text, list) else [text]
     logger.info(
         "stream_remote",
-        node_id=node.id, agent_url=node.agent_url, parts=len(text_list), continuation=continuation,
+        context_id=ctx.context_id,
+        node_id=node.id,
+        agent_url=node.agent_url,
+        parts=len(text_list),
+        continuation=continuation,
     )
     chunks = ctx.remote.send_text(
         node.agent_url,
@@ -55,23 +59,28 @@ async def stream_remote(
         message_id=f"{ctx.context_id}:{node.id}:{node.attempt}",
     )
     current = await consume_chunks(ctx, node, chunks)
-    logger.info("stream_remote done", node_id=node.id, state=current)
+    logger.info("stream_remote done", context_id=ctx.context_id, node_id=node.id, state=current)
     return await ensure_terminal(ctx, node, current)
 
 
 async def recover_remote(ctx: OrchestrationContext, node: NodeState) -> str:
     if not node.a2a_task_id:
-        logger.warning("recover_remote no a2a_task_id", node_id=node.id)
+        logger.warning("recover_remote no a2a_task_id", context_id=ctx.context_id, node_id=node.id)
         return "failed"
     logger.info(
-        "recover_remote", node_id=node.id, a2a_task_id=node.a2a_task_id,
+        "recover_remote",
+        context_id=ctx.context_id,
+        node_id=node.id,
+        a2a_task_id=node.a2a_task_id,
     )
     current = "working"
     try:
         chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
         current = await consume_chunks(ctx, node, chunks)
     except Exception as exc:
-        logger.debug("Recover subscribe failed", node_id=node.id, error=exc)
+        logger.debug(
+            "Recover subscribe failed", context_id=ctx.context_id, node_id=node.id, error=exc
+        )
     return await ensure_terminal(ctx, node, current)
 
 
@@ -104,7 +113,9 @@ async def ensure_terminal(
             chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
             current = await consume_chunks(ctx, node, chunks)
         except Exception as exc:
-            logger.debug("Follow subscribe failed", node_id=node.id, error=exc)
+            logger.debug(
+                "Follow subscribe failed", context_id=ctx.context_id, node_id=node.id, error=exc
+            )
             await asyncio.sleep(0.2)
     return current
 
@@ -133,21 +144,19 @@ async def consume_chunks(
                     for artifact in task.artifacts
                 ]
             node.status = "dispatched" if current == "dispatched" else node.status
-            await emit_state_delta(ctx, nodes={
-                node.id: {"status": "dispatched", "a2a_task_id": node.a2a_task_id},
-            })
+            await emit_state_delta(
+                ctx,
+                nodes={
+                    node.id: {"status": "dispatched", "a2a_task_id": node.a2a_task_id},
+                },
+            )
         elif chunk.HasField("status_update"):
             remote_state = chunk.status_update.status.state
             mapped = _REMOTE_STATE_MAP.get(remote_state)
             if mapped and mapped != current:
                 current = mapped
-                if (
-                    mapped == "input_required"
-                    and chunk.status_update.status.HasField("message")
-                ):
-                    msg_text = join_text(
-                        chunk.status_update.status.message.parts
-                    )
+                if mapped == "input_required" and chunk.status_update.status.HasField("message"):
+                    msg_text = join_text(chunk.status_update.status.message.parts)
                     node.question = msg_text
                     if msg_text:
                         art = Artifact(
@@ -252,17 +261,18 @@ async def consume_chunks(
                 )
             )
 
-    node.output = " ".join(
-        artifact.get("text", "") for artifact in artifacts if artifact.get("text")
-    ).strip() or None
+    node.output = (
+        " ".join(artifact.get("text", "") for artifact in artifacts if artifact.get("text")).strip()
+        or None
+    )
     logger.info(
         "consume_chunks done",
-        node_id=node.id, state=current, output_len=len(node.output or ""),
+        node_id=node.id,
+        state=current,
+        output_len=len(node.output or ""),
     )
     return current
 
 
-async def cancel_remote_task(
-    ctx: OrchestrationContext, agent_url: str, task_id: str
-) -> None:
+async def cancel_remote_task(ctx: OrchestrationContext, agent_url: str, task_id: str) -> None:
     await ctx.remote.cancel_task(agent_url, task_id)

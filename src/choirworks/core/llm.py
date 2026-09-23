@@ -91,14 +91,16 @@ class LiteLLMClient:
                 schema = await tool.args_model(ctx)
                 schemas[tool.name] = schema
                 functions[tool.name] = tool
-                declarations.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": schema.model_json_schema(),
-                    },
-                })
+                declarations.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": schema.model_json_schema(),
+                        },
+                    }
+                )
 
         logger.info(
             "LLM stream",
@@ -133,9 +135,7 @@ class LiteLLMClient:
             yield delta
             for call in delta.tool_calls or []:
                 if isinstance(call, ChatCompletionDeltaToolCall):
-                    fragments.setdefault(call.index, []).append(
-                        call.function.arguments
-                    )
+                    fragments.setdefault(call.index, []).append(call.function.arguments)
                     if call.function.name:
                         call_names[call.index] = call.function.name
 

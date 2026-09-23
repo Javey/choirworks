@@ -39,9 +39,7 @@ def _truncate_handoff(text: str, limit: int = HANDOFF_MAX_CHARS) -> str:
     return f"{text[:limit]}\n…[已截断]"
 
 
-def build_roster(
-    state: OrchestrationState, agents: Mapping[str, AgentRecord]
-) -> str:
+def build_roster(state: OrchestrationState, agents: Mapping[str, AgentRecord]) -> str:
     lines = []
     for name in state.members:
         record = agents.get(name)
@@ -110,6 +108,7 @@ def build_continuation_text(
     parts.append(f"已答复：\n{quote_untrusted(answer)}")
     return parts
 
+
 SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI orchestrator.
 Condense the following messages into a brief summary preserving:
 - Key decisions and their rationale
@@ -138,9 +137,7 @@ def build_planner_capabilities(agents: Sequence[AgentRecord]) -> str:
     for agent in agents:
         skill_text = _skill_descriptions(agent)
         description = cap_description(str(agent.card.get("description", "")))
-        lines.append(
-            f"- {agent.name}: {description} skills=[{skill_text}]"
-        )
+        lines.append(f"- {agent.name}: {description} skills=[{skill_text}]")
     return "\n".join(lines)
 
 
@@ -206,14 +203,11 @@ def build_outcome_user(
 
 def build_plan_summary(nodes: Iterable[NodeState]) -> str:
     return "\n".join(
-        f"- {node.id} [{node.status}] @{node.agent_name}: {node.input_text[:120]}"
-        for node in nodes
+        f"- {node.id} [{node.status}] @{node.agent_name}: {node.input_text[:120]}" for node in nodes
     )
 
 
-def build_repair_user(
-    nodes: Iterable[NodeState], candidates: Sequence[AgentRecord]
-) -> str:
+def build_repair_user(nodes: Iterable[NodeState], candidates: Sequence[AgentRecord]) -> str:
     capabilities = "\n".join(
         f"- {agent.name}: {cap_description(str(agent.card.get('description', '')))}"
         for agent in candidates
@@ -231,9 +225,7 @@ def build_repair_user(
 
 
 def build_replan_reason(nodes: Iterable[NodeState]) -> str:
-    errors = ", ".join(
-        node.error or node.id for node in nodes if node.status == "failed"
-    )
+    errors = ", ".join(node.error or node.id for node in nodes if node.status == "failed")
     return f"nodes failed: {errors}"
 
 
@@ -278,9 +270,7 @@ class ContextBriefBuilder:
         if not context_id:
             return ""
         try:
-            tasks = await list_all_tasks(
-                self._task_store, context_id=context_id, reverse=True
-            )
+            tasks = await list_all_tasks(self._task_store, context_id=context_id, reverse=True)
         except Exception:  # noqa: BLE001 - context is best effort
             return ""
 
@@ -290,10 +280,7 @@ class ContextBriefBuilder:
                 continue
             for msg in task.history or []:
                 rm = room_options(msg)
-                sender = (
-                    rm.get("sender")
-                    or ("user" if msg.role == Role.ROLE_USER else "agent")
-                )
+                sender = rm.get("sender") or ("user" if msg.role == Role.ROLE_USER else "agent")
                 text = message_text(msg)
                 if text:
                     timeline.append(f"[{sender}] {text}")
@@ -302,9 +289,7 @@ class ContextBriefBuilder:
             return ""
 
         full_text = "\n".join(timeline)
-        threshold = int(
-            self._llm.get_context_window() * self._compaction_threshold
-        )
+        threshold = int(self._llm.get_context_window() * self._compaction_threshold)
         if self._llm.count_tokens(full_text) <= threshold:
             return full_text
 
@@ -317,7 +302,7 @@ class ContextBriefBuilder:
         if cached and cached[1] == split:
             summary = cached[0]
         elif cached and cached[1] < split:
-            new_msgs = "\n".join(timeline[cached[1]:split])
+            new_msgs = "\n".join(timeline[cached[1] : split])
             summary = await self._llm.text(
                 system=SUMMARIZE_PROMPT,
                 user=f"Previous summary:\n{cached[0]}\n\nNew messages:\n{new_msgs}",

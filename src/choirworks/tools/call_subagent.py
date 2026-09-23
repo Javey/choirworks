@@ -49,9 +49,7 @@ async def call_subagent_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return _call_subagent_schema(candidates)
 
 
-async def execute_call_subagent(
-    ctx: FunctionContext, args: BaseModel
-) -> FunctionResult:
+async def execute_call_subagent(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
     """``call_subagent`` — spawn a derived helper node handled by a peer agent.
 
     When the orchestrator decides a node needs assistance from another agent,
@@ -60,8 +58,10 @@ async def execute_call_subagent(
     agent as a room member, and returns the helper node id.  Execution starts
     asynchronously via the runner — the model is not kept waiting.
     """
-    call_args = args if isinstance(args, CallSubagentArgs) else CallSubagentArgs.model_validate(
-        args.model_dump()
+    call_args = (
+        args
+        if isinstance(args, CallSubagentArgs)
+        else CallSubagentArgs.model_validate(args.model_dump())
     )
     state = ctx.state
 
@@ -82,13 +82,9 @@ async def execute_call_subagent(
         return FunctionResult(success=False, error="max derived nodes reached")
 
     agents = await ctx.registry.list()
-    agent = next(
-        (item for item in agents if item.name == call_args.target_agent), None
-    )
+    agent = next((item for item in agents if item.name == call_args.target_agent), None)
     if agent is None:
-        return FunctionResult(
-            success=False, error=f"unknown agent: {call_args.target_agent}"
-        )
+        return FunctionResult(success=False, error=f"unknown agent: {call_args.target_agent}")
 
     state.derived_count += 1
     requester_node = state.nodes.get(call_args.requested_by)
@@ -101,9 +97,7 @@ async def execute_call_subagent(
         agent_url=agent.card_url,
         deps=[],
         input_text=call_args.instruction
-        or build_peer_fallback_input(
-            (requester_node.question if requester_node else None) or ""
-        ),
+        or build_peer_fallback_input((requester_node.question if requester_node else None) or ""),
         derived=True,
         assist_requested_by=call_args.requested_by,
     )

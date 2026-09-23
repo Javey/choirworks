@@ -45,9 +45,7 @@ def _state_delta_event(
         if node_id
     }
 
-    members: list[MemberDict] = [
-        member.to_dict() for member in state.members.values()
-    ]
+    members: list[MemberDict] = [member.to_dict() for member in state.members.values()]
 
     interventions: dict[str, InterventionDelta] = {
         intervention.id: {
@@ -65,12 +63,14 @@ def _state_delta_event(
         task_id=task_id,
         context_id=context_id,
         status=TaskStatus(state=task_state),
-        metadata=_struct({
-            "kind": "state_delta",
-            "nodes": nodes,
-            "members": members,
-            "interventions": interventions,
-        }),
+        metadata=_struct(
+            {
+                "kind": "state_delta",
+                "nodes": nodes,
+                "members": members,
+                "interventions": interventions,
+            }
+        ),
     )
 
 
@@ -116,13 +116,17 @@ def synthesize_replay_events(
             is_fc = has_fc and p_meta.fields["cw_type"].string_value == "function_call"
 
             if is_thought or is_fc:
-                events.append(StreamResponse(artifact_update=_artifact_update(
-                    task.id, context_id, art,
-                )))
-            else:
-                merged_text = "".join(
-                    p.text for p in parts if p.text
+                events.append(
+                    StreamResponse(
+                        artifact_update=_artifact_update(
+                            task.id,
+                            context_id,
+                            art,
+                        )
+                    )
                 )
+            else:
+                merged_text = "".join(p.text for p in parts if p.text)
                 if merged_text:
                     merged = Artifact(
                         artifact_id=art.artifact_id,
@@ -130,15 +134,28 @@ def synthesize_replay_events(
                         parts=[Part(text=merged_text)],
                         metadata=art.metadata,
                     )
-                    events.append(StreamResponse(artifact_update=_artifact_update(
-                        task.id, context_id, merged,
-                    )))
+                    events.append(
+                        StreamResponse(
+                            artifact_update=_artifact_update(
+                                task.id,
+                                context_id,
+                                merged,
+                            )
+                        )
+                    )
 
     if state is not None and tasks:
         last_task = tasks[-1]
         task_state = last_task.status.state
-        events.append(StreamResponse(status_update=_state_delta_event(
-            state, context_id, last_task.id, task_state,
-        )))
+        events.append(
+            StreamResponse(
+                status_update=_state_delta_event(
+                    state,
+                    context_id,
+                    last_task.id,
+                    task_state,
+                )
+            )
+        )
 
     return [MessageToDict(e, use_integers_for_enums=True) for e in events]

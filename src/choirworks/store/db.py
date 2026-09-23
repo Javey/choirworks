@@ -42,9 +42,7 @@ class Database:
         # read transaction open, which would otherwise upgrade to a write while
         # another connection (the A2A task store) has committed and surface as
         # "database is locked" (SQLITE_BUSY_SNAPSHOT) under parallel nodes.
-        self._conn = await aiosqlite.connect(
-            self._path, timeout=30, isolation_level=None
-        )
+        self._conn = await aiosqlite.connect(self._path, timeout=30, isolation_level=None)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA busy_timeout=30000")

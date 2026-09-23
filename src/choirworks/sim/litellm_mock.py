@@ -129,11 +129,7 @@ async def _stream_structured_response(
         id="sim",
         created=0,
         model="sim",
-        choices=[
-            StreamingChoices(
-                index=0, delta=Delta(), finish_reason="tool_calls"
-            )
-        ],
+        choices=[StreamingChoices(index=0, delta=Delta(), finish_reason="tool_calls")],
         object="chat.completion.chunk",
     )
 
@@ -147,9 +143,7 @@ def _registered(user: str) -> set[str]:
     return set(AGENT_PATTERN.findall(user))
 
 
-def _node(
-    node_id: str, agent_name: str, text: str, *, deps: list[str]
-) -> PlanNodeDraft:
+def _node(node_id: str, agent_name: str, text: str, *, deps: list[str]) -> PlanNodeDraft:
     return PlanNodeDraft(
         id=node_id,
         name=agent_name,
@@ -322,9 +316,7 @@ async def sim_acompletion(
                 reasoning, arguments, tool_name=tool_name
             ),
             model="sim",
-            logging_obj=cast(
-                LiteLLMLoggingObject, cast(object, SimLogging())
-            ),
+            logging_obj=cast(LiteLLMLoggingObject, cast(object, SimLogging())),
         )
 
     # Plain text call

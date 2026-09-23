@@ -71,9 +71,7 @@ async def revise_plan(ctx: OrchestrationContext, patch: PlanPatch) -> PatchResul
     return result
 
 
-async def apply_patch_locked(
-    ctx: OrchestrationContext, patch: PlanPatch
-) -> PatchResult:
+async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> PatchResult:
     agents = await ctx.registry.list()
     agent_urls = {agent.name: agent.card_url for agent in agents}
     state = ctx.state
@@ -101,14 +99,11 @@ async def apply_patch_locked(
         }
     if new_interventions:
         await emit_state_delta(ctx, interventions=new_interventions)
-    added_agents = [
-        draft.agent_name for draft in patch.add if draft.agent_name in agent_urls
-    ]
+    added_agents = [draft.agent_name for draft in patch.add if draft.agent_name in agent_urls]
     await join_members(ctx, added_agents, "plan_revision")
     if result.invalidated:
-        await emit_state_delta(ctx, nodes={
-            node_id: {"status": "invalidated"}
-            for node_id in result.invalidated
-        })
+        await emit_state_delta(
+            ctx, nodes={node_id: {"status": "invalidated"} for node_id in result.invalidated}
+        )
     await ctx.sessions.persist(ctx)
     return result

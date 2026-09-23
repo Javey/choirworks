@@ -32,9 +32,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-async def create_app(
-    settings: Settings | None = None, llm: LiteLLMClient | None = None
-) -> FastAPI:
+async def create_app(settings: Settings | None = None, llm: LiteLLMClient | None = None) -> FastAPI:
     settings = settings or Settings()
     llm_client = llm or LiteLLMClient(
         model=settings.llm.planner_model,
@@ -102,9 +100,7 @@ async def create_app(
 
         # Mount A2A routes now that request_handler is available
         agent_card_routes = create_agent_card_routes(agent_card=agent_card)
-        jsonrpc_routes = create_jsonrpc_routes(
-            request_handler=request_handler, rpc_url="/v1/a2a"
-        )
+        jsonrpc_routes = create_jsonrpc_routes(request_handler=request_handler, rpc_url="/v1/a2a")
         rest_routes = create_rest_routes(request_handler=request_handler)
         add_a2a_routes_to_fastapi(
             app,

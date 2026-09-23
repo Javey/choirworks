@@ -26,10 +26,7 @@ async def build_assistance_tools(
     **kwargs: object,
 ) -> list[AgentFunction]:
     agents = await ctx.registry.list()
-    candidates = (
-        [a for a in agents if a.name != exclude_agent]
-        if exclude_agent else agents
-    )
+    candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents
     schema = outcome_decision_schema([a.name for a in candidates])
     return [outcome_decision_tool(schema)]
 

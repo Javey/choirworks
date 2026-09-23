@@ -31,7 +31,9 @@ async def stream_plan(
     context_brief: str | None = None,
 ) -> ToolCallResult:
     """Stream the planning LLM, emitting thought/text chunks, return the tool call."""
-    logger.info("stream_plan", task=ctx.task_id, request_len=len(request))
+    logger.info(
+        "stream_plan", task=ctx.task_id, context_id=ctx.context_id, request_len=len(request)
+    )
     tool_call: ToolCallResult | None = None
     reasoning_parts: list[str] = []
     content_parts: list[str] = []
@@ -98,6 +100,7 @@ async def stream_plan(
     logger.info(
         "stream_plan done",
         task=ctx.task_id,
+        context_id=ctx.context_id,
         reasoning_len=len(reasoning),
         content_len=len(content),
         tool=tool_call.function.name,
@@ -114,10 +117,10 @@ async def plan_and_launch(
     """Plan a new turn, create nodes, join members, start the runner."""
     state = ctx.state
     start_new_plan(state, f"plan-{uuid.uuid4().hex[:8]}")
-    logger.info("plan_and_launch", task=ctx.task_id, plan_id=state.plan_id)
-    context_brief = await ctx.brief_builder.build(
-        ctx.context_id, exclude_task_id=ctx.task_id
+    logger.info(
+        "plan_and_launch", task=ctx.task_id, context_id=ctx.context_id, plan_id=state.plan_id
     )
+    context_brief = await ctx.brief_builder.build(ctx.context_id, exclude_task_id=ctx.task_id)
     func_ctx = FunctionContext(
         runtime=ctx.runtime,
         registry=ctx.registry,
@@ -126,21 +129,29 @@ async def plan_and_launch(
     try:
         tool_call = await stream_plan(ctx, text, func_ctx, context_brief=context_brief or None)
     except PlanningFailed as exc:
-        logger.warning("Planning failed for task", task=ctx.task_id, error=exc)
+        logger.warning(
+            "Planning failed for task", task=ctx.task_id, context_id=ctx.context_id, error=exc
+        )
         await ctx.sessions.persist(ctx)
         await emit_function_error(
-            ctx, create_plan_func, str(exc),
+            ctx,
+            create_plan_func,
+            str(exc),
             state_name=TaskState.TASK_STATE_FAILED,
         )
         ctx.sessions.evict_session(ctx.context_id)
         return
 
-    draft = tool_call.args if isinstance(tool_call.args, PlanDraft) else (
-        PlanDraft.model_validate(tool_call.args.model_dump())
+    draft = (
+        tool_call.args
+        if isinstance(tool_call.args, PlanDraft)
+        else (PlanDraft.model_validate(tool_call.args.model_dump()))
     )
 
     if not draft.nodes:
-        logger.info("plan_and_launch empty plan, completing", task=ctx.task_id)
+        logger.info(
+            "plan_and_launch empty plan, completing", task=ctx.task_id, context_id=ctx.context_id
+        )
         await ctx.sessions.persist(ctx)
         await emit_event(ctx, "", TaskState.TASK_STATE_COMPLETED)
         ctx.sessions.evict_session(ctx.context_id)
@@ -149,22 +160,22 @@ async def plan_and_launch(
     logger.info(
         "plan_and_launch",
         task=ctx.task_id,
+        context_id=ctx.context_id,
         nodes=len(draft.nodes),
         agents=[n.agent_name for n in draft.nodes],
     )
     result = await tool_call.function.execute(func_ctx, tool_call.args)
     await emit_function_call(
-        ctx, tool_call.function, tool_call.args, result,
+        ctx,
+        tool_call.function,
+        tool_call.args,
+        result,
         state_name=TaskState.TASK_STATE_WORKING,
     )
 
     agents = await ctx.registry.list()
     agent_urls = {agent.name: agent.card_url for agent in agents}
-    mention_targets = [
-        name
-        for name in (room or {}).get("mentions", [])
-        if name in agent_urls
-    ]
+    mention_targets = [name for name in (room or {}).get("mentions", []) if name in agent_urls]
     if mention_targets:
         await join_members(ctx, mention_targets, "human_mention")
     await ctx.sessions.persist(ctx)

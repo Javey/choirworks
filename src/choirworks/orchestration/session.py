@@ -84,7 +84,8 @@ class SessionManager:
                 self._sessions[context_id] = runtime
                 logger.info(
                     "ensure_session: created",
-                    context_id=context_id, restored=state is not None,
+                    context_id=context_id,
+                    restored=state is not None,
                 )
         runtime.task_id = task_id
         runtime.queue = event_queue
@@ -99,11 +100,7 @@ class SessionManager:
 
     def session_is_active(self, context_id: str) -> bool:
         runtime = self._sessions.get(context_id)
-        return (
-            runtime is not None
-            and runtime.runner is not None
-            and not runtime.runner.done()
-        )
+        return runtime is not None and runtime.runner is not None and not runtime.runner.done()
 
     def drop_session(self, context_id: str) -> None:
         self.evict_session(context_id)

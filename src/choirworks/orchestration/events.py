@@ -37,7 +37,9 @@ async def emit_event(
 ) -> None:
     logger.info(
         "emit_event",
-        task_id=ctx.task_id, kind=kind or "(none)", state=state_name,
+        task_id=ctx.task_id,
+        kind=kind or "(none)",
+        state=state_name,
     )
     await ctx.queue.enqueue_event(
         status_update(
@@ -68,7 +70,9 @@ async def emit_state_delta(
     if not delta:
         return
     logger.info(
-        "emit_state_delta", task_id=ctx.task_id, keys=list(delta.keys()),
+        "emit_state_delta",
+        task_id=ctx.task_id,
+        keys=list(delta.keys()),
     )
     await emit_event(ctx, "state_delta", state_name, metadata=delta)
 
@@ -86,8 +90,11 @@ async def emit_thought_chunk(
     ParseDict({"cw_thought": True}, part.metadata)
     logger.info(
         "emit_thought_chunk",
-        task_id=ctx.task_id, artifact_id=artifact_id, length=len(text),
-        append=append, last_chunk=last_chunk,
+        task_id=ctx.task_id,
+        artifact_id=artifact_id,
+        length=len(text),
+        append=append,
+        last_chunk=last_chunk,
     )
     await ctx.queue.enqueue_event(
         TaskArtifactUpdateEvent(
@@ -115,8 +122,11 @@ async def emit_text_chunk(
     part = Part(text=text)
     logger.info(
         "emit_text_chunk",
-        task_id=ctx.task_id, artifact_id=artifact_id, length=len(text),
-        append=append, last_chunk=last_chunk,
+        task_id=ctx.task_id,
+        artifact_id=artifact_id,
+        length=len(text),
+        append=append,
+        last_chunk=last_chunk,
     )
     await ctx.queue.enqueue_event(
         TaskArtifactUpdateEvent(
@@ -143,11 +153,11 @@ async def emit_function_call(
 ) -> None:
     logger.info(
         "emit_function_call",
-        task_id=ctx.task_id, function=func.name, success=result.success,
+        task_id=ctx.task_id,
+        function=func.name,
+        success=result.success,
     )
-    part = function_call_part(
-        func.name, args.model_dump(), result.model_dump()
-    )
+    part = function_call_part(func.name, args.model_dump(), result.model_dump())
     artifact = Artifact(
         artifact_id=uuid.uuid4().hex,
         parts=[part],
@@ -173,11 +183,11 @@ async def emit_function_error(
 ) -> None:
     logger.warning(
         "emit_function_error",
-        task_id=ctx.task_id, function=func.name, error=error,
+        task_id=ctx.task_id,
+        function=func.name,
+        error=error,
     )
-    part = function_call_part(
-        func.name, {}, {"success": False, "error": error}
-    )
+    part = function_call_part(func.name, {}, {"success": False, "error": error})
     artifact = Artifact(
         artifact_id=uuid.uuid4().hex,
         parts=[part],

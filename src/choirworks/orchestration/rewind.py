@@ -21,9 +21,7 @@ def restore_state(
     :class:`OrchestrationState` when *before_task_id* is the first visible
     turn.
     """
-    index = {
-        task.id: position for position, task in enumerate(visible_tasks_oldest_first)
-    }
+    index = {task.id: position for position, task in enumerate(visible_tasks_oldest_first)}
     pos = index.get(before_task_id)
     if pos is None or pos == 0:
         return OrchestrationState()

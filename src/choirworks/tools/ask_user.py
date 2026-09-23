@@ -29,9 +29,7 @@ async def ask_user_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return AskUserArgs
 
 
-async def execute_ask_user(
-    ctx: FunctionContext, args: BaseModel
-) -> FunctionResult:
+async def execute_ask_user(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
     """``ask_user`` — the model requests human input to unblock a node.
 
     The orchestrator's outcome-interpretation layer decides an agent's reply
@@ -40,8 +38,8 @@ async def execute_ask_user(
     intervention record and returns an ack; the real answer arrives later as a
     user message (B-class state transition ``intervention.resolved``).
     """
-    ask_args = args if isinstance(args, AskUserArgs) else AskUserArgs.model_validate(
-        args.model_dump()
+    ask_args = (
+        args if isinstance(args, AskUserArgs) else AskUserArgs.model_validate(args.model_dump())
     )
     state = ctx.state
     node = state.nodes.get(ask_args.node_id)
@@ -51,7 +49,9 @@ async def execute_ask_user(
 
     logger.info(
         "ask_user",
-        node_id=node.id, agent=node.agent_name, question_len=len(ask_args.question),
+        node_id=node.id,
+        agent=node.agent_name,
+        question_len=len(ask_args.question),
     )
     node.status = "input_required"
     node.question = ask_args.question

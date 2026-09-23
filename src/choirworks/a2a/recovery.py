@@ -72,7 +72,7 @@ async def recover_tasks(
             )
             recovered += 1
         except Exception:  # noqa: BLE001 - one bad task must not stop recovery
-            logger.exception("Failed to recover task", task_id=task.id)
+            logger.exception("Failed to recover task", task_id=task.id, context_id=task.context_id)
     if recovered:
         logger.info("Recovered in-flight task(s)", count=recovered)
     return recovered

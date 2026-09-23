@@ -17,11 +17,7 @@ def strip_none(value: object) -> object:
     """Recursively remove None values from dicts and lists."""
     if isinstance(value, dict):
         mapping = cast("dict[object, object]", value)
-        return {
-            key: strip_none(item)
-            for key, item in mapping.items()
-            if item is not None
-        }
+        return {key: strip_none(item) for key, item in mapping.items() if item is not None}
     if isinstance(value, list):
         return [strip_none(item) for item in value]
     return value

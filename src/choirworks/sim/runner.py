@@ -139,12 +139,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8567)
     parser.add_argument("--db", default="data/sim.db", help="模拟数据库路径")
     parser.add_argument("--fresh", action="store_true", help="启动前清空模拟数据库")
-    parser.add_argument(
-        "--chunk-size", type=int, default=2, help="打字机每块字符数（0 关闭流式）"
-    )
-    parser.add_argument(
-        "--chunk-delay", type=float, default=0.04, help="打字机块间隔秒数"
-    )
+    parser.add_argument("--chunk-size", type=int, default=2, help="打字机每块字符数（0 关闭流式）")
+    parser.add_argument("--chunk-delay", type=float, default=0.04, help="打字机块间隔秒数")
     args = parser.parse_args()
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(

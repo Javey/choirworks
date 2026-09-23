@@ -45,9 +45,7 @@ def apply_patch(
             continue
         unknown = [dep for dep in draft.deps if dep not in state.nodes]
         if unknown:
-            result.rejected.append(
-                f"unknown deps for {draft.agent_name}: {', '.join(unknown)}"
-            )
+            result.rejected.append(f"unknown deps for {draft.agent_name}: {', '.join(unknown)}")
             continue
         state.patch_count += 1
         node_id = f"x{state.patch_count}"

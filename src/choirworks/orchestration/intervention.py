@@ -43,9 +43,7 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
         helpers = [
             n
             for n in state.nodes.values()
-            if n.derived
-            and n.assist_requested_by == node.id
-            and n.status == "completed"
+            if n.derived and n.assist_requested_by == node.id and n.status == "completed"
         ]
         if helpers:
             helper = helpers[0]
@@ -57,7 +55,8 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
             intervention.responder = helper.id
             node.answer_text = helper.output
             node.status = "ready"
-            await emit_state_delta(ctx,
+            await emit_state_delta(
+                ctx,
                 nodes={node.id: {"status": "ready"}},
                 interventions={
                     intervention.id: {
@@ -91,9 +90,7 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
     return progress
 
 
-async def _decide_assistance(
-    ctx: OrchestrationContext, node: NodeState
-) -> OutcomeDecision | None:
+async def _decide_assistance(ctx: OrchestrationContext, node: NodeState) -> OutcomeDecision | None:
     if node.question is None:
         return None
     agents = await ctx.registry.list()
@@ -107,7 +104,10 @@ async def _decide_assistance(
     )
     try:
         return await run_subagent(
-            ctx.llm, ASSISTANCE_SUBAGENT, ctx, user,
+            ctx.llm,
+            ASSISTANCE_SUBAGENT,
+            ctx,
+            user,
             exclude_agent=node.agent_name,
         )
     except Exception:
@@ -124,7 +124,9 @@ async def request_human(ctx: OrchestrationContext, node: NodeState) -> None:
     )
     args = AskUserArgs(node_id=node.id, question=node.question or node.output or "")
     await execute_function(
-        ctx, ask_user_func, args,
+        ctx,
+        ask_user_func,
+        args,
         state_name=TaskState.TASK_STATE_INPUT_REQUIRED,
     )
 
@@ -151,14 +153,17 @@ async def answer_intervention(
         target = state.nodes.get(intervention.target_node_id or "")
         if target is not None and _is_affirmative(text):
             await cancel_node(ctx, target)
-        await emit_state_delta(ctx, interventions={
-            intervention.id: {
-                "status": "resolved",
-                "node_id": intervention.node_id,
-                "kind": "confirm_cancel",
-                "responder": "human",
+        await emit_state_delta(
+            ctx,
+            interventions={
+                intervention.id: {
+                    "status": "resolved",
+                    "node_id": intervention.node_id,
+                    "kind": "confirm_cancel",
+                    "responder": "human",
+                },
             },
-        })
+        )
         await ctx.sessions.persist(ctx)
         ctx.runtime.runner_start_requested = True
         return
@@ -166,7 +171,8 @@ async def answer_intervention(
     if node is not None:
         node.answer_text = text
         node.status = "ready"
-    await emit_state_delta(ctx,
+    await emit_state_delta(
+        ctx,
         nodes={node.id: {"status": "ready"}} if node else None,
         interventions={
             intervention.id: {
@@ -197,8 +203,11 @@ async def cancel_node(
     invalidated = blocked_nodes(state)
     for blocked in invalidated:
         blocked.status = "invalidated"
-    await emit_state_delta(ctx, nodes={
-        node.id: {"status": "canceled", "agent_name": node.agent_name},
-        **{b.id: {"status": "invalidated"} for b in invalidated},
-    })
+    await emit_state_delta(
+        ctx,
+        nodes={
+            node.id: {"status": "canceled", "agent_name": node.agent_name},
+            **{b.id: {"status": "invalidated"} for b in invalidated},
+        },
+    )
     await ctx.sessions.persist(ctx)

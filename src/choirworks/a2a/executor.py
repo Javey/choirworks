@@ -123,9 +123,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     def drop_session(self, context_id: str) -> None:
         self._session_mgr.drop_session(context_id)
 
-    async def execute(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Route one inbound message; background runners do the actual work."""
         text = (context.get_user_input() or "").strip()
         task_id = context.task_id or ""
@@ -136,9 +134,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await self._recover_task(context, event_queue)
             return
 
-        runtime = await self._session_mgr.ensure_session(
-            context_id, task_id, event_queue
-        )
+        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
 
         if context.current_task is None:
             initial_task = new_task(
@@ -164,7 +160,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 if text:
                     logger.info(
                         "execute route=intervention",
-                        task_id=task_id, text_len=len(text),
+                        task_id=task_id,
+                        context_id=context_id,
+                        text_len=len(text),
                     )
                     orch_ctx = self._build_ctx(runtime)
                     await answer_intervention(orch_ctx, text)
@@ -176,7 +174,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if runtime.runner is not None and not runtime.runner.done():
                 logger.info(
                     "execute route=active_runner",
-                    task_id=task_id, text_len=len(text),
+                    task_id=task_id,
+                    context_id=context_id,
+                    text_len=len(text),
                 )
                 await route_message(self._build_ctx(runtime), text, room)
                 return
@@ -184,31 +184,33 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             if has_pending_work(state):
                 logger.info(
                     "execute route=pending_work",
-                    task_id=task_id, text_len=len(text),
+                    task_id=task_id,
+                    context_id=context_id,
+                    text_len=len(text),
                 )
                 await route_message(self._build_ctx(runtime), text, room)
                 self._start_runner(runtime)
                 return
 
             if not text:
-                logger.info("execute route=empty_complete", task_id=task_id)
+                logger.info("execute route=empty_complete", task_id=task_id, context_id=context_id)
                 await updater.complete()
                 self._session_mgr.evict_session(context_id)
                 return
 
             logger.info(
                 "execute route=plan_and_launch",
-                task_id=task_id, text_len=len(text),
+                task_id=task_id,
+                context_id=context_id,
+                text_len=len(text),
             )
             await updater.start_work()
             await plan_and_launch(self._build_ctx(runtime), text, room=room)
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or ""
         context_id = context.context_id or ""
-        logger.info("cancel", task_id=task_id)
+        logger.info("cancel", task_id=task_id, context_id=context_id)
         await event_queue.enqueue_event(
             status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
         )
@@ -230,7 +232,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             for node in list(state.nodes.values()):
                 if node.status == "canceled" and node.a2a_task_id:
                     await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
-            logger.info("cancel", task_id=task_id, canceled_nodes=canceled)
+            logger.info("cancel", task_id=task_id, context_id=context_id, canceled_nodes=canceled)
         self._session_mgr.evict_session(context_id)
 
     async def shutdown(self) -> None:
@@ -249,9 +251,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_task.cancel()
         self._sessions.clear()
 
-    async def _recover_task(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
+    async def _recover_task(self, context: RequestContext, event_queue: EventQueue) -> None:
         runtime = await self._session_mgr.ensure_session(
             context.context_id or "", context.task_id or "", event_queue
         )
@@ -259,7 +259,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if state is None:
             logger.warning(
                 "recover state not found",
-                task_id=runtime.task_id, context_id=runtime.context_id,
+                task_id=runtime.task_id,
+                context_id=runtime.context_id,
             )
             ctx = self._build_ctx(runtime)
             await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
@@ -280,20 +281,24 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 expired_interventions=len(expired),
             )
             ctx = self._build_ctx(runtime)
-            await emit_state_delta(ctx, interventions={
-                iv.id: {
-                    "status": "expired",
-                    "node_id": iv.target_node_id or "",
-                    "kind": "confirm_cancel",
-                }
-                for iv in expired
-            })
+            await emit_state_delta(
+                ctx,
+                interventions={
+                    iv.id: {
+                        "status": "expired",
+                        "node_id": iv.target_node_id or "",
+                        "kind": "confirm_cancel",
+                    }
+                    for iv in expired
+                },
+            )
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
                 node.status = "recover" if node.a2a_task_id else "pending"
         logger.info(
             "recover nodes",
-            task_id=runtime.task_id, context_id=runtime.context_id,
+            task_id=runtime.task_id,
+            context_id=runtime.context_id,
             nodes={n.id: n.status for n in runtime.state.nodes.values()},
         )
         await self._persist(runtime)
@@ -306,9 +311,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         runtime.runner_start_requested = False
         effects = ToolEffects(
             max_derived_nodes=self._config.max_derived_nodes,
-            join_members=lambda names, reason: self._join_members(
-                runtime, names, reason
-            ),
+            join_members=lambda names, reason: self._join_members(runtime, names, reason),
             persist=lambda: self._persist(runtime),
             apply_patch_locked=lambda patch: self._apply_patch_locked(runtime, patch),
         )
@@ -334,8 +337,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         ctx = self._build_ctx(runtime)
         await join_members(ctx, names, reason)
 
-    async def _apply_patch_locked(
-        self, runtime: SessionRuntime, patch: PlanPatch
-    ) -> PatchResult:
+    async def _apply_patch_locked(self, runtime: SessionRuntime, patch: PlanPatch) -> PatchResult:
         ctx = self._build_ctx(runtime)
         return await apply_patch_locked(ctx, patch)

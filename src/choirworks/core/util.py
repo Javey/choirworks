@@ -12,9 +12,7 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def truncate(
-    text: str | None, limit: int = MAX_METADATA_OUTPUT
-) -> str | None:
+def truncate(text: str | None, limit: int = MAX_METADATA_OUTPUT) -> str | None:
     """Truncate text to *limit* characters, returning None for None input."""
     if text is None:
         return None

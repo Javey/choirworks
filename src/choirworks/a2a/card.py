@@ -10,9 +10,7 @@ from a2a.types import (
 
 from choirworks.a2a.room import A2A_ROOM_URI
 
-_ROOM_DESCRIPTION = (
-    "Group-chat fields (mentions, quote, interrupt) in message metadata"
-)
+_ROOM_DESCRIPTION = "Group-chat fields (mentions, quote, interrupt) in message metadata"
 
 
 def build_agent_card(public_url: str) -> AgentCard:

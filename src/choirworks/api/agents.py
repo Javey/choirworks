@@ -23,16 +23,12 @@ async def register_agent(
 
 
 @router.get("/agents", response_model=list[AgentRecord])
-async def list_agents(
-    registry: AgentRegistry = Depends(get_registry)
-) -> list[AgentRecord]:
+async def list_agents(registry: AgentRegistry = Depends(get_registry)) -> list[AgentRecord]:
     return await registry.list()
 
 
 @router.delete("/agents/{agent_id}", status_code=204)
-async def delete_agent(
-    agent_id: str, registry: AgentRegistry = Depends(get_registry)
-) -> None:
+async def delete_agent(agent_id: str, registry: AgentRegistry = Depends(get_registry)) -> None:
     if not await registry.delete(agent_id):
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
 

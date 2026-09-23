@@ -53,9 +53,7 @@ async def create_plan_args_model(ctx: FunctionContext) -> type[BaseModel]:
     return constrained_plan_schema([agent.name for agent in agents])
 
 
-async def execute_create_plan(
-    ctx: FunctionContext, args: BaseModel
-) -> FunctionResult:
+async def execute_create_plan(ctx: FunctionContext, args: BaseModel) -> FunctionResult:
     """``create_plan`` — turn the model's plan draft into live orchestration state.
 
     The model calls this function (via :meth:`LiteLLMClient.stream` with a
@@ -64,14 +62,13 @@ async def execute_create_plan(
     returns an ack.  Execution of the nodes starts asynchronously — the model
     is **not** kept waiting.
     """
-    draft = args if isinstance(args, PlanDraft) else PlanDraft.model_validate(
-        args.model_dump()
-    )
+    draft = args if isinstance(args, PlanDraft) else PlanDraft.model_validate(args.model_dump())
     state = ctx.state
 
     logger.info(
         "create_plan",
-        nodes=len(draft.nodes), agents=[n.agent_name for n in draft.nodes],
+        nodes=len(draft.nodes),
+        agents=[n.agent_name for n in draft.nodes],
     )
 
     agents = await ctx.registry.list()

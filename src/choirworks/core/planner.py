@@ -49,9 +49,7 @@ def _skill_ids(record: AgentRecord) -> set[str]:
     return ids
 
 
-def validate_plan(
-    draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: int = 20
-) -> None:
+def validate_plan(draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: int = 20) -> None:
     if len(draft.nodes) > max_nodes:
         raise PlanValidationError(f"too many nodes: {len(draft.nodes)} > {max_nodes}")
 
@@ -133,13 +131,9 @@ async def plan(
     """
     agents = await registry.list()
     if not agents:
-        raise PlanningFailed(
-            "no agents registered; register at least one A2A agent first"
-        )
+        raise PlanningFailed("no agents registered; register at least one A2A agent first")
     capabilities = build_planner_capabilities(agents)
-    user = build_planner_user_message(
-        request, capabilities, reason=reason, context=context
-    )
+    user = build_planner_user_message(request, capabilities, reason=reason, context=context)
 
     last_error: Exception | None = None
     from choirworks.tools.base import ToolCallResult  # runtime: avoid circular import
@@ -156,6 +150,7 @@ async def plan(
         tool_call: ToolCallResult | None = None
         try:
             from choirworks.tools.create_plan import create_plan_func
+
             async for item in llm.stream(
                 system=SYSTEM_PROMPT,
                 user=user,
@@ -191,6 +186,4 @@ async def plan(
         yield tool_call
         return
 
-    raise PlanningFailed(
-        f"planner failed after {max_retries + 1} attempts: {last_error}"
-    )
+    raise PlanningFailed(f"planner failed after {max_retries + 1} attempts: {last_error}")
