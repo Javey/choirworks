@@ -25,9 +25,7 @@ def _settings(port: int, db: str) -> Settings:
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"})
         ],
     )
 
@@ -48,9 +46,7 @@ async def test_outer_dispatches_task_to_inner_instance(tmp_path, echo_agent):
                 scheduler={"retry_backoff_seconds": 0.0},
             ),
         ) as (_outer_app, http, client):
-            resp = await http.post(
-                "/v1/agents", json={"name": "inner", "card_url": inner_url}
-            )
+            resp = await http.post("/v1/agents", json={"name": "inner", "card_url": inner_url})
             assert resp.status_code == 201, resp.text
             task_id = ""
             async for response in client.send_message(
@@ -64,9 +60,7 @@ async def test_outer_dispatches_task_to_inner_instance(tmp_path, echo_agent):
             ):
                 if response.WhichOneof("payload") == "task":
                     task_id = response.task.id
-            outer_task = await wait_for_task(
-                client, task_id, {TaskState.TASK_STATE_COMPLETED}
-            )
+            outer_task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
             artifact_text = " ".join(
                 part.text
                 for artifact in outer_task.artifacts

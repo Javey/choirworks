@@ -3,7 +3,7 @@ from __future__ import annotations
 import structlog
 from pydantic import BaseModel
 
-from choirworks.orchestration.state import add_intervention
+from choirworks.orchestration.state import NodeStatus, add_intervention
 from choirworks.tools.base import AgentFunction, FunctionContext, FunctionResult
 
 logger = structlog.get_logger(__name__)
@@ -53,7 +53,7 @@ async def execute_ask_user(ctx: FunctionContext, args: BaseModel) -> FunctionRes
         agent=node.agent_name,
         question_len=len(ask_args.question),
     )
-    node.status = "input_required"
+    node.status = NodeStatus.INPUT_REQUIRED
     node.question = ask_args.question
 
     intervention = add_intervention(state, node.id, ask_args.question)

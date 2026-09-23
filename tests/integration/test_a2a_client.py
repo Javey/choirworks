@@ -14,9 +14,7 @@ async def test_resolve_card_and_send_text(echo_agent):
         assert chunks[0].HasField("task")
 
         states = [
-            chunk.status_update.status.state
-            for chunk in chunks
-            if chunk.HasField("status_update")
+            chunk.status_update.status.state for chunk in chunks if chunk.HasField("status_update")
         ]
         assert TaskState.TASK_STATE_COMPLETED in states
 
@@ -52,14 +50,8 @@ async def test_get_and_subscribe_task():
         first = await anext(stream)
         remote_task_id = first.task.id
 
-        recovered = [
-            c async for c in client.subscribe_task(agent.url, remote_task_id)
-        ]
-        states = [
-            c.status_update.status.state
-            for c in recovered
-            if c.HasField("status_update")
-        ]
+        recovered = [c async for c in client.subscribe_task(agent.url, remote_task_id)]
+        states = [c.status_update.status.state for c in recovered if c.HasField("status_update")]
         assert TaskState.TASK_STATE_COMPLETED in states
 
         task = await client.get_task(agent.url, remote_task_id)

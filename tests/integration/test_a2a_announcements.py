@@ -130,9 +130,11 @@ async def test_retry_does_not_reannounce(tmp_path):
                 OutcomeDecision(intent="deliver"),
             ]
         )
-        async with sdk_hub(
-            tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm
-        ) as (_app, http, client):
+        async with sdk_hub(tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm) as (
+            _app,
+            http,
+            client,
+        ):
             await _register(http, "flaky", flaky.url)
             task = await _send_and_wait(client, "重试任务", tmp_path)
 

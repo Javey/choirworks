@@ -34,9 +34,7 @@ def make_agent(name: str, description: str = "", skills: list[str] | None = None
         card={
             "name": name,
             "description": description or f"{name} agent",
-            "skills": [
-                {"id": s, "name": s, "description": s} for s in (skills or [])
-            ],
+            "skills": [{"id": s, "name": s, "description": s} for s in (skills or [])],
         },
         created_at=datetime.now(UTC),
     )
@@ -112,6 +110,7 @@ def test_build_replan_reason_and_context():
     context = build_replan_context(nodes)
     assert context == "- @n1: " + "ok" * 150
 
+
 def test_build_assist_input_and_peer_fallback():
     assist = build_assist_input("a", "产出")
     assert "a 在协作中请求你的协助。" in assist
@@ -129,9 +128,7 @@ class FakeTaskStore:
     async def list(self, params, ctx):
         tasks = list(reversed(self._tasks))
         if params.context_id:
-            tasks = [
-                t for t in tasks if t.context_id == params.context_id
-            ]
+            tasks = [t for t in tasks if t.context_id == params.context_id]
         return SimpleNamespace(tasks=tasks, next_page_token="")
 
 
@@ -187,9 +184,7 @@ async def test_brief_compacts_when_over_threshold():
             [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
         )
     ]
-    builder = brief_builder(
-        llm, tasks, compaction_threshold=0.0001, compaction_retention=2
-    )
+    builder = brief_builder(llm, tasks, compaction_threshold=0.0001, compaction_retention=2)
     brief = await builder.build("ctx-1", "t1")
     assert brief.startswith("## 群聊历史摘要\n早期摘要\n\n## 最近消息\n")
     assert "旧消息4" in brief
@@ -205,9 +200,7 @@ async def test_brief_cache_hit_on_same_split():
             [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
         )
     ]
-    builder = brief_builder(
-        llm, tasks, compaction_threshold=0.0001, compaction_retention=2
-    )
+    builder = brief_builder(llm, tasks, compaction_threshold=0.0001, compaction_retention=2)
     await builder.build("ctx-1", "t1")
     await builder.build("ctx-1", "t1")
     assert len(llm.text_calls) == 1

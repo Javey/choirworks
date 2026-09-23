@@ -16,9 +16,7 @@ from tests.support.sdk import (
 def _plan(agent_name: str, text: str = "任务") -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": text}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": text})
         ],
     )
 
@@ -64,16 +62,12 @@ async def test_llm_routes_to_human(tmp_path, ask_agent):
     ):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))
-        pending = await wait_for_task(
-            client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED}
-        )
+        pending = await wait_for_task(client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED})
         assert task_state(pending).get("interventions")
         await _send_once(
             client, _message("人工答复", task_id=task_id, context_id=pending.context_id)
         )
-        task = await wait_for_task(
-            client, task_id, {TaskState.TASK_STATE_COMPLETED}
-        )
+        task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert "answered:" in task_artifact_text(task)
 
 
@@ -98,27 +92,18 @@ async def test_text_marker_needs_info_routes_to_human(tmp_path):
             http,
             client,
         ):
-            await http.post(
-                "/v1/agents", json={"name": "writer", "card_url": writer.url}
-            )
+            await http.post("/v1/agents", json={"name": "writer", "card_url": writer.url})
             task_id = await _send_once(client, _message("写一份报告"))
-            pending = await wait_for_task(
-                client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED}
-            )
+            pending = await wait_for_task(client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED})
             node = task_state(pending)["nodes"][0]
             assert node["status"] == "input_required"
             assert "需要补充需求信息" in node["question"]
-            assert any(
-                item["status"] == "pending"
-                for item in task_state(pending)["interventions"]
-            )
+            assert any(item["status"] == "pending" for item in task_state(pending)["interventions"])
             await _send_once(
                 client,
                 _message("补充需求", task_id=task_id, context_id=pending.context_id),
             )
-            task = await wait_for_task(
-                client, task_id, {TaskState.TASK_STATE_COMPLETED}
-            )
+            task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
             assert "已获得补充信息" in task_artifact_text(task)
     finally:
         await writer.stop()
@@ -152,12 +137,8 @@ async def test_llm_routes_to_peer_agent(tmp_path):
             http,
             client,
         ):
-            await http.post(
-                "/v1/agents", json={"name": "product-manager", "card_url": pm.url}
-            )
-            await http.post(
-                "/v1/agents", json={"name": "qa-engineer", "card_url": qa.url}
-            )
+            await http.post("/v1/agents", json={"name": "product-manager", "card_url": pm.url})
+            await http.post("/v1/agents", json={"name": "qa-engineer", "card_url": qa.url})
             task_id = await _send_once(client, _message("请协调协作"))
             task = await wait_for_task(
                 client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30

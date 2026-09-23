@@ -41,9 +41,7 @@ class FakeTaskStore(TaskStore):
     async def save(self, task: Task, context: ServerCallContext) -> None:
         pass
 
-    async def get(
-        self, task_id: str, context: ServerCallContext
-    ) -> Task | None:
+    async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
         return next((t for t in self._tasks if t.id == task_id), None)
 
     async def list(
@@ -126,8 +124,6 @@ async def test_list_all_tasks_with_context_id_filter():
         _rewind_task("a2", context_id="A"),
         _task("b1", context_id="B"),
     ]
-    result = await list_all_tasks(
-        FakeTaskStore(tasks), context_id="A", reverse=True
-    )
+    result = await list_all_tasks(FakeTaskStore(tasks), context_id="A", reverse=True)
     # REWIND(a2) hides a2 and a3; a1 stays visible.
     assert [t.id for t in result] == ["a1"]

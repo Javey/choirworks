@@ -15,9 +15,7 @@ from tests.support.sdk import sdk_hub, task_nodes, wait_for_task
 
 def _message(text: str) -> SendMessageRequest:
     return SendMessageRequest(
-        message=Message(
-            message_id="m-1", role=Role.ROLE_USER, parts=[Part(text=text)]
-        )
+        message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[Part(text=text)])
     )
 
 
@@ -31,15 +29,9 @@ async def test_sim_plan_chain_hands_off_results(tmp_path):
             scheduler={"retry_backoff_seconds": 0.0},
         )
         llm = LiteLLMClient(model="sim", completion_fn=sim_acompletion)
-        async with sdk_hub(
-            tmp_path, "sim.db", settings=settings, llm=llm
-        ) as (app, http, client):
-            await http.post(
-                "/v1/agents", json={"name": "product-manager", "card_url": pm.url}
-            )
-            await http.post(
-                "/v1/agents", json={"name": "developer", "card_url": dev.url}
-            )
+        async with sdk_hub(tmp_path, "sim.db", settings=settings, llm=llm) as (app, http, client):
+            await http.post("/v1/agents", json={"name": "product-manager", "card_url": pm.url})
+            await http.post("/v1/agents", json={"name": "developer", "card_url": dev.url})
             task_id = ""
             async for response in client.send_message(_message("帮我调研并写一份报告")):
                 if response.WhichOneof("payload") == "task":

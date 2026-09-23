@@ -39,17 +39,11 @@ async def sdk_hub(
         a2a={"public_url": "http://test"},
         scheduler={"retry_backoff_seconds": 0.0},
     )
-    app = await create_app(
-        resolved, llm=llm or FakeLLM(structured_results=list(plans or []))
-    )
+    app = await create_app(resolved, llm=llm or FakeLLM(structured_results=list(plans or [])))
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as http:
-            card = await A2ACardResolver(
-                httpx_client=http, base_url="http://test"
-            ).get_agent_card()
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            card = await A2ACardResolver(httpx_client=http, base_url="http://test").get_agent_card()
             client = await create_client(
                 agent=card,
                 client_config=ClientConfig(streaming=streaming, httpx_client=http),
@@ -60,9 +54,7 @@ async def sdk_hub(
                 await client.close()
 
 
-async def wait_for_task(
-    client, task_id: str, states=SETTLED_STATES, timeout_seconds: float = 20.0
-):
+async def wait_for_task(client, task_id: str, states=SETTLED_STATES, timeout_seconds: float = 20.0):
     deadline = asyncio.get_event_loop().time() + timeout_seconds
     task = None
     while asyncio.get_event_loop().time() < deadline:
@@ -111,8 +103,5 @@ async def context_nodes(app, context_id: str) -> dict[str, dict]:
 
 def task_artifact_text(task) -> str:
     return " ".join(
-        part.text
-        for artifact in task.artifacts
-        for part in artifact.parts
-        if part.HasField("text")
+        part.text for artifact in task.artifacts for part in artifact.parts if part.HasField("text")
     )

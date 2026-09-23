@@ -133,11 +133,7 @@ async def collect_plan(
 
 
 async def test_planner_streams_thinking(tmp_path):
-    llm = FakeLLM(
-        structured_results=[
-            PlanDraft(nodes=[node("n1", "research", skill="search")])
-        ]
-    )
+    llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_func_ctx(registry)
@@ -193,11 +189,7 @@ async def test_planner_rejects_when_no_agents(tmp_path):
 
 
 async def test_planner_passes_constrained_schema_to_tool(tmp_path):
-    llm = FakeLLM(
-        structured_results=[
-            PlanDraft(nodes=[node("n1", "research", skill="search")])
-        ]
-    )
+    llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_func_ctx(registry)

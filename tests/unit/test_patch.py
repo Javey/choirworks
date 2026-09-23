@@ -3,6 +3,7 @@ from __future__ import annotations
 from choirworks.orchestration.patch import PatchNode, PlanPatch, apply_patch
 from choirworks.orchestration.state import (
     NodeState,
+    NodeStatus,
     OrchestrationState,
     all_completed,
     has_pending_work,
@@ -30,7 +31,7 @@ AGENTS = {"writer": "http://writer", "reviewer": "http://reviewer"}
 
 
 def test_add_node_gets_patch_id_and_agent_url():
-    state = state_with(node("n1", status="completed"))
+    state = state_with(node("n1", status=NodeStatus.COMPLETED))
     patch = PlanPatch(
         add=[PatchNode(agent_name="writer", instruction="写报告", deps=["n1"])],
         reason="需要撰写",
@@ -38,7 +39,7 @@ def test_add_node_gets_patch_id_and_agent_url():
     result = apply_patch(state, patch, AGENTS)
     assert result.added == ["x1"]
     added = state.nodes["x1"]
-    assert added.status == "pending"
+    assert added.status == NodeStatus.PENDING
     assert added.agent_url == "http://writer"
     assert added.input_text == "写报告"
     assert added.deps == ["n1"]
@@ -46,7 +47,7 @@ def test_add_node_gets_patch_id_and_agent_url():
 
 
 def test_patch_ids_increment():
-    state = state_with(node("n1", status="completed"))
+    state = state_with(node("n1", status=NodeStatus.COMPLETED))
     apply_patch(
         state,
         PlanPatch(add=[PatchNode(agent_name="writer", instruction="a")]),
@@ -61,7 +62,7 @@ def test_patch_ids_increment():
 
 
 def test_unknown_agent_rejected():
-    state = state_with(node("n1", status="completed"))
+    state = state_with(node("n1", status=NodeStatus.COMPLETED))
     result = apply_patch(
         state,
         PlanPatch(add=[PatchNode(agent_name="ghost", instruction="x")]),
@@ -72,12 +73,10 @@ def test_unknown_agent_rejected():
 
 
 def test_unknown_dep_rejected():
-    state = state_with(node("n1", status="completed"))
+    state = state_with(node("n1", status=NodeStatus.COMPLETED))
     result = apply_patch(
         state,
-        PlanPatch(
-            add=[PatchNode(agent_name="writer", instruction="x", deps=["nope"])]
-        ),
+        PlanPatch(add=[PatchNode(agent_name="writer", instruction="x", deps=["nope"])]),
         AGENTS,
     )
     assert result.added == []
@@ -86,47 +85,47 @@ def test_unknown_dep_rejected():
 
 def test_invalidate_pending_cascades_downstream():
     state = state_with(
-        node("n1", status="pending"),
-        node("n2", status="pending", deps=["n1"]),
-        node("n3", status="completed"),
+        node("n1", status=NodeStatus.PENDING),
+        node("n2", status=NodeStatus.PENDING, deps=["n1"]),
+        node("n3", status=NodeStatus.COMPLETED),
     )
     result = apply_patch(state, PlanPatch(invalidate=["n1"]), AGENTS)
     assert result.invalidated == ["n1", "n2"]
-    assert state.nodes["n1"].status == "invalidated"
-    assert state.nodes["n2"].status == "invalidated"
-    assert state.nodes["n3"].status == "completed"
+    assert state.nodes["n1"].status == NodeStatus.INVALIDATED
+    assert state.nodes["n2"].status == NodeStatus.INVALIDATED
+    assert state.nodes["n3"].status == NodeStatus.COMPLETED
 
 
 def test_invalidate_in_flight_is_skipped():
-    state = state_with(node("n1", status="working"))
+    state = state_with(node("n1", status=NodeStatus.WORKING))
     result = apply_patch(state, PlanPatch(invalidate=["n1"]), AGENTS)
     assert result.skipped_in_flight == ["n1"]
     assert result.invalidated == []
-    assert state.nodes["n1"].status == "working"
+    assert state.nodes["n1"].status == NodeStatus.WORKING
 
 
 def test_invalidate_completed_is_skipped():
-    state = state_with(node("n1", status="completed"))
+    state = state_with(node("n1", status=NodeStatus.COMPLETED))
     result = apply_patch(state, PlanPatch(invalidate=["n1"]), AGENTS)
     assert result.invalidated == []
-    assert state.nodes["n1"].status == "completed"
+    assert state.nodes["n1"].status == NodeStatus.COMPLETED
 
 
 def test_invalidate_failed_is_allowed():
     state = state_with(
-        node("n1", status="failed"),
-        node("n2", status="pending", deps=["n1"]),
+        node("n1", status=NodeStatus.FAILED),
+        node("n2", status=NodeStatus.PENDING, deps=["n1"]),
     )
     result = apply_patch(state, PlanPatch(invalidate=["n1"]), AGENTS)
     assert result.invalidated == ["n1", "n2"]
-    assert state.nodes["n1"].status == "invalidated"
-    assert state.nodes["n2"].status == "invalidated"
+    assert state.nodes["n1"].status == NodeStatus.INVALIDATED
+    assert state.nodes["n2"].status == NodeStatus.INVALIDATED
 
 
 def test_invalidated_nodes_do_not_block_completion():
     state = state_with(
-        node("n1", status="completed"),
-        node("n2", status="invalidated"),
+        node("n1", status=NodeStatus.COMPLETED),
+        node("n2", status=NodeStatus.INVALIDATED),
     )
     assert all_completed(state)
     assert not has_pending_work(state)
@@ -134,8 +133,8 @@ def test_invalidated_nodes_do_not_block_completion():
 
 def test_canceled_nodes_settle_the_plan():
     state = state_with(
-        node("n1", status="completed"),
-        node("n2", status="canceled"),
+        node("n1", status=NodeStatus.COMPLETED),
+        node("n2", status=NodeStatus.CANCELED),
     )
     assert all_completed(state)
     assert not has_pending_work(state)

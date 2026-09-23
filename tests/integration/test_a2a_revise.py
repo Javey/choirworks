@@ -91,9 +91,7 @@ async def test_revise_patch_invalidates_and_adds(tmp_path):
             tmp_path, "revise.db", settings=_settings(tmp_path / "revise.db"), llm=llm
         ) as (app, http, client):
             await http.post("/v1/agents", json={"name": "writer", "card_url": writer.url})
-            await http.post(
-                "/v1/agents", json={"name": "designer", "card_url": designer.url}
-            )
+            await http.post("/v1/agents", json={"name": "designer", "card_url": designer.url})
             task_id = await _send_once(client, _message("写一份材料"))
             task = await wait_for_task(
                 client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30
@@ -104,10 +102,7 @@ async def test_revise_patch_invalidates_and_adds(tmp_path):
             assert nodes["n2"]["status"] == "invalidated"
             assert nodes["x1"]["status"] == "completed"
             assert nodes["x1"]["agent_name"] == "designer"
-            members = {
-                member.get("name", member.get("agent_name"))
-                for member in state["members"]
-            }
+            members = {member.get("name", member.get("agent_name")) for member in state["members"]}
             assert "designer" in members
     finally:
         await writer.stop()
@@ -120,10 +115,7 @@ async def _wait_for_cancel_request(client, task_id, timeout_seconds: float = 10.
     while asyncio.get_event_loop().time() < deadline:
         task = await client.get_task(GetTaskRequest(id=task_id))
         for intervention in task_state(task).get("interventions", []):
-            if (
-                intervention["kind"] == "confirm_cancel"
-                and intervention["status"] == "pending"
-            ):
+            if intervention["kind"] == "confirm_cancel" and intervention["status"] == "pending":
                 return task, intervention
         await asyncio.sleep(0.05)
     raise AssertionError("no pending confirm_cancel intervention")
@@ -161,9 +153,7 @@ async def test_revise_in_flight_requires_confirmation(tmp_path):
         async with sdk_hub(
             tmp_path, "revise.db", settings=_settings(tmp_path / "revise.db"), llm=llm
         ) as (app, http, client):
-            await http.post(
-                "/v1/agents", json={"name": "planner", "card_url": planner.url}
-            )
+            await http.post("/v1/agents", json={"name": "planner", "card_url": planner.url})
             await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
             task_id = await _send_once(client, _message("开始"))
             pending, confirm = await _wait_for_cancel_request(client, task_id)
@@ -215,9 +205,7 @@ async def test_confirm_cancel_expires_when_target_finishes(tmp_path):
         async with sdk_hub(
             tmp_path, "revise.db", settings=_settings(tmp_path / "revise.db"), llm=llm
         ) as (app, http, client):
-            await http.post(
-                "/v1/agents", json={"name": "planner", "card_url": planner.url}
-            )
+            await http.post("/v1/agents", json={"name": "planner", "card_url": planner.url})
             await http.post("/v1/agents", json={"name": "worker", "card_url": worker.url})
             task_id = await _send_once(client, _message("开始"))
             await _wait_for_cancel_request(client, task_id)
@@ -227,11 +215,7 @@ async def test_confirm_cancel_expires_when_target_finishes(tmp_path):
             state = task_state(task)
             nodes = {item["id"]: item for item in state["nodes"]}
             assert nodes["n2"]["status"] == "completed"
-            confirms = [
-                item
-                for item in state["interventions"]
-                if item["kind"] == "confirm_cancel"
-            ]
+            confirms = [item for item in state["interventions"] if item["kind"] == "confirm_cancel"]
             assert confirms and confirms[0]["status"] == "expired"
     finally:
         await planner.stop()
@@ -302,22 +286,21 @@ async def test_revise_limit_stops_loop(tmp_path):
                         ),
                     ],
                 ),
-                *[
-                    OutcomeDecision(intent="revise", patch=revise_patch)
-                    for _ in range(4)
-                ],
+                *[OutcomeDecision(intent="revise", patch=revise_patch) for _ in range(4)],
             ],
         )
         settings = _settings(tmp_path / "revise.db")
-        settings = settings.model_copy(update={
-            "scheduler": settings.scheduler.model_copy(update={"max_revisions": 3}),
-        })
-        async with sdk_hub(
-            tmp_path, "revise.db", settings=settings, llm=llm
-        ) as (app, http, client):
-            await http.post(
-                "/v1/agents", json={"name": "writer", "card_url": writer.url}
-            )
+        settings = settings.model_copy(
+            update={
+                "scheduler": settings.scheduler.model_copy(update={"max_revisions": 3}),
+            }
+        )
+        async with sdk_hub(tmp_path, "revise.db", settings=settings, llm=llm) as (
+            app,
+            http,
+            client,
+        ):
+            await http.post("/v1/agents", json={"name": "writer", "card_url": writer.url})
             task_id = await _send_once(client, _message("写一份材料"))
             task = await wait_for_task(
                 client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30

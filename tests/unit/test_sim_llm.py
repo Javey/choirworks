@@ -50,8 +50,8 @@ def make_client() -> LiteLLMClient:
 
 
 def _as[T: BaseModel](item: ToolCallResult, model: type[T]) -> T:
-    return item.args if isinstance(item.args, model) else model.model_validate(
-        item.args.model_dump()
+    return (
+        item.args if isinstance(item.args, model) else model.model_validate(item.args.model_dump())
     )
 
 
@@ -60,7 +60,10 @@ async def tool_result(
 ) -> ToolCallResult:
     result = None
     async for item in client.stream(
-        system=system, user=user, tools=[tool], ctx=ctx,
+        system=system,
+        user=user,
+        tools=[tool],
+        ctx=ctx,
         tool_choice={"type": "function", "function": {"name": tool.name}},
     ):
         if isinstance(item, ToolCallResult):
@@ -74,7 +77,11 @@ async def plan_for(request: str) -> PlanDraft:
     tool = create_plan_func
     ctx = make_func_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
-        client, system="plan", user=prompt(request), tool=tool, ctx=ctx,
+        client,
+        system="plan",
+        user=prompt(request),
+        tool=tool,
+        ctx=ctx,
     )
     draft = _as(tc, PlanDraft)
     validate_plan(draft, AGENTS, 20)
@@ -112,7 +119,11 @@ async def test_broken_plan_triggers_replan_without_auditor():
     tool = create_plan_func
     ctx = make_func_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
-        client, system="plan", user=replan_prompt, tool=tool, ctx=ctx,
+        client,
+        system="plan",
+        user=replan_prompt,
+        tool=tool,
+        ctx=ctx,
     )
     replanned = _as(tc, PlanDraft)
     validate_plan(replanned, AGENTS, 20)
@@ -132,7 +143,11 @@ async def test_assistance_decision_routes_to_pm_for_developer():
     tool = outcome_decision_tool(schema)
     ctx = make_func_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
-        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
+        client,
+        system="assistance",
+        user=prompt_text,
+        tool=tool,
+        ctx=ctx,
     )
     decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
@@ -153,7 +168,11 @@ async def test_assistance_decision_routes_to_qa_for_pm():
     tool = outcome_decision_tool(schema)
     ctx = make_func_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
-        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
+        client,
+        system="assistance",
+        user=prompt_text,
+        tool=tool,
+        ctx=ctx,
     )
     decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
@@ -171,7 +190,11 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
     tool = outcome_decision_tool(schema)
     ctx = make_func_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
-        client, system="assistance", user=prompt_text, tool=tool, ctx=ctx,
+        client,
+        system="assistance",
+        user=prompt_text,
+        tool=tool,
+        ctx=ctx,
     )
     decision = _as(tc, OutcomeDecision)
     assert decision.intent == "need_info"
@@ -224,9 +247,7 @@ async def test_sim_stream_returns_custom_stream_wrapper():
     result = await sim_acompletion(
         stream=True,
         messages=[{"role": "user", "content": prompt("帮我调研")}],
-        tools=[
-            {"type": "function", "function": {"name": "create_plan", "parameters": {}}}
-        ],
+        tools=[{"type": "function", "function": {"name": "create_plan", "parameters": {}}}],
     )
     assert isinstance(result, CustomStreamWrapper)
     async for _chunk in result:
@@ -243,7 +264,10 @@ async def test_stream_no_tool_call_yields_no_result():
     items = [
         item
         async for item in client.stream(
-            system="x", user="y", tools=[tool], ctx=ctx,
+            system="x",
+            user="y",
+            tools=[tool],
+            ctx=ctx,
             tool_choice={"type": "function", "function": {"name": "Answer"}},
         )
     ]

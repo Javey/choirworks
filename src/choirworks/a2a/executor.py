@@ -33,6 +33,7 @@ from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
+    NodeStatus,
     has_pending_work,
     normalize_cancel_requests,
     pending_interventions,
@@ -229,12 +230,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             state = runtime.state
             canceled = 0
             for node in list(state.nodes.values()):
-                if node.status in ACTIVE_NODE_STATUSES | {"ready"}:
-                    node.status = "canceled"
+                if node.status in ACTIVE_NODE_STATUSES | {NodeStatus.READY}:
+                    node.status = NodeStatus.CANCELED
                     canceled += 1
             await self._persist(runtime)
             for node in list(state.nodes.values()):
-                if node.status == "canceled" and node.a2a_task_id:
+                if node.status == NodeStatus.CANCELED and node.a2a_task_id:
                     await self._deps.remote.cancel_task(node.agent_url, node.a2a_task_id)
             logger.info("cancel", task_id=task_id, context_id=context_id, canceled_nodes=canceled)
         self._session_mgr.evict_session(context_id)
@@ -293,7 +294,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         # 活跃节点重置为 recover（有远程 task 可重新订阅）或 pending（重新派发）。
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
-                node.status = "recover" if node.a2a_task_id else "pending"
+                node.status = "recover" if node.a2a_task_id else NodeStatus.PENDING
         logger.info(
             "recover nodes",
             task_id=runtime.task_id,

@@ -27,18 +27,14 @@ def _settings(port: int, db: str) -> Settings:
 
 def _send(text: str) -> SendMessageRequest:
     return SendMessageRequest(
-        message=Message(
-            message_id="m-1", role=Role.ROLE_USER, parts=[Part(text=text)]
-        )
+        message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[Part(text=text)])
     )
 
 
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"})
         ],
     )
 
@@ -53,16 +49,16 @@ async def _connect(base_url: str):
 
 
 async def test_streaming_send_emits_plan(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True) as (
+        _app,
+        http,
+        client,
+    ):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         responses = [r async for r in client.send_message(_send("分析 X"))]
         assert responses[0].WhichOneof("payload") == "task"
         status_updates = [
-            r.status_update
-            for r in responses
-            if r.WhichOneof("payload") == "status_update"
+            r.status_update for r in responses if r.WhichOneof("payload") == "status_update"
         ]
         kinds = [
             su.metadata.fields["kind"].string_value
@@ -74,21 +70,19 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         assert "plan.announced" not in kinds
         assert all(not su.status.HasField("message") for su in status_updates)
         artifact_updates = [
-            r.artifact_update
-            for r in responses
-            if r.WhichOneof("payload") == "artifact_update"
+            r.artifact_update for r in responses if r.WhichOneof("payload") == "artifact_update"
         ]
         function_call_updates = [
             u
             for u in artifact_updates
             if u.artifact.parts
             and "cw_type" in u.artifact.parts[0].metadata.fields
-            and u.artifact.parts[0].metadata.fields["cw_type"].string_value
-            == "function_call"
+            and u.artifact.parts[0].metadata.fields["cw_type"].string_value == "function_call"
         ]
         assert len(function_call_updates) > 0
         create_plan_call = next(
-            u for u in function_call_updates
+            u
+            for u in function_call_updates
             if u.artifact.parts[0].data.struct_value.fields["function_name"].string_value
             == "create_plan"
         )
@@ -100,13 +94,10 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         thought_updates = [
             u
             for u in artifact_updates
-            if u.artifact.parts
-            and "cw_thought" in u.artifact.parts[0].metadata.fields
+            if u.artifact.parts and "cw_thought" in u.artifact.parts[0].metadata.fields
         ]
         thought_chunks = [u.artifact.parts[0].text for u in thought_updates]
-        authors = {
-            u.artifact.metadata.fields["author"].string_value for u in thought_updates
-        }
+        authors = {u.artifact.metadata.fields["author"].string_value for u in thought_updates}
         assert authors == {"assistant"}
         assert len(thought_chunks) > 1
         assert thought_chunks[-1] == "思考：将请求拆解为 1 个节点。"
@@ -116,20 +107,17 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
 async def test_subscribe_replays_snapshot_then_live(tmp_path):
     delay = await start_fake_agent("delay", chunk_size=3)
     try:
-        async with sdk_hub(
-            tmp_path, "stream.db", plans=[_plan("delay")] * 2, streaming=True
-        ) as (_app, http, client):
+        async with sdk_hub(tmp_path, "stream.db", plans=[_plan("delay")] * 2, streaming=True) as (
+            _app,
+            http,
+            client,
+        ):
             await http.post("/v1/agents", json={"name": "delay", "card_url": delay.url})
             task_id = ""
             async for response in client.send_message(_send("hi")):
                 if response.WhichOneof("payload") == "task":
                     task_id = response.task.id
-            events = [
-                event
-                async for event in client.subscribe(
-                    SubscribeToTaskRequest(id=task_id)
-                )
-            ]
+            events = [event async for event in client.subscribe(SubscribeToTaskRequest(id=task_id))]
     finally:
         await delay.stop()
     assert events[0].WhichOneof("payload") == "task"
@@ -157,9 +145,11 @@ async def test_subscribe_replays_snapshot_then_live(tmp_path):
 
 
 async def test_subscribe_completed_task_raises(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "stream.db", plans=[_plan("echo")] * 2, streaming=True) as (
+        _app,
+        http,
+        client,
+    ):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = ""
         async for response in client.send_message(_send("hi")):
@@ -167,7 +157,5 @@ async def test_subscribe_completed_task_raises(tmp_path, echo_agent):
                 task_id = response.task.id
         await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         with pytest.raises(InvalidParamsError):
-            async for _event in client.subscribe(
-                SubscribeToTaskRequest(id=task_id)
-            ):
+            async for _event in client.subscribe(SubscribeToTaskRequest(id=task_id)):
                 pass

@@ -11,7 +11,12 @@ from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.repair import revise_plan
 from choirworks.orchestration.routing import spawn_followup_node
-from choirworks.orchestration.state import NodeState, expire_cancel_requests, take_queued
+from choirworks.orchestration.state import (
+    NodeState,
+    NodeStatus,
+    expire_cancel_requests,
+    take_queued,
+)
 from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
 from choirworks.tools.outcome_decision import OutcomeDecision
 
@@ -57,7 +62,7 @@ async def execute_node(
         await emit_state_delta(
             ctx,
             nodes={
-                node.id: {"status": "dispatched", "input_text": node.input_text},
+                node.id: {"status": NodeStatus.DISPATCHED, "input_text": node.input_text},
             },
         )
     elif mode == "recover":
@@ -77,39 +82,39 @@ async def execute_node(
                 current = await stream_remote(ctx, node, text, continuation=continuation)
     except TimeoutError:
         node.error = f"node timed out after {ctx.config.node_timeout}s"
-        node.status = "failed"
+        node.status = NodeStatus.FAILED
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         node.error = str(exc)
-        node.status = "failed"
+        node.status = NodeStatus.FAILED
 
-    if current == "completed":
+    if current == NodeStatus.COMPLETED:
         await _handle_completed(ctx, node)
-    elif current == "canceled":
+    elif current == NodeStatus.CANCELED:
         logger.info("execute_node canceled", context_id=ctx.context_id, node_id=node.id)
-        node.status = "canceled"
+        node.status = NodeStatus.CANCELED
         await emit_state_delta(
             ctx,
             nodes={
-                node.id: {"status": "canceled"},
+                node.id: {"status": NodeStatus.CANCELED},
             },
         )
-    elif current == "input_required":
+    elif current == NodeStatus.INPUT_REQUIRED:
         logger.info("execute_node input_required", context_id=ctx.context_id, node_id=node.id)
-        node.status = "input_required"
+        node.status = NodeStatus.INPUT_REQUIRED
         await emit_state_delta(
             ctx,
             nodes={
                 node.id: {
-                    "status": "input_required",
+                    "status": NodeStatus.INPUT_REQUIRED,
                     "question": node.question or "",
                     "agent_name": node.agent_name,
                 },
             },
         )
     else:
-        node.status = "failed"
+        node.status = NodeStatus.FAILED
         logger.warning(
             "Node failed",
             context_id=ctx.context_id,
@@ -120,7 +125,7 @@ async def execute_node(
         await emit_state_delta(
             ctx,
             nodes={
-                node.id: {"status": "failed", "error": node.error or "unknown error"},
+                node.id: {"status": NodeStatus.FAILED, "error": node.error or "unknown error"},
             },
         )
 
@@ -149,14 +154,14 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
         intent=decision.intent,
     )
     if decision.intent == "need_info":
-        node.status = "input_required"
+        node.status = NodeStatus.INPUT_REQUIRED
         node.question = decision.question or node.output
         node.a2a_task_id = None
         await emit_state_delta(
             ctx,
             nodes={
                 node.id: {
-                    "status": "input_required",
+                    "status": NodeStatus.INPUT_REQUIRED,
                     "question": node.question or "",
                     "agent_name": node.agent_name,
                 },
@@ -172,12 +177,12 @@ async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
                     "Revision limit reached, skipping",
                     context_id=ctx.context_id,
                 )
-        node.status = "completed"
+        node.status = NodeStatus.COMPLETED
         await emit_state_delta(
             ctx,
             nodes={
                 node.id: {
-                    "status": "completed",
+                    "status": NodeStatus.COMPLETED,
                     "agent_name": node.agent_name,
                     "output": (node.output or "")[:200],
                 },

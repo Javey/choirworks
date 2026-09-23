@@ -13,9 +13,7 @@ from choirworks.orchestration.rewind import (
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
-def _task(
-    task_id: str, *, state: OrchestrationState | None = None
-) -> Task:
+def _task(task_id: str, *, state: OrchestrationState | None = None) -> Task:
     task = Task(
         id=task_id,
         context_id="c1",

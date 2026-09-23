@@ -22,9 +22,7 @@ def _settings(db_path) -> Settings:
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "开始"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "开始"})
         ],
     )
 
@@ -61,9 +59,7 @@ async def test_recover_inflight_task_after_restart(tmp_path):
         app2 = await create_app(_settings(db_path), llm=FakeLLM())
         async with app2.router.lifespan_context(app2):
             for _ in range(300):
-                snapshot = await app2.state.task_store.get(
-                    task_id, ServerCallContext()
-                )
+                snapshot = await app2.state.task_store.get(task_id, ServerCallContext())
                 if snapshot.status.state in {
                     TaskState.TASK_STATE_COMPLETED,
                     TaskState.TASK_STATE_FAILED,

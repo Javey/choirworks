@@ -7,7 +7,9 @@ async def test_text_uses_injected_completion_fn():
     async def fake_completion(**kwargs):
         msg = Message(content="hello world", role="assistant")
         return ModelResponse(
-            id="test", created=0, model="test",
+            id="test",
+            created=0,
+            model="test",
             choices=[Choices(finish_reason="stop", index=0, message=msg)],
             object="chat.completion",
         )

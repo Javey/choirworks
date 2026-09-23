@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
-from choirworks.orchestration.state import NodeState, OrchestrationState
+from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
 
-INVALIDATABLE_STATUSES = {"pending", "ready", "recover", "failed"}
+INVALIDATABLE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY, "recover", NodeStatus.FAILED}
 
 
 class PatchNode(BaseModel):
@@ -71,10 +71,10 @@ def apply_patch(
             result.rejected.append(f"unknown node: {node_id}")
             continue
         if node.status in INVALIDATABLE_STATUSES:
-            node.status = "invalidated"
+            node.status = NodeStatus.INVALIDATED
             invalidated.append(node_id)
             invalidated_set.add(node_id)
-        elif node.status not in {"invalidated"}:
+        elif node.status != NodeStatus.INVALIDATED:
             result.skipped_in_flight.append(node_id)
 
     while True:
@@ -87,7 +87,7 @@ def apply_patch(
         if not cascaded:
             break
         for node in cascaded:
-            node.status = "invalidated"
+            node.status = NodeStatus.INVALIDATED
             invalidated.append(node.id)
             invalidated_set.add(node.id)
 

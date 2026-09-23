@@ -8,6 +8,7 @@ from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
+    NodeStatus,
     active_nodes,
     blocked_nodes,
     enqueue,
@@ -47,7 +48,7 @@ async def route_message(
             enqueue(state, quoted_node.id, text, sender="user", quote_id=str(quote_id))
             await ctx.sessions.persist(ctx)
             return
-        if quoted_node is not None and quoted_node.status == "completed":
+        if quoted_node is not None and quoted_node.status == NodeStatus.COMPLETED:
             logger.info(
                 "route_message route=followup",
                 task_id=ctx.task_id,
@@ -65,15 +66,15 @@ async def route_message(
         )
         if node.a2a_task_id:
             await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
-        node.status = "canceled"
+        node.status = NodeStatus.CANCELED
         invalidated = blocked_nodes(state)
         for blocked in invalidated:
-            blocked.status = "invalidated"
+            blocked.status = NodeStatus.INVALIDATED
         await emit_state_delta(
             ctx,
             nodes={
-                node.id: {"status": "canceled", "agent_name": node.agent_name},
-                **{b.id: {"status": "invalidated"} for b in invalidated},
+                node.id: {"status": NodeStatus.CANCELED, "agent_name": node.agent_name},
+                **{b.id: {"status": NodeStatus.INVALIDATED} for b in invalidated},
             },
         )
         await spawn_followup_node(ctx, text, node, deps=[])
@@ -83,7 +84,7 @@ async def route_message(
         active[0]
         if active
         else next(
-            (n for n in state.nodes.values() if n.status in {"pending", "ready"}),
+            (n for n in state.nodes.values() if n.status in {NodeStatus.PENDING, NodeStatus.READY}),
             None,
         )
     )
@@ -149,7 +150,7 @@ async def spawn_followup_node(
         ctx,
         nodes={
             node_id: {
-                "status": "pending",
+                "status": NodeStatus.PENDING,
                 "agent_name": followup.agent_name,
                 "input_text": followup.input_text,
             },

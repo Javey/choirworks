@@ -19,9 +19,7 @@ from tests.support.sdk import context_nodes, sdk_hub, task_nodes, wait_for_task
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"})
         ],
     )
 
@@ -47,9 +45,7 @@ async def _send_once(client, request) -> str:
 
 
 async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "read.db", plans=[_plan("echo")] * 2
-    ) as (app, http, client):
+    async with sdk_hub(tmp_path, "read.db", plans=[_plan("echo")] * 2) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _send("hello"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
@@ -61,9 +57,7 @@ async def test_get_task_matches_plan_snapshot(tmp_path, echo_agent):
 
 
 async def test_conversation_endpoint_returns_context_and_tasks(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "read.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "read.db", plans=[_plan("echo")] * 2) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _send("hello"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
@@ -100,9 +94,7 @@ async def test_cancel_running_task_marks_canceled(tmp_path):
 
     slow = await start_fake_agent("slow")
     try:
-        async with sdk_hub(
-            tmp_path, "read.db", plans=[_plan("slow")] * 2
-        ) as (_app, http, client):
+        async with sdk_hub(tmp_path, "read.db", plans=[_plan("slow")] * 2) as (_app, http, client):
             await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
             task_id = await _send_once(client, _send("hi"))
             for _ in range(200):
@@ -120,9 +112,7 @@ async def test_cancel_running_task_marks_canceled(tmp_path):
 
 
 async def test_cancel_terminal_task_raises(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "read.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "read.db", plans=[_plan("echo")] * 2) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _send("hello"))
         await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})

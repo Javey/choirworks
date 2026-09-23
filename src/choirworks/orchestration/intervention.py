@@ -11,7 +11,10 @@ from choirworks.orchestration.flows import execute_function
 from choirworks.orchestration.remote_caller import cancel_remote_task
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
+    PENDING_NODE_STATUSES,
+    InterventionStatus,
     NodeState,
+    NodeStatus,
     add_intervention,
     blocked_nodes,
     input_required_nodes,
@@ -43,21 +46,21 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
         helpers = [
             n
             for n in state.nodes.values()
-            if n.derived and n.assist_requested_by == node.id and n.status == "completed"
+            if n.derived and n.assist_requested_by == node.id and n.status == NodeStatus.COMPLETED
         ]
         if helpers:
             helper = helpers[0]
             intervention = pending_intervention_for(state, node.id)
             if intervention is None:
                 intervention = add_intervention(state, node.id, node.question or "")
-            intervention.status = "resolved"
+            intervention.status = InterventionStatus.RESOLVED
             intervention.answer = helper.output
             intervention.responder = helper.id
             node.answer_text = helper.output
-            node.status = "ready"
+            node.status = NodeStatus.READY
             await emit_state_delta(
                 ctx,
-                nodes={node.id: {"status": "ready"}},
+                nodes={node.id: {"status": NodeStatus.READY}},
                 interventions={
                     intervention.id: {
                         "status": "resolved",
@@ -74,7 +77,7 @@ async def settle_input(ctx: OrchestrationContext) -> bool:
             for n in state.nodes.values()
             if n.derived
             and n.assist_requested_by == node.id
-            and n.status in ACTIVE_NODE_STATUSES | {"pending", "ready"}
+            and n.status in ACTIVE_NODE_STATUSES | PENDING_NODE_STATUSES
         ]
         if active_helpers:
             continue
@@ -140,7 +143,7 @@ async def answer_intervention(
     if not pending or not text:
         return
     intervention = pending[0]
-    intervention.status = "resolved"
+    intervention.status = InterventionStatus.RESOLVED
     intervention.answer = text
     intervention.responder = "human"
     logger.info(
@@ -170,10 +173,10 @@ async def answer_intervention(
     node = state.nodes.get(intervention.node_id)
     if node is not None:
         node.answer_text = text
-        node.status = "ready"
+        node.status = NodeStatus.READY
     await emit_state_delta(
         ctx,
-        nodes={node.id: {"status": "ready"}} if node else None,
+        nodes={node.id: {"status": NodeStatus.READY}} if node else None,
         interventions={
             intervention.id: {
                 "status": "resolved",
@@ -198,16 +201,16 @@ async def cancel_node(
     state = ctx.state
     if node.a2a_task_id and node.agent_url:
         await cancel_remote_task(ctx, node.agent_url, node.a2a_task_id)
-    node.status = "canceled"
+    node.status = NodeStatus.CANCELED
     node.a2a_task_id = None
     invalidated = blocked_nodes(state)
     for blocked in invalidated:
-        blocked.status = "invalidated"
+        blocked.status = NodeStatus.INVALIDATED
     await emit_state_delta(
         ctx,
         nodes={
-            node.id: {"status": "canceled", "agent_name": node.agent_name},
-            **{b.id: {"status": "invalidated"} for b in invalidated},
+            node.id: {"status": NodeStatus.CANCELED, "agent_name": node.agent_name},
+            **{b.id: {"status": NodeStatus.INVALIDATED} for b in invalidated},
         },
     )
     await ctx.sessions.persist(ctx)

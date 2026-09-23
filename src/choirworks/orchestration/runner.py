@@ -15,6 +15,7 @@ from choirworks.orchestration.events import (
 from choirworks.orchestration.node_executor import execute_node
 from choirworks.orchestration.state import (
     NodeState,
+    NodeStatus,
     all_completed,
     failed_nodes,
     has_failures,
@@ -50,7 +51,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 state = ctx.state
                 for node in list(failed_nodes(state)):
                     if node.attempt < ctx.config.max_node_attempts:
-                        node.status = "pending"
+                        node.status = NodeStatus.PENDING
                         node.error = None
 
                 ready = ready_nodes(state)
@@ -60,10 +61,10 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     mode = (
                         "recover"
                         if node.status == "recover"
-                        else ("continue" if node.status == "ready" else "dispatch")
+                        else ("continue" if node.status == NodeStatus.READY else "dispatch")
                     )
                     if mode != "recover":
-                        node.status = "dispatched"
+                        node.status = NodeStatus.DISPATCHED
                     batch.append((node, mode))
                 if batch:
                     await _announce_dispatch(ctx, batch)
@@ -89,7 +90,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                     node = runtime.node_tasks.pop(finished)
                     exception = finished.exception()
                     if exception is not None:
-                        node.status = "failed"
+                        node.status = NodeStatus.FAILED
                         node.error = str(exception)
                         logger.warning(
                             "run_plan raised",
@@ -105,7 +106,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                             },
                         )
                 if ctx.config.retry_backoff > 0 and any(
-                    n.status == "failed" and n.attempt < ctx.config.max_node_attempts
+                    n.status == NodeStatus.FAILED and n.attempt < ctx.config.max_node_attempts
                     for n in ctx.state.nodes.values()
                 ):
                     await asyncio.sleep(ctx.config.retry_backoff)
@@ -114,7 +115,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
             async with ctx.lock:
                 state = ctx.state
                 if any(
-                    n.status == "failed" and n.attempt < ctx.config.max_node_attempts
+                    n.status == NodeStatus.FAILED and n.attempt < ctx.config.max_node_attempts
                     for n in state.nodes.values()
                 ):
                     continue

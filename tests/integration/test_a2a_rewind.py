@@ -9,16 +9,12 @@ from tests.support.sdk import context_state, sdk_hub, wait_for_task
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "hi"})
         ],
     )
 
 
-def _message(
-    text: str, *, context_id: str = "", sender: str | None = None
-) -> SendMessageRequest:
+def _message(text: str, *, context_id: str = "", sender: str | None = None) -> SendMessageRequest:
     message = Message(
         message_id=f"m-{text}",
         role=Role.ROLE_USER,
@@ -39,15 +35,11 @@ async def _send_once(client, request) -> str:
 
 
 async def test_rewind_hides_turn_and_restores_state(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "rewind.db", plans=[_plan("echo")] * 6
-    ) as (app, http, client):
+    async with sdk_hub(tmp_path, "rewind.db", plans=[_plan("echo")] * 6) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一轮"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
-        second_id = await _send_once(
-            client, _message("第二轮", context_id=first.context_id)
-        )
+        second_id = await _send_once(client, _message("第二轮", context_id=first.context_id))
         await wait_for_task(client, second_id, {TaskState.TASK_STATE_COMPLETED})
         assert (await context_state(app, first.context_id))["plan_version"] == 3
 
@@ -65,9 +57,7 @@ async def test_rewind_hides_turn_and_restores_state(tmp_path, echo_agent):
         assert stored.id == second_id
 
         # A new turn continues from the restored state.
-        third_id = await _send_once(
-            client, _message("第三轮", context_id=first.context_id)
-        )
+        third_id = await _send_once(client, _message("第三轮", context_id=first.context_id))
         await wait_for_task(client, third_id, {TaskState.TASK_STATE_COMPLETED})
         assert (await context_state(app, first.context_id))["plan_version"] == 3
 
@@ -91,15 +81,11 @@ async def test_rewind_hides_turn_and_restores_state(tmp_path, echo_agent):
 
 
 async def test_rewind_rejects_hidden_target(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "rewind.db", plans=[_plan("echo")] * 4
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "rewind.db", plans=[_plan("echo")] * 4) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一轮"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
-        second_id = await _send_once(
-            client, _message("第二轮", context_id=first.context_id)
-        )
+        second_id = await _send_once(client, _message("第二轮", context_id=first.context_id))
         await wait_for_task(client, second_id, {TaskState.TASK_STATE_COMPLETED})
 
         first_rewind = await http.post(
@@ -116,9 +102,7 @@ async def test_rewind_rejects_hidden_target(tmp_path, echo_agent):
 
 
 async def test_rewind_rejects_unknown_task_and_context(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "rewind.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "rewind.db", plans=[_plan("echo")] * 2) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一轮"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
@@ -134,16 +118,12 @@ async def test_rewind_rejects_unknown_task_and_context(tmp_path, echo_agent):
         )
         assert missing_task.status_code == 404
 
-        no_task_id = await http.post(
-            f"/v1/conversations/{first.context_id}/rewind", json={}
-        )
+        no_task_id = await http.post(f"/v1/conversations/{first.context_id}/rewind", json={})
         assert no_task_id.status_code == 400
 
 
 async def test_rewind_rejects_non_human_turn(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "rewind.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "rewind.db", plans=[_plan("echo")] * 2) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _message("来自 agent", sender="echo"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})

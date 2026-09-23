@@ -84,9 +84,7 @@ class RecordingHandler:
 
 def test_is_recover_request_requires_internal_call_context():
     assert _is_recover_request(_request_context()) is False
-    assert (
-        _is_recover_request(_request_context(state={RECOVER_KEY: True})) is True
-    )
+    assert _is_recover_request(_request_context(state={RECOVER_KEY: True})) is True
 
 
 def test_is_recover_request_ignores_client_metadata():
@@ -135,9 +133,7 @@ async def test_recover_tasks_skips_without_state_or_snapshot():
         status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
     )
 
-    recovered = await recover_tasks(
-        handler, FakeTaskStore([task]), FakeContextStore({})
-    )
+    recovered = await recover_tasks(handler, FakeTaskStore([task]), FakeContextStore({}))
 
     assert recovered == 0
     assert handler.requests == []
@@ -153,9 +149,7 @@ async def test_recover_tasks_skips_hidden_tasks():
     ]
     # FakeTaskStore returns newest-first; recovery uses list_all_tasks which
     # iterates in store order, so order matters.
-    contexts = FakeContextStore(
-        {"c1": state_to_json(OrchestrationState(plan_id="p1"))}
-    )
+    contexts = FakeContextStore({"c1": state_to_json(OrchestrationState(plan_id="p1"))})
 
     recovered = await recover_tasks(
         handler,

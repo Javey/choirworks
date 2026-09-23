@@ -14,9 +14,7 @@ async def test_fake_agent_echoes_with_official_client():
             card = await resolver.get_agent_card()
             assert card.name == "echo"
 
-        client = await create_client(
-            agent=agent.card, client_config=ClientConfig(streaming=True)
-        )
+        client = await create_client(agent=agent.card, client_config=ClientConfig(streaming=True))
         request = SendMessageRequest(message=new_text_message("hi", role=Role.ROLE_USER))
         task_id = None
         states = []
@@ -39,9 +37,7 @@ async def test_fake_agent_echoes_with_official_client():
 async def test_fake_agent_streams_artifact_chunks():
     agent = await start_fake_agent("write", chunk_size=3, chunk_delay=0.0)
     try:
-        client = await create_client(
-            agent=agent.card, client_config=ClientConfig(streaming=True)
-        )
+        client = await create_client(agent=agent.card, client_config=ClientConfig(streaming=True))
         request = SendMessageRequest(message=new_text_message("hi", role=Role.ROLE_USER))
         texts: list[str] = []
         appends: list[bool] = []

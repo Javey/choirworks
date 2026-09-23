@@ -29,16 +29,12 @@ from tests.support.sdk import (
 def _plan(agent_name: str, text: str = "问题") -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": text}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": text})
         ],
     )
 
 
-def _message(
-    text: str, *, task_id: str = "", context_id: str = ""
-) -> SendMessageRequest:
+def _message(text: str, *, task_id: str = "", context_id: str = "") -> SendMessageRequest:
     return SendMessageRequest(
         message=Message(
             message_id=f"m-{text[:6]}",
@@ -59,9 +55,7 @@ async def _send_once(client, request) -> str:
 
 
 async def test_send_creates_task_with_plan(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "send.db", plans=[_plan("echo")] * 2
-    ) as (app, http, client):
+    async with sdk_hub(tmp_path, "send.db", plans=[_plan("echo")] * 2) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _message("请评估这个问题"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
@@ -74,29 +68,21 @@ async def test_send_creates_task_with_plan(tmp_path, echo_agent):
 
 
 async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "send.db", plans=[_plan("echo")] * 4
-    ) as (app, http, client):
+    async with sdk_hub(tmp_path, "send.db", plans=[_plan("echo")] * 4) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一个任务"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
         assert app.state.executor._sessions == {}
         first_version = (await context_state(app, first.context_id))["plan_version"]
         assert first_version == 2
-        second_id = await _send_once(
-            client, _message("第二个任务", context_id=first.context_id)
-        )
-        second = await wait_for_task(
-            client, second_id, {TaskState.TASK_STATE_COMPLETED}
-        )
+        second_id = await _send_once(client, _message("第二个任务", context_id=first.context_id))
+        second = await wait_for_task(client, second_id, {TaskState.TASK_STATE_COMPLETED})
         assert second.id != first.id
         assert second.context_id == first.context_id
         assert app.state.executor._sessions == {}
         # The second turn reloads the canonical contexts row, so the plan
         # version continues from the first turn instead of restarting at 1.
-        assert (
-            await context_state(app, second.context_id)
-        )["plan_version"] == first_version + 1
+        assert (await context_state(app, second.context_id))["plan_version"] == first_version + 1
 
 
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
@@ -115,18 +101,14 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
     ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))
-        pending = await wait_for_task(
-            client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED}
-        )
+        pending = await wait_for_task(client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED})
         interventions = task_state(pending).get("interventions", [])
         assert any(item.get("status") == "pending" for item in interventions)
         resumed_id = await _send_once(
             client, _message("这是答复", task_id=task_id, context_id=pending.context_id)
         )
         assert resumed_id == task_id
-        resumed = await wait_for_task(
-            client, task_id, {TaskState.TASK_STATE_COMPLETED}
-        )
+        resumed = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert "answered:" in task_nodes(resumed)["n1"]["output"]
         history_text = " ".join(
             part.text for msg in resumed.history for part in msg.parts if part.HasField("text")
@@ -137,9 +119,7 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
 async def test_send_to_running_task_queues_message(tmp_path):
     slow = await start_fake_agent("slow")
     try:
-        async with sdk_hub(
-            tmp_path, "send.db", plans=[_plan("slow")] * 2
-        ) as (_app, http, client):
+        async with sdk_hub(tmp_path, "send.db", plans=[_plan("slow")] * 2) as (_app, http, client):
             await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
             task_id = await _send_once(client, _message("开始"))
             for _ in range(200):
@@ -177,9 +157,7 @@ async def test_plan_failure_persists_context_state(tmp_path, echo_agent):
 
 
 async def test_send_greeting_direct_reply(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "send.db", plans=[PlanDraft(nodes=[])]
-    ) as (app, http, client):
+    async with sdk_hub(tmp_path, "send.db", plans=[PlanDraft(nodes=[])]) as (app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _message("你好"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
@@ -199,10 +177,7 @@ async def test_repair_limit_stops_loop(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 _plan("flaky"),
-                *[
-                    OutcomeDecision(intent="revise", patch=repair_patch)
-                    for _ in range(3)
-                ],
+                *[OutcomeDecision(intent="revise", patch=repair_patch) for _ in range(3)],
             ],
         )
         settings = Settings(
@@ -214,9 +189,7 @@ async def test_repair_limit_stops_loop(tmp_path):
                 "max_revisions": 3,
             },
         )
-        async with sdk_hub(
-            tmp_path, "send.db", settings=settings, llm=llm
-        ) as (app, http, client):
+        async with sdk_hub(tmp_path, "send.db", settings=settings, llm=llm) as (app, http, client):
             await http.post("/v1/agents", json={"name": "flaky", "card_url": flaky.url})
             task_id = await _send_once(client, _message("任务"))
             task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_FAILED})
@@ -227,9 +200,7 @@ async def test_repair_limit_stops_loop(tmp_path):
 
 
 async def test_send_empty_text_raises(tmp_path, echo_agent):
-    async with sdk_hub(
-        tmp_path, "send.db", plans=[_plan("echo")] * 2
-    ) as (_app, http, client):
+    async with sdk_hub(tmp_path, "send.db", plans=[_plan("echo")] * 2) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         with pytest.raises(InvalidParamsError):
             await _send_once(

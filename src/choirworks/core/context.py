@@ -17,7 +17,7 @@ from choirworks.core.fencing import (
 )
 from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
-from choirworks.orchestration.state import NodeState, OrchestrationState
+from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
 
 MAX_PEER_CONTEXT = 2000
 HANDOFF_MAX_CHARS = 2000
@@ -73,7 +73,7 @@ def build_dispatch_text(
     handoffs = []
     for dep in node.deps:
         dep_node = state.nodes.get(dep)
-        if dep_node is None or dep_node.status != "completed" or not dep_node.output:
+        if dep_node is None or dep_node.status != NodeStatus.COMPLETED or not dep_node.output:
             continue
         label = dep_node.name or dep_node.id
         handoffs.append(
@@ -225,7 +225,7 @@ def build_repair_user(nodes: Iterable[NodeState], candidates: Sequence[AgentReco
 
 
 def build_replan_reason(nodes: Iterable[NodeState]) -> str:
-    errors = ", ".join(node.error or node.id for node in nodes if node.status == "failed")
+    errors = ", ".join(node.error or node.id for node in nodes if node.status == NodeStatus.FAILED)
     return f"nodes failed: {errors}"
 
 
@@ -233,7 +233,7 @@ def build_replan_context(nodes: Iterable[NodeState]) -> str:
     return "\n".join(
         f"- @{node.agent_name}: {(node.output or '')[:400]}"
         for node in nodes
-        if node.status == "completed"
+        if node.status == NodeStatus.COMPLETED
     )
 
 

@@ -9,7 +9,9 @@ from google.protobuf.json_format import MessageToDict
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.intervention import answer_intervention, settle_input
 from choirworks.orchestration.state import (
+    InterventionStatus,
     NodeState,
+    NodeStatus,
     OrchestrationState,
     add_cancel_request,
     add_intervention,
@@ -45,7 +47,7 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
     return ctx, queue
 
 
-def node(node_id: str, status: str = "pending") -> NodeState:
+def node(node_id: str, status: NodeStatus = NodeStatus.PENDING) -> NodeState:
     return NodeState(
         id=node_id,
         name=node_id,
@@ -57,7 +59,7 @@ def node(node_id: str, status: str = "pending") -> NodeState:
 
 def test_cancel_request_dedupes_per_node():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", "working")
+    state.nodes["n1"] = node("n1", NodeStatus.WORKING)
     first = add_cancel_request(state, "n1", "打断？")
     again = add_cancel_request(state, "n1", "打断？")
     assert first is not None
@@ -67,7 +69,7 @@ def test_cancel_request_dedupes_per_node():
 
 def test_expire_cancel_requests_on_node_settle():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", "working")
+    state.nodes["n1"] = node("n1", NodeStatus.WORKING)
     add_cancel_request(state, "n1", "打断？")
     expired = expire_cancel_requests(state, "n1")
     assert [iv.id for iv in expired] == ["iv1"]
@@ -76,8 +78,8 @@ def test_expire_cancel_requests_on_node_settle():
 
 def test_normalize_expires_when_target_missing_or_settled():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", "completed")
-    state.nodes["n2"] = node("n2", "working")
+    state.nodes["n1"] = node("n1", NodeStatus.COMPLETED)
+    state.nodes["n2"] = node("n2", NodeStatus.WORKING)
     add_cancel_request(state, "n1", "打断？")
     add_cancel_request(state, "n2", "打断？")
     add_cancel_request(state, "ghost", "打断？")
@@ -89,7 +91,7 @@ def test_normalize_expires_when_target_missing_or_settled():
 
 def test_intervention_serialization_roundtrip():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", "working")
+    state.nodes["n1"] = node("n1", NodeStatus.WORKING)
     add_cancel_request(state, "n1", "打断？")
     loaded = state_from_json(state_to_json(state))
     intervention = next(iter(loaded.interventions.values()))
@@ -100,7 +102,7 @@ def test_intervention_serialization_roundtrip():
 
 async def test_settle_input_resolves_via_completed_helper_without_human():
     state = OrchestrationState()
-    blocked = node("3", "input_required")
+    blocked = node("3", NodeStatus.INPUT_REQUIRED)
     blocked.question = "请确认是否采用该方案？"
     state.nodes["3"] = blocked
     state.nodes["3-h1"] = NodeState(
@@ -108,7 +110,7 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
         name="",
         agent_name="product-manager",
         agent_url="http://pm",
-        status="completed",
+        status=NodeStatus.COMPLETED,
         output="PM 的评估结论",
         derived=True,
         assist_requested_by="3",
@@ -118,9 +120,9 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     progress = await settle_input(ctx)
 
     assert progress is True
-    assert state.nodes["3"].status == "ready"
+    assert state.nodes["3"].status == NodeStatus.READY
     intervention = next(iter(state.interventions.values()))
-    assert intervention.status == "resolved"
+    assert intervention.status == InterventionStatus.RESOLVED
     assert intervention.responder == "3-h1"
     assert intervention.answer == "PM 的评估结论"
     assert len(queue.events) == 1
@@ -134,17 +136,17 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
 
 async def test_answer_intervention_marks_human_responder_and_readies_node():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", "input_required")
+    state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
     add_intervention(state, "n1", "请确认是否采用该方案？")
     ctx, queue = make_ctx(state)
 
     await answer_intervention(ctx, "按方案二执行")
 
     intervention = next(iter(state.interventions.values()))
-    assert intervention.status == "resolved"
+    assert intervention.status == InterventionStatus.RESOLVED
     assert intervention.responder == "human"
     assert intervention.answer == "按方案二执行"
-    assert state.nodes["n1"].status == "ready"
+    assert state.nodes["n1"].status == NodeStatus.READY
     assert state.nodes["n1"].answer_text == "按方案二执行"
     assert ctx.runtime.runner_start_requested is True
     delta = queue.events[-1]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, TypedDict, cast
 
 from a2a.types.a2a_pb2 import Task
@@ -10,10 +11,34 @@ from choirworks.core.util import now_iso, truncate
 
 STATE_JSON_KEY = "choirworks.state"
 
-TERMINAL_NODE_STATUSES = {"completed", "failed", "canceled", "invalidated"}
-ACTIVE_NODE_STATUSES = {"dispatched", "working"}
-PENDING_NODE_STATUSES = {"pending", "ready"}
-INPUT_NODE_STATUSES = {"input_required"}
+
+class NodeStatus(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    WORKING = "working"
+    INPUT_REQUIRED = "input_required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    INVALIDATED = "invalidated"
+
+
+class InterventionStatus(StrEnum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    EXPIRED = "expired"
+
+
+TERMINAL_NODE_STATUSES = {
+    NodeStatus.COMPLETED,
+    NodeStatus.FAILED,
+    NodeStatus.CANCELED,
+    NodeStatus.INVALIDATED,
+}
+ACTIVE_NODE_STATUSES = {NodeStatus.DISPATCHED, NodeStatus.WORKING}
+PENDING_NODE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY}
+INPUT_NODE_STATUSES = {NodeStatus.INPUT_REQUIRED}
 MAX_METADATA_OUTPUT = 2000
 
 
@@ -44,7 +69,7 @@ class NodeState:
     name: str
     agent_name: str
     agent_url: str
-    status: str = "pending"
+    status: str = NodeStatus.PENDING
     attempt: int = 0
     a2a_task_id: str | None = None
     output: str | None = None
@@ -84,7 +109,7 @@ class NodeState:
             name=str(data.get("name", "")),
             agent_name=str(data.get("agent_name", "")),
             agent_url=str(data.get("agent_url", "")),
-            status=str(data.get("status", "pending")),
+            status=NodeStatus(data.get("status", "pending")),
             attempt=int(data.get("attempt", 0)),
             a2a_task_id=data.get("a2a_task_id"),
             output=data.get("output"),
@@ -188,7 +213,7 @@ class Intervention:
     id: str
     node_id: str
     question: str
-    status: str = "pending"
+    status: str = InterventionStatus.PENDING
     answer: str | None = None
     responder: str | None = None
     kind: str = "question"
@@ -215,7 +240,7 @@ class Intervention:
             id=str(data.get("id", data.get("intervention_id", ""))),
             node_id=str(data.get("node_id", "")),
             question=str(data.get("question", "")),
-            status=str(data.get("status", "pending")),
+            status=InterventionStatus(data.get("status", "pending")),
             answer=data.get("answer"),
             responder=data.get("responder"),
             kind=str(data.get("kind", "question")),
@@ -292,9 +317,12 @@ class OrchestrationState:
 def ready_nodes(state: OrchestrationState) -> list[NodeState]:
     ready: list[NodeState] = []
     for node in state.nodes.values():
-        if node.status not in ("pending", "ready", "recover"):
+        if node.status not in (NodeStatus.PENDING, NodeStatus.READY, "recover"):
             continue
-        if all(dep in state.nodes and state.nodes[dep].status == "completed" for dep in node.deps):
+        if all(
+            dep in state.nodes and state.nodes[dep].status == NodeStatus.COMPLETED
+            for dep in node.deps
+        ):
             ready.append(node)
     return ready
 
@@ -303,7 +331,7 @@ def blocked_nodes(state: OrchestrationState) -> list[NodeState]:
     return [
         node
         for node in state.nodes.values()
-        if node.status == "pending"
+        if node.status == NodeStatus.PENDING
         and any(
             dep in state.nodes and state.nodes[dep].status in TERMINAL_NODE_STATUSES
             for dep in node.deps
@@ -320,17 +348,19 @@ def input_required_nodes(state: OrchestrationState) -> list[NodeState]:
 
 
 def failed_nodes(state: OrchestrationState) -> list[NodeState]:
-    return [n for n in state.nodes.values() if n.status == "failed"]
+    return [n for n in state.nodes.values() if n.status == NodeStatus.FAILED]
 
 
 def all_completed(state: OrchestrationState) -> bool:
     """True when every task is settled: completed or canceled."""
-    active = [n for n in state.nodes.values() if n.status != "invalidated"]
-    return bool(active) and all(n.status in {"completed", "canceled"} for n in active)
+    active = [n for n in state.nodes.values() if n.status != NodeStatus.INVALIDATED]
+    return bool(active) and all(
+        n.status in {NodeStatus.COMPLETED, NodeStatus.CANCELED} for n in active
+    )
 
 
 def has_failures(state: OrchestrationState) -> bool:
-    return any(n.status == "failed" for n in state.nodes.values())
+    return any(n.status == NodeStatus.FAILED for n in state.nodes.values())
 
 
 def has_pending_work(state: OrchestrationState) -> bool:
@@ -353,12 +383,12 @@ def assist_nodes_for(
 
 
 def pending_interventions(state: OrchestrationState) -> list[Intervention]:
-    return [iv for iv in state.interventions.values() if iv.status == "pending"]
+    return [iv for iv in state.interventions.values() if iv.status == InterventionStatus.PENDING]
 
 
 def pending_intervention_for(state: OrchestrationState, node_id: str) -> Intervention | None:
     for intervention in state.interventions.values():
-        if intervention.node_id == node_id and intervention.status == "pending":
+        if intervention.node_id == node_id and intervention.status == InterventionStatus.PENDING:
             return intervention
     return None
 
@@ -390,7 +420,7 @@ def add_cancel_request(
     for intervention in state.interventions.values():
         if (
             intervention.kind == "confirm_cancel"
-            and intervention.status == "pending"
+            and intervention.status == InterventionStatus.PENDING
             and intervention.target_node_id == target_node_id
         ):
             return None
@@ -411,10 +441,10 @@ def expire_cancel_requests(state: OrchestrationState, node_id: str) -> list[Inte
     for intervention in state.interventions.values():
         if (
             intervention.kind == "confirm_cancel"
-            and intervention.status == "pending"
+            and intervention.status == InterventionStatus.PENDING
             and intervention.target_node_id == node_id
         ):
-            intervention.status = "expired"
+            intervention.status = InterventionStatus.EXPIRED
             expired.append(intervention)
     return expired
 
@@ -425,13 +455,13 @@ def normalize_cancel_requests(state: OrchestrationState) -> list[Intervention]:
     for intervention in state.interventions.values():
         if (
             intervention.kind != "confirm_cancel"
-            or intervention.status != "pending"
+            or intervention.status != InterventionStatus.PENDING
             or intervention.target_node_id is None
         ):
             continue
         node = state.nodes.get(intervention.target_node_id)
         if node is None or node.status not in ACTIVE_NODE_STATUSES:
-            intervention.status = "expired"
+            intervention.status = InterventionStatus.EXPIRED
             expired.append(intervention)
     return expired
 

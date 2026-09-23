@@ -8,7 +8,7 @@ from choirworks.core.context import build_assist_input
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import execute_function, join_members
-from choirworks.orchestration.state import NodeState, assist_nodes_for
+from choirworks.orchestration.state import NodeState, NodeStatus, assist_nodes_for
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
 logger = structlog.get_logger(__name__)
@@ -62,7 +62,7 @@ async def arbitrate_mentions(
             ctx,
             nodes={
                 helper_id: {
-                    "status": "pending",
+                    "status": NodeStatus.PENDING,
                     "agent_name": helper.agent_name,
                     "input_text": helper.input_text,
                 },

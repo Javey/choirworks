@@ -12,9 +12,7 @@ from tests.support.sdk import sdk_hub, task_nodes
 def _plan(agent_name: str) -> PlanDraft:
     return PlanDraft(
         nodes=[
-            PlanNodeDraft(
-                id="n1", name=agent_name, agent_name=agent_name, input={"text": "开始"}
-            )
+            PlanNodeDraft(id="n1", name=agent_name, agent_name=agent_name, input={"text": "开始"})
         ],
     )
 
@@ -30,9 +28,7 @@ async def _send_once(client, request) -> str:
 async def test_interrupt_cancels_active_node_and_starts_followup(tmp_path):
     slow = await start_fake_agent("slow")
     try:
-        async with sdk_hub(
-            tmp_path, "queue.db", plans=[_plan("slow")] * 2
-        ) as (_app, http, client):
+        async with sdk_hub(tmp_path, "queue.db", plans=[_plan("slow")] * 2) as (_app, http, client):
             await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
             task_id = await _send_once(
                 client,

@@ -8,6 +8,7 @@ from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.patch import PatchResult, PlanPatch
 from choirworks.orchestration.state import (
     NodeState,
+    NodeStatus,
     OrchestrationState,
     add_member,
     pending_interventions,
@@ -101,13 +102,17 @@ def make_node(state: OrchestrationState, node_id: str, **kwargs) -> NodeState:
 async def test_create_plan_builds_nodes_and_joins_members():
     state = OrchestrationState(plan_id="p1", plan_version=1)
     effects = RecordingEffects()
-    draft = PlanDraft(nodes=[
-        PlanNodeDraft(
-            id="n1", name="调研", agent_name="research",
-            input={"text": "research it"},
-        ),
-        PlanNodeDraft(id="n2", name="写作", agent_name="writer", deps=["n1"]),
-    ])
+    draft = PlanDraft(
+        nodes=[
+            PlanNodeDraft(
+                id="n1",
+                name="调研",
+                agent_name="research",
+                input={"text": "research it"},
+            ),
+            PlanNodeDraft(id="n2", name="写作", agent_name="writer", deps=["n1"]),
+        ]
+    )
 
     result = await create_plan_func.execute(make_ctx(state, effects), draft)
 
@@ -153,7 +158,7 @@ async def test_join_members_skips_existing_member():
 
 async def test_ask_user_marks_node_input_required():
     state = OrchestrationState()
-    make_node(state, "n1", status="working", a2a_task_id="remote-1")
+    make_node(state, "n1", status=NodeStatus.WORKING, a2a_task_id="remote-1")
 
     result = await ask_user_func.execute(
         make_ctx(state), AskUserArgs(node_id="n1", question="请问？")
@@ -161,7 +166,7 @@ async def test_ask_user_marks_node_input_required():
 
     assert result.success is True
     node = state.nodes["n1"]
-    assert node.status == "input_required"
+    assert node.status == NodeStatus.INPUT_REQUIRED
     assert node.question == "请问？"
     # The remote task stays open awaiting input, so a human answer can
     # resume it instead of spawning a brand-new remote task.
@@ -181,7 +186,7 @@ async def test_ask_user_rejects_unknown_node():
 
 async def test_call_subagent_spawns_derived_helper():
     state = OrchestrationState()
-    make_node(state, "n1", status="input_required", question="需要数据")
+    make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="需要数据")
     effects = RecordingEffects()
 
     result = await call_subagent_func.execute(
@@ -202,7 +207,7 @@ async def test_call_subagent_spawns_derived_helper():
 
 async def test_call_subagent_falls_back_to_requester_question():
     state = OrchestrationState()
-    make_node(state, "n1", status="input_required", question="缺少接口文档")
+    make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="缺少接口文档")
 
     result = await call_subagent_func.execute(
         make_ctx(state), CallSubagentArgs(requested_by="n1", target_agent="writer")
@@ -248,14 +253,10 @@ async def test_revise_plan_reports_patch_effect():
     state = OrchestrationState()
     make_node(state, "x1", name="补充")
     effects = RecordingEffects()
-    effects.patch_result = PatchResult(
-        added=["x1"], invalidated=["n9"], skipped_in_flight=["n2"]
-    )
+    effects.patch_result = PatchResult(added=["x1"], invalidated=["n9"], skipped_in_flight=["n2"])
     patch = PlanPatch(reason="需要补充")
 
-    result = await revise_plan_func.execute(
-        make_ctx(state, effects), RevisePlanArgs(patch=patch)
-    )
+    result = await revise_plan_func.execute(make_ctx(state, effects), RevisePlanArgs(patch=patch))
 
     assert result.success is True
     assert effects.patches == [patch]
