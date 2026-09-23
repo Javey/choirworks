@@ -169,7 +169,9 @@ class ScriptedExecutor(AgentExecutor):
             await updater.complete()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        updater = TaskUpdater(event_queue, context.task_id or "", context.context_id or "")
+        assert context.task_id is not None
+        assert context.context_id is not None
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
         await updater.cancel()
 
 

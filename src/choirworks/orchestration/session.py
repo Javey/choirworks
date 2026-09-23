@@ -48,7 +48,7 @@ class SessionManager:
     ):
         self._context_store = context_store
         self._sessions: dict[str, SessionRuntime] = {}
-        self._session_gate = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     @property
     def sessions(self) -> dict[str, SessionRuntime]:
@@ -70,7 +70,7 @@ class SessionManager:
         task_id: str,
         event_queue: EventQueue,
     ) -> SessionRuntime:
-        async with self._session_gate:
+        async with self._lock:
             runtime = self._sessions.get(context_id)
             if runtime is None:
                 state = await self.load_state(context_id)

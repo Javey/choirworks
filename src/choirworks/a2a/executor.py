@@ -21,7 +21,7 @@ from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.deps import Deps
-from choirworks.orchestration.events import emit_event, emit_state_delta
+from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import join_members
 from choirworks.orchestration.intervention import answer_intervention
 from choirworks.orchestration.patch import PatchResult, PlanPatch
@@ -125,12 +125,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Route one inbound message; background runners do the actual work."""
-        task_id = context.task_id or ""
-        context_id = context.context_id or ""
+        assert context.task_id is not None
+        assert context.context_id is not None
+        task_id = context.task_id
+        context_id = context.context_id
 
         if _is_recover_request(context):
             logger.info("execute recover", task_id=task_id, context_id=context_id)
-            await self._recover_task(context, event_queue)
+            await self._recover_task(task_id, context_id, event_queue)
             return
 
         text = (context.get_user_input() or "").strip()
@@ -208,8 +210,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await plan_and_launch(self._build_ctx(runtime), text, room=room)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        task_id = context.task_id or ""
-        context_id = context.context_id or ""
+        assert context.task_id is not None
+        assert context.context_id is not None
+        task_id = context.task_id
+        context_id = context.context_id
         logger.info("cancel", task_id=task_id, context_id=context_id)
         await event_queue.enqueue_event(
             status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
@@ -251,27 +255,21 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_task.cancel()
         self._sessions.clear()
 
-    async def _recover_task(self, context: RequestContext, event_queue: EventQueue) -> None:
-        runtime = await self._session_mgr.ensure_session(
-            context.context_id or "", context.task_id or "", event_queue
-        )
-        state = await self._session_mgr.load_state(runtime.context_id)
-        if state is None:
-            logger.warning(
-                "recover state not found",
-                task_id=runtime.task_id,
-                context_id=runtime.context_id,
-            )
-            ctx = self._build_ctx(runtime)
-            await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
-            self._session_mgr.evict_session(runtime.context_id)
-            return
-        logger.info("recover state loaded", task_id=runtime.task_id, context_id=runtime.context_id)
-        async with runtime.lock:
-            runtime.state = state
+    async def _recover_task(self, task_id: str, context_id: str, event_queue: EventQueue) -> None:
+        # ensure_session 内部已从 context_store 加载 state 到 runtime.state。
+        # recover_tasks 在调 on_message_send 前已保证 context_store 中存在
+        # 该 context_id（recovery.py:55-57），所以 runtime.state 不会为空。
+        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
+        logger.info("recover state loaded", task_id=task_id, context_id=context_id)
         await self._recover(runtime)
 
     async def _recover(self, runtime: SessionRuntime) -> None:
+        # 计划修订（repair.py）会对活跃节点创建 confirm_cancel 干预，
+        # 等待用户确认是否打断。进程崩溃后恢复时：
+        # - 若目标节点在崩溃前已结束（不在 ACTIVE_NODE_STATUSES），
+        #   该干预已无意义，立即标记为 expired 清理掉。
+        # - 若目标节点仍为活跃状态，干预保留为 pending，由后续 runner
+        #   重新挂接远程 task 后，通过 expire_cancel_requests 正常处理。
         expired = normalize_cancel_requests(runtime.state)
         if expired:
             logger.info(
@@ -292,6 +290,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     for iv in expired
                 },
             )
+        # 活跃节点重置为 recover（有远程 task 可重新订阅）或 pending（重新派发）。
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
                 node.status = "recover" if node.a2a_task_id else "pending"
