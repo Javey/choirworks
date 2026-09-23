@@ -6,7 +6,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.executor import _is_resume_message
 from choirworks.a2a.recovery import recover_tasks
-from choirworks.orchestration.rewind import REWIND_KEY
+from choirworks.a2a.tasks import REWIND_KEY
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 

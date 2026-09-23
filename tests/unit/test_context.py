@@ -127,9 +127,12 @@ class FakeTaskStore:
         self._tasks = tasks
 
     async def list(self, params, ctx):
-        return SimpleNamespace(
-            tasks=list(reversed(self._tasks)), next_page_token=""
-        )
+        tasks = list(reversed(self._tasks))
+        if params.context_id:
+            tasks = [
+                t for t in tasks if t.context_id == params.context_id
+            ]
+        return SimpleNamespace(tasks=tasks, next_page_token="")
 
 
 def brief_builder(llm, tasks, **kwargs) -> ContextBriefBuilder:
@@ -141,13 +144,24 @@ async def test_brief_without_context_id_returns_empty():
     assert await builder.build("", "t1") == ""
 
 
+def _ns_task(task_id: str, history: list, context_id: str = "ctx-1"):
+    from google.protobuf.struct_pb2 import Struct
+
+    return SimpleNamespace(
+        id=task_id,
+        context_id=context_id,
+        history=history,
+        metadata=Struct(),
+    )
+
+
 async def test_brief_small_timeline_returns_full_text():
     tasks = [
-        SimpleNamespace(
-            id="t1",
-            history=[room_msg("你好", role=Role.ROLE_USER), room_msg("回复", "researcher")],
+        _ns_task(
+            "t1",
+            [room_msg("你好", role=Role.ROLE_USER), room_msg("回复", "researcher")],
         ),
-        SimpleNamespace(id="t2", history=[room_msg("别的会话")]),
+        _ns_task("t2", [room_msg("别的会话")]),
     ]
     builder = brief_builder(FakeLLM(), tasks)
     brief = await builder.build("ctx-1", "t0")
@@ -158,8 +172,8 @@ async def test_brief_skips_empty_messages_and_excluded_task():
     empty = new_text_message("x")
     empty.ClearField("parts")
     tasks = [
-        SimpleNamespace(id="t1", history=[room_msg("当前")]),
-        SimpleNamespace(id="t2", history=[empty]),
+        _ns_task("t1", [room_msg("当前")]),
+        _ns_task("t2", [empty]),
     ]
     builder = brief_builder(FakeLLM(), tasks)
     assert await builder.build("ctx-1", "t1") == ""
@@ -168,11 +182,9 @@ async def test_brief_skips_empty_messages_and_excluded_task():
 async def test_brief_compacts_when_over_threshold():
     llm = FakeLLM(text_results=["早期摘要"])
     tasks = [
-        SimpleNamespace(
-            id="t2",
-            history=[
-                room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)
-            ],
+        _ns_task(
+            "t2",
+            [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
         )
     ]
     builder = brief_builder(
@@ -188,11 +200,9 @@ async def test_brief_compacts_when_over_threshold():
 async def test_brief_cache_hit_on_same_split():
     llm = FakeLLM(text_results=["早期摘要"])
     tasks = [
-        SimpleNamespace(
-            id="t2",
-            history=[
-                room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)
-            ],
+        _ns_task(
+            "t2",
+            [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
         )
     ]
     builder = brief_builder(
@@ -208,7 +218,7 @@ async def test_brief_updates_summary_incrementally():
     history = [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)]
     builder = brief_builder(
         llm,
-        [SimpleNamespace(id="t2", history=history)],
+        [_ns_task("t2", history)],
         compaction_threshold=0.0001,
         compaction_retention=2,
     )

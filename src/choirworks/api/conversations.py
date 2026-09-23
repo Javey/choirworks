@@ -15,13 +15,11 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from pydantic import JsonValue
 
 from choirworks.a2a.executor import ChoirWorksAgentExecutor
-from choirworks.a2a.tasks import list_all_tasks
+from choirworks.a2a.tasks import REWIND_KEY, list_all_tasks
 from choirworks.api.deps import get_context_store, get_executor, get_task_store
 from choirworks.api.replay import synthesize_replay_events
 from choirworks.orchestration.rewind import (
-    REWIND_KEY,
     RewindUnavailable,
-    apply_rewinds,
     is_human_turn,
     restore_state,
 )
@@ -72,10 +70,9 @@ async def _conversation_payload(
             context = json.loads(record.state)
         except ValueError:
             context = None
-    visible = apply_rewinds(tasks)
     visible_dicts = [
         MessageToDict(task, preserving_proto_field_name=True)
-        for task in visible
+        for task in tasks
     ]
     return {"id": context_id, "context": context, "tasks": visible_dicts}
 
@@ -115,18 +112,8 @@ async def list_conversations(
         for context_id in sessions
     }
     tasks = await list_all_tasks(task_store)
-    tasks_by_context: dict[str, list[Any]] = {}
     for task in tasks:
-        ctx_id = task.context_id or task.id
-        tasks_by_context.setdefault(ctx_id, []).append(task)
-    visible_by_context: dict[str, set[str]] = {}
-    for ctx_id, ctx_tasks in tasks_by_context.items():
-        visible = apply_rewinds(list(reversed(ctx_tasks)))
-        visible_by_context[ctx_id] = {task.id for task in visible}
-    for task in tasks:
-        ctx_id = task.context_id or task.id
-        if task.id not in visible_by_context.get(ctx_id, set()):
-            continue
+        ctx_id = task.context_id
         state_name = TaskState.Name(task.status.state).replace("TASK_STATE_", "").lower()
         if ctx_id not in sessions:
             title = ""
@@ -180,8 +167,7 @@ async def replay_conversation(
             state = state_from_json(record.state)
         except (ValueError, TypeError):
             state = None
-    visible = apply_rewinds(tasks)
-    return synthesize_replay_events(visible, context_id, state)
+    return synthesize_replay_events(tasks, context_id, state)
 
 
 @router.post("/conversations/{context_id}/rewind")
@@ -210,16 +196,12 @@ async def rewind_conversation(
     index = {task.id: position for position, task in enumerate(tasks)}
     if task_id not in index:
         raise HTTPException(status_code=404, detail="task not found")
-    visible = apply_rewinds(tasks)
-    visible_ids = {task.id for task in visible}
-    if task_id not in visible_ids:
-        raise HTTPException(status_code=409, detail="该回合已被回退")
     if not is_human_turn(tasks[index[task_id]]):
         raise HTTPException(
             status_code=400, detail="只有人类消息开启的回合可以回退"
         )
     try:
-        state = restore_state(visible, task_id)
+        state = restore_state(tasks, task_id)
     except RewindUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await context_store.upsert_state(context_id, state_to_json(state))

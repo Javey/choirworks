@@ -6,10 +6,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.room import A2A_ROOM_URI
 from choirworks.orchestration.rewind import (
-    REWIND_KEY,
     RewindUnavailable,
-    apply_rewinds,
-    extract_rewind,
     is_human_turn,
     restore_state,
 )
@@ -27,58 +24,6 @@ def _task(
     if state is not None:
         ParseDict({"choirworks.state": state_to_json(state)}, task.metadata)
     return task
-
-
-def _rewind_task(before_task_id: str, context_id: str = "c1") -> Task:
-    task = Task(
-        id=f"rewind-{before_task_id}",
-        context_id=context_id,
-        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-    )
-    ParseDict({REWIND_KEY: before_task_id}, task.metadata)
-    return task
-
-
-def test_extract_rewind_returns_before_task_id():
-    task = _rewind_task("t3")
-    assert extract_rewind(task) == "t3"
-
-
-def test_extract_rewind_returns_none_for_ordinary_task():
-    assert extract_rewind(_task("t1")) is None
-
-
-def test_apply_rewinds_no_markers():
-    tasks = [_task("a"), _task("b"), _task("c")]
-    assert [t.id for t in apply_rewinds(tasks)] == ["a", "b", "c"]
-
-
-def test_apply_rewinds_hides_range_inclusive():
-    # [a, b, c, REWIND(before=b), d] — b, c, and the marker are hidden;
-    # d is a new turn after the rewind, so it stays visible.
-    tasks = [_task("a"), _task("b"), _task("c"), _rewind_task("b"), _task("d")]
-    assert [t.id for t in apply_rewinds(tasks)] == ["a", "d"]
-
-
-def test_apply_rewinds_drops_marker_task():
-    tasks = [_task("a"), _task("b"), _rewind_task("a")]
-    assert [t.id for t in apply_rewinds(tasks)] == []
-
-
-def test_apply_rewinds_chained_markers():
-    # [a, b, c, REWIND(c), d, REWIND(d), e]
-    # First REWIND(c) hides c + marker; second REWIND(d) hides d + marker;
-    # e is a new turn after the second rewind, stays visible.
-    tasks = [
-        _task("a"),
-        _task("b"),
-        _task("c"),
-        _rewind_task("c"),
-        _task("d"),
-        _rewind_task("d"),
-        _task("e"),
-    ]
-    assert [t.id for t in apply_rewinds(tasks)] == ["a", "b", "e"]
 
 
 def test_restore_state_returns_predecessor_snapshot():

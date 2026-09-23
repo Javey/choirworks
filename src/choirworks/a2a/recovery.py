@@ -9,13 +9,11 @@ from a2a.types.a2a_pb2 import (
     Role,
     SendMessageConfiguration,
     SendMessageRequest,
-    Task,
     TaskState,
 )
 from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.tasks import list_all_tasks
-from choirworks.orchestration.rewind import apply_rewinds
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
@@ -45,26 +43,14 @@ async def recover_tasks(
     recovered = 0
     seen_contexts: set[str] = set()
 
-    # Single DB query: load all tasks (newest-first).
+    # Single DB query; iter_all_tasks filters rewind-hidden tasks in-stream.
     tasks = await list_all_tasks(task_store)
-
-    # Group by context, compute visible (post-rewind) set per context.
-    tasks_by_context: dict[str, list[Task]] = {}
-    for task in tasks:
-        ctx_id = task.context_id or task.id
-        tasks_by_context.setdefault(ctx_id, []).append(task)
-    visible_by_context: dict[str, set[str]] = {}
-    for ctx_id, ctx_tasks in tasks_by_context.items():
-        visible = apply_rewinds(list(reversed(ctx_tasks)))
-        visible_by_context[ctx_id] = {task.id for task in visible}
 
     for task in tasks:
         if task.status.state in TERMINAL_STATES:
             continue
-        context_id = task.context_id or task.id
+        context_id = task.context_id
         if context_id in seen_contexts:
-            continue
-        if task.id not in visible_by_context.get(context_id, set()):
             continue
         if load_state(task) is None:
             if context_store is None or await context_store.get(context_id) is None:

@@ -112,7 +112,7 @@ async def test_rewind_rejects_hidden_target(tmp_path, echo_agent):
             f"/v1/conversations/{first.context_id}/rewind",
             json={"task_id": second_id},
         )
-        assert again.status_code == 409
+        assert again.status_code == 404
 
 
 async def test_rewind_rejects_unknown_task_and_context(tmp_path, echo_agent):
