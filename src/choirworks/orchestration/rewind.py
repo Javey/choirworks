@@ -1,115 +1,82 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-
+# Mirrors ADK's _apply_rewinds (google-adk, Apache-2.0,
+# https://github.com/google/adk-python,
+# src/google/adk/events/_rewind_events.py).  ADK stores rewind
+# markers as in-band events; ChoirWorks stores them as in-band
+# A2A tasks with metadata["choirworks.rewind"] = before_task_id.
 from a2a.types.a2a_pb2 import Role, Task
 
 from choirworks.a2a.room import room_options
 from choirworks.orchestration.state import OrchestrationState, load_state
+
+REWIND_KEY = "choirworks.rewind"
 
 
 class RewindUnavailable(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class RewindMarker:
-    before_task_id: str
-    cut_task_id: str
-    created_at: str = ""
-
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "before_task_id": self.before_task_id,
-            "cut_task_id": self.cut_task_id,
-            "created_at": self.created_at,
-        }
+def extract_rewind(task: Task) -> str | None:
+    """Return the ``before_task_id`` if *task* is a rewind marker, else ``None``."""
+    if not task.metadata.fields:
+        return None
+    raw = task.metadata.fields.get(REWIND_KEY)
+    if raw is None or not raw.HasField("string_value") or not raw.string_value:
+        return None
+    return raw.string_value
 
 
-def parse_markers(raw: str) -> list[RewindMarker]:
-    try:
-        items = json.loads(raw)
-    except ValueError:
-        return []
-    if not isinstance(items, list):
-        return []
-    markers: list[RewindMarker] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        before = item.get("before_task_id")
-        cut = item.get("cut_task_id")
-        if not before or not cut:
-            continue
-        markers.append(
-            RewindMarker(
-                before_task_id=str(before),
-                cut_task_id=str(cut),
-                created_at=str(item.get("created_at", "")),
-            )
-        )
-    return markers
+def apply_rewinds(tasks_oldest_first: list[Task]) -> list[Task]:
+    """Return the visible subset of *tasks_oldest_first* after rewinds.
 
+    Iterates backward.  When a task carries ``choirworks.rewind == X``, drops
+    that task together with every task between it and the task whose id is
+    ``X`` (inclusive), then resumes the backward walk from there.
 
-def hidden_task_ids(task_ids: list[str], markers: list[RewindMarker]) -> set[str]:
-    """Tasks hidden by rewinds; ``task_ids`` ordered oldest first."""
-    index = {task_id: position for position, task_id in enumerate(task_ids)}
-    hidden: set[str] = set()
-    for marker in markers:
-        start = index.get(marker.before_task_id)
-        end = index.get(marker.cut_task_id)
-        if start is None or end is None:
-            continue
-        if start > end:
-            start, end = end, start
-        hidden.update(task_ids[start : end + 1])
-    return hidden
+    Args:
+        tasks_oldest_first: Full task history, oldest first.
 
-
-def checkpoint_before(
-    task_ids: list[str],
-    markers: list[RewindMarker],
-    before_task_id: str,
-) -> str | None:
-    """Task whose snapshot holds the state before ``before_task_id``.
-
-    Skips tasks hidden by earlier rewinds; when the walk lands inside a hidden
-    range it jumps back to before that rewind's target. ``None`` means the
-    target is the first live turn, so the state is empty.
+    Returns:
+        The oldest-first subset that survives all rewinds.
     """
-    index = {task_id: position for position, task_id in enumerate(task_ids)}
-    hidden = hidden_task_ids(task_ids, markers)
-    position = index[before_task_id] - 1
-    while position >= 0:
-        candidate = task_ids[position]
-        if candidate not in hidden:
-            return candidate
-        covering = [
-            marker
-            for marker in markers
-            if marker.before_task_id in index
-            and marker.cut_task_id in index
-            and index[marker.before_task_id] <= position <= index[marker.cut_task_id]
-        ]
-        position = min(index[marker.before_task_id] for marker in covering) - 1
-    return None
+    kept: list[Task] = []
+    i = len(tasks_oldest_first) - 1
+    while i >= 0:
+        task = tasks_oldest_first[i]
+        before_id = extract_rewind(task)
+        if before_id is not None:
+            for j in range(i):
+                if tasks_oldest_first[j].id == before_id:
+                    i = j
+                    break
+        else:
+            kept.append(task)
+        i -= 1
+    kept.reverse()
+    return kept
 
 
 def restore_state(
-    tasks_oldest_first: list[Task],
-    markers: list[RewindMarker],
+    visible_tasks_oldest_first: list[Task],
     before_task_id: str,
 ) -> OrchestrationState:
-    checkpoint_id = checkpoint_before(
-        [task.id for task in tasks_oldest_first], markers, before_task_id
-    )
-    if checkpoint_id is None:
+    """Restore the state snapshot from the predecessor of *before_task_id*.
+
+    *visible_tasks_oldest_first* must already have rewinds applied (see
+    :func:`apply_rewinds`).  Returns an empty :class:`OrchestrationState`
+    when *before_task_id* is the first visible turn.
+    """
+    index = {
+        task.id: position for position, task in enumerate(visible_tasks_oldest_first)
+    }
+    pos = index.get(before_task_id)
+    if pos is None or pos == 0:
         return OrchestrationState()
-    task = next(task for task in tasks_oldest_first if task.id == checkpoint_id)
-    state = load_state(task)
+    checkpoint = visible_tasks_oldest_first[pos - 1]
+    state = load_state(checkpoint)
     if state is None:
-        raise RewindUnavailable(f"no state snapshot for task {checkpoint_id}")
+        raise RewindUnavailable(f"no state snapshot for task {checkpoint.id}")
     return state
 
 

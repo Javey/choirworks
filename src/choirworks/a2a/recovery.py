@@ -9,12 +9,13 @@ from a2a.types.a2a_pb2 import (
     Role,
     SendMessageConfiguration,
     SendMessageRequest,
+    Task,
     TaskState,
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.tasks import iter_all_tasks
-from choirworks.orchestration.rewind import hidden_task_ids, parse_markers
+from choirworks.a2a.tasks import list_all_tasks
+from choirworks.orchestration.rewind import apply_rewinds
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
@@ -36,25 +37,34 @@ async def recover_tasks(
     """Re-attach to non-terminal work after a process restart.
 
     Tasks are grouped by conversation (context_id); each conversation receives
-    one synthetic resume message on its newest non-terminal task. The executor
-    reloads the conversation state from the contexts store (or the persisted
-    Task snapshot for pre-contexts data) and re-subscribes to remote work that
-    was in flight.
+    one synthetic resume message on its newest non-terminal visible task. The
+    executor reloads the conversation state from the contexts store (or the
+    persisted Task snapshot for pre-contexts data) and re-subscribes to remote
+    work that was in flight.
     """
     recovered = 0
     seen_contexts: set[str] = set()
-    hidden = (
-        await _hidden_by_context(task_store, context_store)
-        if context_store is not None
-        else {}
-    )
-    async for task in iter_all_tasks(task_store):
+
+    # Single DB query: load all tasks (newest-first).
+    tasks = await list_all_tasks(task_store)
+
+    # Group by context, compute visible (post-rewind) set per context.
+    tasks_by_context: dict[str, list[Task]] = {}
+    for task in tasks:
+        ctx_id = task.context_id or task.id
+        tasks_by_context.setdefault(ctx_id, []).append(task)
+    visible_by_context: dict[str, set[str]] = {}
+    for ctx_id, ctx_tasks in tasks_by_context.items():
+        visible = apply_rewinds(list(reversed(ctx_tasks)))
+        visible_by_context[ctx_id] = {task.id for task in visible}
+
+    for task in tasks:
         if task.status.state in TERMINAL_STATES:
             continue
         context_id = task.context_id or task.id
         if context_id in seen_contexts:
             continue
-        if task.id in hidden.get(context_id, set()):
+        if task.id not in visible_by_context.get(context_id, set()):
             continue
         if load_state(task) is None:
             if context_store is None or await context_store.get(context_id) is None:
@@ -81,24 +91,3 @@ async def recover_tasks(
     if recovered:
         logger.info("Recovered in-flight task(s)", count=recovered)
     return recovered
-
-
-async def _hidden_by_context(
-    task_store: TaskStore, context_store: ContextStore
-) -> dict[str, set[str]]:
-    records = {
-        record.context_id: record for record in await context_store.list()
-    }
-    ids_by_context: dict[str, list[str]] = {}
-    async for task in iter_all_tasks(task_store):
-        context_id = task.context_id or task.id
-        ids_by_context.setdefault(context_id, []).append(task.id)
-    return {
-        context_id: hidden_task_ids(
-            list(reversed(ids)),
-            parse_markers(records[context_id].rewind_markers)
-            if context_id in records
-            else [],
-        )
-        for context_id, ids in ids_by_context.items()
-    }

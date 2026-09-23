@@ -6,6 +6,7 @@ from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.executor import _is_resume_message
 from choirworks.a2a.recovery import recover_tasks
+from choirworks.orchestration.rewind import REWIND_KEY
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
@@ -28,28 +29,29 @@ def _persisted_task(task_id: str = "t1", context_id: str = "c1") -> Task:
     return task
 
 
+def _rewind_marker(before_task_id: str, context_id: str = "c1") -> Task:
+    task = Task(
+        id=f"rewind-{before_task_id}",
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    ParseDict({REWIND_KEY: before_task_id}, task.metadata)
+    return task
+
+
 class FakeContextStore:
-    def __init__(
-        self, records: dict[str, str], markers: dict[str, str] | None = None
-    ):
+    def __init__(self, records: dict[str, str]):
         self.records = records
-        self.markers = markers or {}
 
     async def get(self, context_id):  # noqa: ANN001, ANN201
         raw = self.records.get(context_id)
         if raw is None:
             return None
-        return SimpleNamespace(
-            state=raw, rewind_markers=self.markers.get(context_id, "[]")
-        )
+        return SimpleNamespace(state=raw)
 
     async def list(self):  # noqa: ANN201
         return [
-            SimpleNamespace(
-                context_id=context_id,
-                state=raw,
-                rewind_markers=self.markers.get(context_id, "[]"),
-            )
+            SimpleNamespace(context_id=context_id, state=raw)
             for context_id, raw in self.records.items()
         ]
 
@@ -123,22 +125,22 @@ async def test_recover_tasks_skips_without_state_or_snapshot():
 
 
 async def test_recover_tasks_skips_hidden_tasks():
-    import json
-
     handler = RecordingHandler()
-    hidden_id = "t2"
+    # t2 is hidden by a rewind marker, t1 is visible.
+    tasks = [
+        _rewind_marker("t2"),
+        _persisted_task("t2"),
+        _persisted_task("t1"),
+    ]
+    # FakeTaskStore returns newest-first; recovery uses list_all_tasks which
+    # iterates in store order, so order matters.
     contexts = FakeContextStore(
-        {"c1": state_to_json(OrchestrationState(plan_id="p1"))},
-        markers={
-            "c1": json.dumps([
-                {"before_task_id": hidden_id, "cut_task_id": hidden_id}
-            ])
-        },
+        {"c1": state_to_json(OrchestrationState(plan_id="p1"))}
     )
 
     recovered = await recover_tasks(
         handler,
-        FakeTaskStore([_persisted_task(hidden_id), _persisted_task("t1")]),
+        FakeTaskStore(tasks),
         contexts,
     )
 

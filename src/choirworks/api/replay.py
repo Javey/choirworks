@@ -93,16 +93,13 @@ def synthesize_replay_events(
     tasks: list[Task],
     context_id: str,
     state: OrchestrationState | None,
-    hidden_ids: set[str] | None = None,
 ) -> list[dict[str, object]]:
-    hidden = hidden_ids or set()
-    visible = [t for t in tasks if t.id not in hidden]
-    if not visible:
+    if not tasks:
         return []
 
     events: list[StreamResponse] = []
 
-    for task in visible:
+    for task in tasks:
         task_copy = Task()
         task_copy.CopyFrom(task)
         del task_copy.artifacts[:]
@@ -137,8 +134,8 @@ def synthesize_replay_events(
                         task.id, context_id, merged,
                     )))
 
-    if state is not None and visible:
-        last_task = visible[-1]
+    if state is not None and tasks:
+        last_task = tasks[-1]
         task_state = last_task.status.state
         events.append(StreamResponse(status_update=_state_delta_event(
             state, context_id, last_task.id, task_state,

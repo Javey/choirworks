@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from a2a.helpers import new_task
+from a2a.server.context import ServerCallContext
 from a2a.server.tasks.task_store import TaskStore
 from a2a.types.a2a_pb2 import TaskState
 from fastapi import APIRouter, Depends, HTTPException
-from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.timestamp_pb2 import Timestamp
 from pydantic import JsonValue
 
 from choirworks.a2a.executor import ChoirWorksAgentExecutor
@@ -15,10 +19,10 @@ from choirworks.a2a.tasks import list_all_tasks
 from choirworks.api.deps import get_context_store, get_executor, get_task_store
 from choirworks.api.replay import synthesize_replay_events
 from choirworks.orchestration.rewind import (
+    REWIND_KEY,
     RewindUnavailable,
-    hidden_task_ids,
+    apply_rewinds,
     is_human_turn,
-    parse_markers,
     restore_state,
 )
 from choirworks.orchestration.state import (
@@ -63,19 +67,17 @@ async def _conversation_payload(
         raise HTTPException(status_code=404, detail="conversation not found")
     record = await context_store.get(context_id)
     context: JsonValue | None = None
-    markers = parse_markers(record.rewind_markers) if record is not None else []
     if record is not None:
         try:
             context = json.loads(record.state)
         except ValueError:
             context = None
-    hidden = hidden_task_ids([task.id for task in tasks], markers)
-    visible = [
+    visible = apply_rewinds(tasks)
+    visible_dicts = [
         MessageToDict(task, preserving_proto_field_name=True)
-        for task in tasks
-        if task.id not in hidden
+        for task in visible
     ]
-    return {"id": context_id, "context": context, "tasks": visible}
+    return {"id": context_id, "context": context, "tasks": visible_dicts}
 
 
 @router.post("/conversations")
@@ -113,22 +115,17 @@ async def list_conversations(
         for context_id in sessions
     }
     tasks = await list_all_tasks(task_store)
-    tasks_by_context: dict[str, list[str]] = {}
+    tasks_by_context: dict[str, list[Any]] = {}
     for task in tasks:
         ctx_id = task.context_id or task.id
-        tasks_by_context.setdefault(ctx_id, []).append(task.id)
-    hidden_by_context = {
-        ctx_id: hidden_task_ids(
-            list(reversed(ids)),
-            parse_markers(records[ctx_id].rewind_markers)
-            if ctx_id in records
-            else [],
-        )
-        for ctx_id, ids in tasks_by_context.items()
-    }
+        tasks_by_context.setdefault(ctx_id, []).append(task)
+    visible_by_context: dict[str, set[str]] = {}
+    for ctx_id, ctx_tasks in tasks_by_context.items():
+        visible = apply_rewinds(list(reversed(ctx_tasks)))
+        visible_by_context[ctx_id] = {task.id for task in visible}
     for task in tasks:
         ctx_id = task.context_id or task.id
-        if task.id in hidden_by_context[ctx_id]:
+        if task.id not in visible_by_context.get(ctx_id, set()):
             continue
         state_name = TaskState.Name(task.status.state).replace("TASK_STATE_", "").lower()
         if ctx_id not in sessions:
@@ -178,14 +175,13 @@ async def replay_conversation(
         raise HTTPException(status_code=404, detail="conversation not found")
     record = await context_store.get(context_id)
     state: OrchestrationState | None = None
-    markers = parse_markers(record.rewind_markers) if record is not None else []
     if record is not None:
         try:
             state = state_from_json(record.state)
         except (ValueError, TypeError):
             state = None
-    hidden = hidden_task_ids([task.id for task in tasks], markers)
-    return synthesize_replay_events(tasks, context_id, state, hidden)
+    visible = apply_rewinds(tasks)
+    return synthesize_replay_events(visible, context_id, state)
 
 
 @router.post("/conversations/{context_id}/rewind")
@@ -214,23 +210,28 @@ async def rewind_conversation(
     index = {task.id: position for position, task in enumerate(tasks)}
     if task_id not in index:
         raise HTTPException(status_code=404, detail="task not found")
-    markers = parse_markers(record.rewind_markers)
-    hidden = hidden_task_ids([task.id for task in tasks], markers)
-    if task_id in hidden:
+    visible = apply_rewinds(tasks)
+    visible_ids = {task.id for task in visible}
+    if task_id not in visible_ids:
         raise HTTPException(status_code=409, detail="该回合已被回退")
     if not is_human_turn(tasks[index[task_id]]):
         raise HTTPException(
             status_code=400, detail="只有人类消息开启的回合可以回退"
         )
     try:
-        state = restore_state(tasks, markers, task_id)
+        state = restore_state(visible, task_id)
     except RewindUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await context_store.rewind(
-        context_id,
-        state=state_to_json(state),
-        before_task_id=task_id,
-        cut_task_id=tasks[-1].id,
+    await context_store.upsert_state(context_id, state_to_json(state))
+    now = Timestamp()
+    now.FromDatetime(datetime.now(UTC))
+    marker = new_task(
+        task_id=uuid.uuid4().hex,
+        context_id=context_id,
+        state=TaskState.TASK_STATE_COMPLETED,
     )
+    marker.status.timestamp.CopyFrom(now)
+    ParseDict({REWIND_KEY: task_id}, marker.metadata)
+    await task_store.save(marker, ServerCallContext())
     executor.drop_session(context_id)
     return await _conversation_payload(context_id, task_store, context_store)
