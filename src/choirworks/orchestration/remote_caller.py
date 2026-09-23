@@ -59,19 +59,19 @@ async def stream_remote(
     return await ensure_terminal(ctx, node, current)
 
 
-async def resume_remote(ctx: OrchestrationContext, node: NodeState) -> str:
+async def recover_remote(ctx: OrchestrationContext, node: NodeState) -> str:
     if not node.a2a_task_id:
-        logger.warning("resume_remote no a2a_task_id", node_id=node.id)
+        logger.warning("recover_remote no a2a_task_id", node_id=node.id)
         return "failed"
     logger.info(
-        "resume_remote", node_id=node.id, a2a_task_id=node.a2a_task_id,
+        "recover_remote", node_id=node.id, a2a_task_id=node.a2a_task_id,
     )
     current = "working"
     try:
         chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
         current = await consume_chunks(ctx, node, chunks)
     except Exception as exc:
-        logger.debug("Resume subscribe failed", node_id=node.id, error=exc)
+        logger.debug("Recover subscribe failed", node_id=node.id, error=exc)
     return await ensure_terminal(ctx, node, current)
 
 

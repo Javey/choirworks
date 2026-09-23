@@ -11,9 +11,8 @@ from a2a.types.a2a_pb2 import (
     SendMessageRequest,
     TaskState,
 )
-from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.tasks import iter_all_tasks
+from choirworks.a2a.tasks import RECOVER_KEY, iter_all_tasks
 from choirworks.orchestration.state import load_state
 from choirworks.store.contexts import ContextStore
 
@@ -35,10 +34,13 @@ async def recover_tasks(
     """Re-attach to non-terminal work after a process restart.
 
     Tasks are grouped by conversation (context_id); each conversation receives
-    one synthetic resume message on its newest non-terminal visible task. The
-    executor reloads the conversation state from the contexts store (or the
-    persisted Task snapshot for pre-contexts data) and re-subscribes to remote
-    work that was in flight.
+    one synthetic internal message on its newest non-terminal visible task.
+    The SDK only starts :meth:`AgentExecutor.execute` from an ActiveTask
+    request, and ``message/send`` is the only way to enqueue one, so recovery
+    must go through the protocol entry.  The request is marked as internal via
+    ``ServerCallContext.state`` (unforgeable by HTTP clients) and the executor
+    reloads the conversation state from the contexts store, then re-subscribes
+    to remote work that was in flight.
     """
     recovered = 0
     seen_contexts: set[str] = set()
@@ -55,19 +57,18 @@ async def recover_tasks(
                 continue
         seen_contexts.add(context_id)
         message = new_data_message(
-            {"kind": "resume"},
+            {},
             role=Role.ROLE_USER,
             task_id=task.id,
             context_id=task.context_id,
         )
-        ParseDict({"choirworks.resume": {"kind": "resume"}}, message.metadata)
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
         )
         try:
             await request_handler.on_message_send(
-                request, ServerCallContext()
+                request, ServerCallContext(state={RECOVER_KEY: True})
             )
             recovered += 1
         except Exception:  # noqa: BLE001 - one bad task must not stop recovery

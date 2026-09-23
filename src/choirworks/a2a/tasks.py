@@ -13,6 +13,7 @@ from a2a.types.a2a_pb2 import ListTasksRequest, Task
 
 _PAGE_SIZE = 100
 REWIND_KEY = "choirworks.rewind"
+RECOVER_KEY = "choirworks.recover"
 
 
 def extract_rewind(task: Task) -> str | None:

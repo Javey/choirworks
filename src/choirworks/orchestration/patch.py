@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from choirworks.orchestration.state import NodeState, OrchestrationState
 
-INVALIDATABLE_STATUSES = {"pending", "ready", "resume", "failed"}
+INVALIDATABLE_STATUSES = {"pending", "ready", "recover", "failed"}
 
 
 class PatchNode(BaseModel):

@@ -10,12 +10,12 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks.task_store import TaskStore
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
-    Message,
     TaskState,
 )
 
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.room import room_options
+from choirworks.a2a.tasks import RECOVER_KEY
 from choirworks.a2a.wire import status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
@@ -43,10 +43,8 @@ from choirworks.tools.capabilities import ToolEffects
 logger = structlog.get_logger(__name__)
 
 
-def _is_resume_message(message: Message | None) -> bool:
-    if message is None or not message.metadata.fields:
-        return False
-    return "choirworks.resume" in message.metadata.fields
+def _is_recover_request(context: RequestContext) -> bool:
+    return context.call_context.state.get(RECOVER_KEY) is True
 
 
 class ChoirWorksAgentExecutor(AgentExecutor):
@@ -133,9 +131,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id = context.task_id or ""
         context_id = context.context_id or ""
 
-        if _is_resume_message(context.message):
-            logger.info("execute resume", task_id=task_id)
-            await self._resume_task(context, event_queue)
+        if _is_recover_request(context):
+            logger.info("execute recover", task_id=task_id, context_id=context_id)
+            await self._recover_task(context, event_queue)
             return
 
         runtime = await self._session_mgr.ensure_session(
@@ -251,7 +249,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_task.cancel()
         self._sessions.clear()
 
-    async def _resume_task(
+    async def _recover_task(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         runtime = await self._session_mgr.ensure_session(
@@ -259,22 +257,27 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
         state = await self._session_mgr.load_state(runtime.context_id)
         if state is None:
-            logger.warning("resume state not found", task_id=runtime.task_id)
+            logger.warning(
+                "recover state not found",
+                task_id=runtime.task_id, context_id=runtime.context_id,
+            )
             ctx = self._build_ctx(runtime)
             await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
             self._session_mgr.evict_session(runtime.context_id)
             return
-        logger.info("resume state loaded", task_id=runtime.task_id)
+        logger.info("recover state loaded", task_id=runtime.task_id, context_id=runtime.context_id)
         async with runtime.lock:
             runtime.state = state
-        await self._resume(runtime)
+        await self._recover(runtime)
 
-    async def _resume(self, runtime: SessionRuntime) -> None:
+    async def _recover(self, runtime: SessionRuntime) -> None:
         expired = normalize_cancel_requests(runtime.state)
         if expired:
             logger.info(
-                "resume expired interventions",
-                task_id=runtime.task_id, expired_interventions=len(expired),
+                "recover expired interventions",
+                task_id=runtime.task_id,
+                context_id=runtime.context_id,
+                expired_interventions=len(expired),
             )
             ctx = self._build_ctx(runtime)
             await emit_state_delta(ctx, interventions={
@@ -287,10 +290,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             })
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
-                node.status = "resume" if node.a2a_task_id else "pending"
+                node.status = "recover" if node.a2a_task_id else "pending"
         logger.info(
-            "resume nodes",
-            task_id=runtime.task_id,
+            "recover nodes",
+            task_id=runtime.task_id, context_id=runtime.context_id,
             nodes={n.id: n.status for n in runtime.state.nodes.values()},
         )
         await self._persist(runtime)

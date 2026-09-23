@@ -8,7 +8,7 @@ from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.assist import arbitrate_mentions
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
-from choirworks.orchestration.remote_caller import resume_remote, stream_remote
+from choirworks.orchestration.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.repair import revise_plan
 from choirworks.orchestration.routing import spawn_followup_node
 from choirworks.orchestration.state import NodeState, expire_cancel_requests, take_queued
@@ -43,7 +43,7 @@ async def execute_node(
 ) -> None:
     """Single node execution: dispatch → stream → interpret → act."""
     continuation = mode == "continue"
-    if mode != "resume":
+    if mode != "recover":
         node.attempt += 1
     logger.info(
         "execute_node",
@@ -53,15 +53,15 @@ async def execute_node(
         await emit_state_delta(ctx, nodes={
             node.id: {"status": "dispatched", "input_text": node.input_text},
         })
-    elif mode == "resume":
+    elif mode == "recover":
         await emit_state_delta(ctx, nodes={
-            node.id: {"status": "resume", "a2a_task_id": node.a2a_task_id},
+            node.id: {"status": "recover", "a2a_task_id": node.a2a_task_id},
         })
     current = "working"
     try:
         async with asyncio.timeout(ctx.config.node_timeout):
-            if mode == "resume":
-                current = await resume_remote(ctx, node)
+            if mode == "recover":
+                current = await recover_remote(ctx, node)
             else:
                 text = await build_node_text(ctx, node)
                 current = await stream_remote(

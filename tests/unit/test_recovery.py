@@ -1,21 +1,28 @@
 from types import SimpleNamespace
 
-from a2a.helpers import new_data_message, new_text_message
-from a2a.types.a2a_pb2 import Role, Task, TaskState, TaskStatus
+from a2a.helpers import new_text_message
+from a2a.server.agent_execution import RequestContext
+from a2a.server.context import ServerCallContext
+from a2a.types.a2a_pb2 import (
+    Role,
+    SendMessageRequest,
+    Task,
+    TaskState,
+    TaskStatus,
+)
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.executor import _is_resume_message
+from choirworks.a2a.executor import _is_recover_request
 from choirworks.a2a.recovery import recover_tasks
-from choirworks.a2a.tasks import REWIND_KEY
+from choirworks.a2a.tasks import RECOVER_KEY, REWIND_KEY
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
-def _resume_message():
-    message = new_data_message(
-        {"kind": "resume"}, role=Role.ROLE_USER, task_id="t1", context_id="c1"
+def _request_context(message=None, *, state=None):  # noqa: ANN001, ANN202
+    return RequestContext(
+        call_context=ServerCallContext(state=state or {}),
+        request=SendMessageRequest(message=message) if message else None,
     )
-    ParseDict({"choirworks.resume": {"kind": "resume"}}, message.metadata)
-    return message
 
 
 def _persisted_task(task_id: str = "t1", context_id: str = "c1") -> Task:
@@ -67,20 +74,28 @@ class FakeTaskStore:
 class RecordingHandler:
     def __init__(self):
         self.requests = []
+        self.contexts = []
 
     async def on_message_send(self, request, context):  # noqa: ANN001, ANN201
         self.requests.append(request)
+        self.contexts.append(context)
         return SimpleNamespace()
 
 
-def test_is_resume_message_detects_data_message():
-    assert _is_resume_message(_resume_message()) is True
+def test_is_recover_request_requires_internal_call_context():
+    assert _is_recover_request(_request_context()) is False
     assert (
-        _is_resume_message(new_text_message("你好", role=Role.ROLE_USER)) is False
+        _is_recover_request(_request_context(state={RECOVER_KEY: True})) is True
     )
 
 
-async def test_recover_tasks_sends_structured_resume_message():
+def test_is_recover_request_ignores_client_metadata():
+    message = new_text_message("你好", role=Role.ROLE_USER)
+    ParseDict({RECOVER_KEY: {"kind": "recover"}}, message.metadata)
+    assert _is_recover_request(_request_context(message)) is False
+
+
+async def test_recover_tasks_sends_internal_recover_request():
     handler = RecordingHandler()
     recovered = await recover_tasks(
         handler, FakeTaskStore([_persisted_task()]), FakeContextStore({})
@@ -90,9 +105,11 @@ async def test_recover_tasks_sends_structured_resume_message():
     [request] = handler.requests
     message = request.message
     assert message.task_id == "t1"
-    assert "choirworks.resume" in message.metadata.fields
+    assert RECOVER_KEY not in message.metadata.fields
     assert message.parts
     assert all(not part.HasField("text") for part in message.parts)
+    [context] = handler.contexts
+    assert context.state[RECOVER_KEY] is True
 
 
 async def test_recover_tasks_uses_context_state_without_task_snapshot():
@@ -150,7 +167,7 @@ async def test_recover_tasks_skips_hidden_tasks():
     assert handler.requests[0].message.task_id == "t1"
 
 
-async def test_recover_tasks_resumes_once_per_context():
+async def test_recover_tasks_recovers_once_per_context():
     handler = RecordingHandler()
     recovered = await recover_tasks(
         handler,

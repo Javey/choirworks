@@ -292,7 +292,7 @@ class OrchestrationState:
 def ready_nodes(state: OrchestrationState) -> list[NodeState]:
     ready: list[NodeState] = []
     for node in state.nodes.values():
-        if node.status not in ("pending", "ready", "resume"):
+        if node.status not in ("pending", "ready", "recover"):
             continue
         if all(
             dep in state.nodes and state.nodes[dep].status == "completed"

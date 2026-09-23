@@ -41,7 +41,5 @@ def is_human_turn(task: Task) -> bool:
     message = task.history[0]
     if message.role != Role.ROLE_USER:
         return False
-    if message.metadata.fields and "choirworks.resume" in message.metadata.fields:
-        return False
     sender = room_options(message).get("sender")
     return sender in (None, "", "user")

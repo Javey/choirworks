@@ -51,10 +51,6 @@ def test_is_human_turn_rejects_internal_messages():
     human = Message(message_id="m1", role=Role.ROLE_USER)
     assert is_human_turn(task_with(human)) is True
 
-    resume = Message(message_id="m2", role=Role.ROLE_USER)
-    ParseDict({"choirworks.resume": {"kind": "resume"}}, resume.metadata)
-    assert is_human_turn(task_with(resume)) is False
-
     agent = Message(message_id="m3", role=Role.ROLE_USER)
     ParseDict({A2A_ROOM_URI: {"sender": "echo"}}, agent.metadata)
     assert is_human_turn(task_with(agent)) is False

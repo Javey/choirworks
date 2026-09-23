@@ -60,11 +60,11 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 batch: list[tuple[NodeState, str]] = []
                 for node in ready[:slots]:
                     mode = (
-                        "resume"
-                        if node.status == "resume"
+                        "recover"
+                        if node.status == "recover"
                         else ("continue" if node.status == "ready" else "dispatch")
                     )
-                    if mode != "resume":
+                    if mode != "recover":
                         node.status = "dispatched"
                     batch.append((node, mode))
                 if batch:
