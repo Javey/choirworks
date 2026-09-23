@@ -125,7 +125,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Route one inbound message; background runners do the actual work."""
-        text = (context.get_user_input() or "").strip()
         task_id = context.task_id or ""
         context_id = context.context_id or ""
 
@@ -134,6 +133,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await self._recover_task(context, event_queue)
             return
 
+        text = (context.get_user_input() or "").strip()
         runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
 
         if context.current_task is None:
