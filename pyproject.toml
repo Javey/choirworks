@@ -46,6 +46,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["B008"]  # FastAPI Depends() 在默认参数中调用是标准用法
 
 [tool.basedpyright]
 include = ["src"]

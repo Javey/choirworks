@@ -69,6 +69,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         registry: AgentRegistry,
         remote: RemoteAgentClient,
         llm: LiteLLMClient,
+        task_store: TaskStore,
+        context_store: ContextStore,
         *,
         max_parallel: int = 5,
         node_timeout: float = 600.0,
@@ -96,11 +98,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         self._brief_builder = ContextBriefBuilder(
             llm,
+            task_store=task_store,
             compaction_threshold=compaction_threshold,
             compaction_retention=compaction_retention,
         )
 
-        self._session_mgr = SessionManager()
+        self._session_mgr = SessionManager(context_store)
         self._deps = Deps(
             registry=registry,
             remote=remote,
@@ -111,12 +114,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         )
 
     # ------------------------------------------------------------- lifecycle
-
-    def set_task_store(self, task_store: TaskStore) -> None:
-        self._brief_builder.set_task_store(task_store)
-
-    def set_context_store(self, context_store: ContextStore) -> None:
-        self._session_mgr.set_context_store(context_store)
 
     @property
     def _sessions(self) -> dict[str, SessionRuntime]:

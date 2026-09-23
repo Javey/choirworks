@@ -263,21 +263,19 @@ class ContextBriefBuilder:
     def __init__(
         self,
         llm: LiteLLMClient,
+        task_store: TaskStore,
         *,
         compaction_threshold: float = 0.8,
         compaction_retention: int = 10,
     ):
         self._llm = llm
+        self._task_store = task_store
         self._compaction_threshold = compaction_threshold
         self._compaction_retention = compaction_retention
-        self._task_store: TaskStore | None = None
         self._cache: dict[str, tuple[str, int]] = {}
 
-    def set_task_store(self, task_store: TaskStore) -> None:
-        self._task_store = task_store
-
     async def build(self, context_id: str, exclude_task_id: str) -> str:
-        if not context_id or self._task_store is None:
+        if not context_id:
             return ""
         try:
             tasks = await list_all_tasks(

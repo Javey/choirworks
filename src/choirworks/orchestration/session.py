@@ -44,7 +44,7 @@ class SessionManager:
 
     def __init__(
         self,
-        context_store: ContextStore | None = None,
+        context_store: ContextStore,
     ):
         self._context_store = context_store
         self._sessions: dict[str, SessionRuntime] = {}
@@ -54,12 +54,7 @@ class SessionManager:
     def sessions(self) -> dict[str, SessionRuntime]:
         return self._sessions
 
-    def set_context_store(self, store: ContextStore) -> None:
-        self._context_store = store
-
     async def load_state(self, context_id: str) -> OrchestrationState | None:
-        if self._context_store is None:
-            return None
         record = await self._context_store.get(context_id)
         if record is None:
             return None

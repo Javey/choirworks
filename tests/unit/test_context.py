@@ -133,14 +133,12 @@ class FakeTaskStore:
 
 
 def brief_builder(llm, tasks, **kwargs) -> ContextBriefBuilder:
-    builder = ContextBriefBuilder(llm, **kwargs)
-    builder.set_task_store(FakeTaskStore(tasks))
-    return builder
+    return ContextBriefBuilder(llm, task_store=FakeTaskStore(tasks), **kwargs)
 
 
-async def test_brief_without_task_store_returns_empty():
-    builder = ContextBriefBuilder(FakeLLM())
-    assert await builder.build("ctx-1", "t1") == ""
+async def test_brief_without_context_id_returns_empty():
+    builder = ContextBriefBuilder(FakeLLM(), task_store=FakeTaskStore([]))
+    assert await builder.build("", "t1") == ""
 
 
 async def test_brief_small_timeline_returns_full_text():
