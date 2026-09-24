@@ -16,15 +16,11 @@ from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.flows.message import MessagePayload, message_flow
-from choirworks.orchestration.functions import join_members
-from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
-from choirworks.orchestration.planning.repair import apply_patch_locked
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.store.contexts import ContextStore
-from choirworks.tools.capabilities import ToolEffects
 
 logger = structlog.get_logger(__name__)
 
@@ -162,12 +158,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
-        effects = ToolEffects(
-            max_derived_nodes=self._config.max_derived_nodes,
-            join_members=lambda names, reason: self._join_members(runtime, names, reason),
-            persist=lambda: self._persist(runtime),
-            apply_patch_locked=lambda patch: self._apply_patch_locked(runtime, patch),
-        )
         return OrchestrationContext(
             runtime=runtime,
             registry=self._registry,
@@ -176,26 +166,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             sessions=self._session_mgr,
             config=self._config,
             brief_builder=self._brief_builder,
-            effects=effects,
         )
-
-    # ------------------------------------------------------- effect bindings
-    # ToolEffects closures bind a runtime to the module-level functions, so
-    # tools never see the executor.
 
     async def _persist(self, runtime: SessionRuntime) -> None:
         ctx = self._build_ctx(runtime)
         await ctx.sessions.persist(ctx)
-
-    async def _join_members(
-        self,
-        runtime: SessionRuntime,
-        names: list[str],
-        reason: str,
-    ) -> None:
-        ctx = self._build_ctx(runtime)
-        await join_members(ctx, names, reason)
-
-    async def _apply_patch_locked(self, runtime: SessionRuntime, patch: PlanPatch) -> PatchResult:
-        ctx = self._build_ctx(runtime)
-        return await apply_patch_locked(ctx, patch)

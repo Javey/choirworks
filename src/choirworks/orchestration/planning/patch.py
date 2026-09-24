@@ -3,10 +3,23 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+import structlog
 from pydantic import BaseModel, Field
 
-from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
+from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.functions import join_members
+from choirworks.orchestration.hitl.intervention import emit_pending_questions
+from choirworks.orchestration.state import (
+    InterventionDelta,
+    NodeState,
+    NodeStatus,
+    OrchestrationState,
+    add_cancel_request,
+)
 from choirworks.orchestration.transitions import apply_transition
+
+logger = structlog.get_logger(__name__)
 
 INVALIDATABLE_STATUSES = {
     NodeStatus.PENDING,
@@ -98,4 +111,43 @@ def apply_patch(
             invalidated_set.add(node.id)
 
     result.invalidated = invalidated
+    return result
+
+
+async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> PatchResult:
+    agents = await ctx.registry.list()
+    agent_urls = {agent.name: agent.card_url for agent in agents}
+    state = ctx.state
+    result = apply_patch(state, patch, agent_urls)
+    for rejected in result.rejected:
+        logger.warning("Patch rejected", context=ctx.context_id, rejected=rejected)
+    new_interventions: dict[str, InterventionDelta] = {}
+    for node_id in result.skipped_in_flight:
+        node = state.nodes.get(node_id)
+        if node is None:
+            continue
+        question = (
+            f"计划修订建议作废进行中的任务 @{node.agent_name}"
+            f"（{patch.reason or '无说明'}）。是否打断？"
+            "回复「确认」打断，回复其他内容则保留。"
+        )
+        intervention = add_cancel_request(state, node_id, question)
+        if intervention is None:
+            continue
+        new_interventions[intervention.id] = {
+            "status": "pending",
+            "node_id": node_id,
+            "kind": "confirm_cancel",
+            "question": intervention.question,
+        }
+    if new_interventions:
+        await emit_state_delta(ctx, interventions=new_interventions)
+    added_agents = [draft.agent_name for draft in patch.add if draft.agent_name in agent_urls]
+    await join_members(ctx, added_agents, "plan_revision")
+    if result.invalidated:
+        await emit_state_delta(
+            ctx, nodes={node_id: {"status": "invalidated"} for node_id in result.invalidated}
+        )
+    await ctx.sessions.persist(ctx)
+    await emit_pending_questions(ctx)
     return result

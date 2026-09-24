@@ -50,7 +50,6 @@ def make_ctx(agents: list[AgentRecord]) -> tuple[OrchestrationContext, FakeQueue
         sessions=SimpleNamespace(),
         config=SimpleNamespace(),
         brief_builder=SimpleNamespace(),
-        effects=SimpleNamespace(),
     )
     return ctx, queue
 

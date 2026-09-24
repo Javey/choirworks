@@ -49,7 +49,6 @@ def _ctx(
             max_revisions=3,
         ),
         brief_builder=SimpleNamespace(),
-        effects=SimpleNamespace(),
     )
     return ctx, queue, sessions
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
+from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
@@ -26,11 +26,10 @@ from choirworks.tools import (
     revise_plan_func,
 )
 from choirworks.tools.call_subagent import CallSubagentData
-from choirworks.tools.capabilities import ToolEffects
 from choirworks.tools.create_plan import CreatePlanData
 from choirworks.tools.join_members import JoinMembersData
 from choirworks.tools.revise_plan import RevisePlanData
-from tests.support.fakes import FakeRegistry
+from tests.support.fakes import FakeRegistry, FakeSessions
 
 
 def agent(name: str, url: str) -> AgentRecord:
@@ -46,43 +45,24 @@ def agent(name: str, url: str) -> AgentRecord:
 AGENTS = [agent("research", "http://research"), agent("writer", "http://writer")]
 
 
-class RecordingEffects:
-    def __init__(self, *, max_derived_nodes: int = 5):
-        self.max_derived_nodes = max_derived_nodes
-        self.joined: list[tuple[list[str], str]] = []
-        self.persist_count = 0
-        self.patches: list[PlanPatch] = []
-        self.patch_result = PatchResult()
+class _Queue:
+    def __init__(self) -> None:
+        self.events: list[object] = []
 
-    async def join_members(self, names: list[str], reason: str) -> None:
-        self.joined.append((names, reason))
-
-    async def persist(self) -> None:
-        self.persist_count += 1
-
-    async def apply_patch_locked(self, patch: PlanPatch) -> PatchResult:
-        self.patches.append(patch)
-        return self.patch_result
-
-    def as_tool_effects(self) -> ToolEffects:
-        return ToolEffects(
-            max_derived_nodes=self.max_derived_nodes,
-            join_members=self.join_members,
-            persist=self.persist,
-            apply_patch_locked=self.apply_patch_locked,
-        )
+    async def enqueue_event(self, event: object) -> None:
+        self.events.append(event)
 
 
 def make_ctx(
     state: OrchestrationState,
-    effects: RecordingEffects | None = None,
+    *,
+    max_derived_nodes: int = 5,
 ) -> OrchestrationContext:
-    effects = effects or RecordingEffects()
     runtime = SimpleNamespace(
         state=state,
         task_id="t1",
         context_id="c1",
-        queue=None,
+        queue=_Queue(),
         lock=None,
     )
     return OrchestrationContext(
@@ -90,10 +70,9 @@ def make_ctx(
         registry=FakeRegistry(AGENTS),  # type: ignore[arg-type]
         remote=SimpleNamespace(),  # type: ignore[arg-type]
         llm=SimpleNamespace(),  # type: ignore[arg-type]
-        sessions=SimpleNamespace(),  # type: ignore[arg-type]
-        config=SimpleNamespace(),  # type: ignore[arg-type]
+        sessions=FakeSessions(),  # type: ignore[arg-type]
+        config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
         brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
-        effects=effects.as_tool_effects(),
     )
 
 
@@ -108,7 +87,6 @@ def make_node(state: OrchestrationState, node_id: str, **kwargs) -> NodeState:
 
 async def test_create_plan_builds_nodes_and_joins_members():
     state = OrchestrationState(plan_id="p1", plan_version=1)
-    effects = RecordingEffects()
     draft = PlanDraft(
         nodes=[
             PlanNodeDraft(
@@ -121,14 +99,14 @@ async def test_create_plan_builds_nodes_and_joins_members():
         ]
     )
 
-    result = await create_plan_func.execute(make_ctx(state, effects), draft)
+    result = await create_plan_func.execute(make_ctx(state), draft)
 
     assert result.success is True
     assert set(state.nodes) == {"n1", "n2"}
     assert state.nodes["n1"].agent_url == "http://research"
     assert state.nodes["n1"].input_text == "research it"
     assert state.nodes["n2"].deps == ["n1"]
-    assert effects.joined == [(["research", "writer"], "plan")]
+    assert set(state.members) == {"research", "writer"}
     assert isinstance(result.data, CreatePlanData)
     assert [node.id for node in result.data.nodes] == ["n1", "n2"]
 
@@ -194,10 +172,9 @@ async def test_ask_user_rejects_unknown_node():
 async def test_call_subagent_spawns_derived_helper():
     state = OrchestrationState()
     make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="需要数据")
-    effects = RecordingEffects()
 
     result = await call_subagent_func.execute(
-        make_ctx(state, effects),
+        make_ctx(state),
         CallSubagentArgs(requested_by="n1", target_agent="writer", instruction="帮忙写"),
     )
 
@@ -208,8 +185,7 @@ async def test_call_subagent_spawns_derived_helper():
     assert helper.assist_requested_by == "n1"
     assert helper.agent_name == "writer"
     assert helper.input_text == "帮忙写"
-    assert effects.joined == [(["writer"], "peer_assist")]
-    assert effects.persist_count == 1
+    assert "writer" in state.members
 
 
 async def test_call_subagent_falls_back_to_requester_question():
@@ -245,10 +221,9 @@ async def test_call_subagent_rejects_orchestrator_and_unknown_agent():
 
 async def test_call_subagent_enforces_derived_limit():
     state = OrchestrationState(derived_count=5)
-    effects = RecordingEffects(max_derived_nodes=5)
 
     result = await call_subagent_func.execute(
-        make_ctx(state, effects),
+        make_ctx(state, max_derived_nodes=5),
         CallSubagentArgs(requested_by="n1", target_agent="writer"),
     )
 
@@ -256,20 +231,23 @@ async def test_call_subagent_enforces_derived_limit():
     assert result.error == "max derived nodes reached"
 
 
-async def test_revise_plan_reports_patch_effect():
+async def test_revise_plan_applies_patch_and_reports_effect():
     state = OrchestrationState()
-    make_node(state, "x1", name="补充")
-    effects = RecordingEffects()
-    effects.patch_result = PatchResult(added=["x1"], invalidated=["n9"], skipped_in_flight=["n2"])
-    patch = PlanPatch(reason="需要补充")
+    make_node(state, "n1", status=NodeStatus.PENDING)
+    patch = PlanPatch(
+        add=[PatchNode(agent_name="writer", name="补充", instruction="补充调研")],
+        invalidate=["n1"],
+        reason="需要补充",
+    )
 
-    result = await revise_plan_func.execute(make_ctx(state, effects), RevisePlanArgs(patch=patch))
+    result = await revise_plan_func.execute(make_ctx(state), RevisePlanArgs(patch=patch))
 
     assert result.success is True
-    assert effects.patches == [patch]
     assert isinstance(result.data, RevisePlanData)
     assert result.data.added == ["x1"]
-    assert result.data.invalidated == ["n9"]
-    assert result.data.skipped_in_flight == ["n2"]
+    assert result.data.invalidated == ["n1"]
     assert result.data.added_nodes[0].id == "x1"
     assert result.data.added_nodes[0].name == "补充"
+    assert state.nodes["n1"].status == NodeStatus.INVALIDATED
+    assert state.nodes["x1"].agent_name == "writer"
+    assert "writer" in state.members

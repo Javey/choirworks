@@ -49,7 +49,6 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         sessions=FakeSessions(),
         config=SimpleNamespace(),
         brief_builder=SimpleNamespace(),
-        effects=SimpleNamespace(),
     )
     return ctx, queue
 

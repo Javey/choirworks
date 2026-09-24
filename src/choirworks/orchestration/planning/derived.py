@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.functions import join_members
 from choirworks.orchestration.state import NodeState, NodeStatus
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ async def spawn_derived_node(
     member.  Returns ``None`` when the derived-node budget is exhausted.
     """
     state = ctx.state
-    if state.derived_count >= ctx.effects.max_derived_nodes:
+    if state.derived_count >= ctx.config.max_derived_nodes:
         logger.info(
             "spawn_derived_node max_derived reached",
             kind=kind,
@@ -74,7 +75,7 @@ async def spawn_derived_node(
     state.nodes[node_id] = node
     logger.info("spawn_derived_node", kind=kind, node_id=node_id, agent_name=agent_name)
     if kind is not DerivedKind.FOLLOWUP:
-        await ctx.effects.join_members([agent_name], _JOIN_REASON[kind])
+        await join_members(ctx, [agent_name], _JOIN_REASON[kind])
     if emit:
         await emit_state_delta(
             ctx,
@@ -86,7 +87,7 @@ async def spawn_derived_node(
                 },
             },
         )
-    await ctx.effects.persist()
+    await ctx.sessions.persist(ctx)
     return node
 
 

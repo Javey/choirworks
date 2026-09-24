@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel
 
-from choirworks.orchestration.planning.patch import PlanPatch
+from choirworks.orchestration.planning.patch import PlanPatch, apply_patch_locked
 from choirworks.tools.base import AgentFunction, FunctionResult
 from choirworks.tools.create_plan import PlanNodeData
 
@@ -63,7 +63,7 @@ async def execute_revise_plan(ctx: OrchestrationContext, args: BaseModel) -> Fun
         invalidate_count=len(plan_args.patch.invalidate),
         reason=plan_args.patch.reason or "(none)",
     )
-    result = await ctx.effects.apply_patch_locked(plan_args.patch)
+    result = await apply_patch_locked(ctx, plan_args.patch)
 
     logger.info(
         "revise_plan done",

@@ -11,7 +11,6 @@ from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.state import OrchestrationState
 from choirworks.tools.base import AgentFunction, ToolCallResult
-from choirworks.tools.capabilities import ToolEffects
 
 
 class FakeRegistry:
@@ -22,10 +21,6 @@ class FakeRegistry:
 
     async def list(self) -> list[AgentRecord]:
         return list(self._agents)
-
-
-async def _noop(*args: object, **kwargs: object) -> None:
-    return None
 
 
 class FakeSessions:
@@ -48,19 +43,13 @@ def make_orch_ctx(
     *,
     max_derived_nodes: int = 5,
 ) -> OrchestrationContext:
-    """Build an OrchestrationContext for a fake executor: no session, no-op effects."""
+    """Build an OrchestrationContext for a fake executor: no session, no-op collaborators."""
     runtime = SimpleNamespace(
         state=OrchestrationState(),
         task_id="t1",
         context_id="c1",
         queue=None,
         lock=None,
-    )
-    effects = ToolEffects(
-        max_derived_nodes=max_derived_nodes,
-        join_members=_noop,
-        persist=_noop,
-        apply_patch_locked=_noop,  # type: ignore[arg-type]
     )
     return OrchestrationContext(
         runtime=runtime,  # type: ignore[arg-type]
@@ -70,7 +59,6 @@ def make_orch_ctx(
         sessions=FakeSessions(),  # type: ignore[arg-type]
         config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
         brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
-        effects=effects,
     )
 
 

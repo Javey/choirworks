@@ -7,6 +7,7 @@ import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.orchestration.functions import join_members
 from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionResult
 
@@ -88,7 +89,8 @@ async def execute_create_plan(ctx: OrchestrationContext, args: BaseModel) -> Fun
         )
         state.nodes[node.id] = node
 
-    await ctx.effects.join_members(
+    await join_members(
+        ctx,
         [n.agent_name for n in state.nodes.values() if n.agent_name],
         "plan",
     )

@@ -8,7 +8,6 @@ from a2a.server.events import EventQueue
 
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import OrchestrationState
-from choirworks.tools.capabilities import ToolEffects
 
 if TYPE_CHECKING:
     from choirworks.a2a.client import RemoteAgentClient
@@ -32,7 +31,7 @@ class ExecutorConfig:
 
 @dataclass(frozen=True, slots=True)
 class OrchestrationContext:
-    """One turn's orchestration context: session runtime + collaborators + effects.
+    """One turn's orchestration context: session runtime + collaborators.
 
     Immutable; the long-lived collaborators are held directly, so call sites
     read ``ctx.registry`` / ``ctx.llm`` without an extra layer, and the
@@ -46,7 +45,6 @@ class OrchestrationContext:
     sessions: SessionManager
     config: ExecutorConfig
     brief_builder: ContextBriefBuilder
-    effects: ToolEffects
 
     @property
     def state(self) -> OrchestrationState:
