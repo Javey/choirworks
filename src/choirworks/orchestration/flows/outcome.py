@@ -156,22 +156,13 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
 
 outcome_flow: Flow[OutcomePayload] = Flow(
     name="outcome_flow",
-    start="interpret",
-    handlers={
-        "interpret": _interpret,
-        "need_info": _mark_input_required,
-        "revise": _revise,
-        "deliver": _mark_delivered,
-        "arbitrate": _arbitrate,
-        "deliver_queued": _deliver_queued,
-    },
+    start=_interpret,
     edges=(
-        Edge("interpret", "deliver", frozenset({"deliver"})),
-        Edge("interpret", "need_info", frozenset({"need_info"})),
-        Edge("interpret", "revise", frozenset({"revise"})),
-        Edge("revise", "deliver"),
-        Edge("deliver", "arbitrate"),
-        Edge("arbitrate", "deliver_queued"),
+        Edge(_interpret, _mark_delivered, frozenset({"deliver"})),
+        Edge(_interpret, _mark_input_required, frozenset({"need_info"})),
+        Edge(_interpret, _revise, frozenset({"revise"})),
+        Edge(_revise, _mark_delivered),
+        Edge(_mark_delivered, _arbitrate),
+        Edge(_arbitrate, _deliver_queued),
     ),
 )
-outcome_flow.validate()

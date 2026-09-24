@@ -101,35 +101,36 @@ failed / pending / ready / recover ──(patch invalidate / 级联)→ invalida
 
 ```python
 DEFAULT = "__default__"
-Route = str   # 每个流用自己的 Literal 集合
-
-Handler: TypeAlias = Callable[[OrchestrationContext, P], Awaitable[Route]]
+type Route = str   # 每个流用自己的 Literal 集合
 # P = 该流的 typed payload dataclass，handler 可 mutate 并沿链传递；全程无 Any
+type Handler[P] = Callable[[OrchestrationContext, P], Awaitable[Route | FlowOutcome]]
 
 @dataclass(frozen=True, slots=True)
-class Edge:
-    source: str
-    target: str
+class Edge[P]:
+    source: Handler[P]         # 直接持有函数引用（对齐 ADK 的节点对象，免字符串 dict）
+    target: Handler[P]
     routes: frozenset[Route]   # 空集 = 无条件边；含 DEFAULT = 兜底边
 
 @dataclass(slots=True)
-class Flow(Generic[P]):
+class Flow[P]:
     name: str
-    start: str
-    handlers: dict[str, Handler[P]]
-    edges: tuple[Edge, ...]
+    start: Handler[P]
+    edges: tuple[Edge[P], ...]
+    def __post_init__(self) -> None: self.validate()   # 构造即校验
     def validate(self) -> None: ...
     async def run(self, ctx, payload: P) -> FlowOutcome: ...
 ```
 
+- 节点**由 edges 推导**（`{start} ∪ 各边两端`），无需 `handlers` dict；比较按函数身份（`is`）。
 - `run()` 语义（线性链，与 ADK 路由匹配规则一致）：执行 start handler →
   按返回 route 匹配出边（无条件边总触发；具体 route 命中触发；无具体命中走 DEFAULT；
   全未命中且无 DEFAULT → 分支结束，返回 `FlowOutcome.END`）→ 执行目标 handler → 重复直到无出边。
 - **终端动作**通过 `FlowOutcome` 返回值告知调用方
   （`CONTINUE` 回主循环 / `EXIT_WAIT` / `EXIT_DONE` / `EXIT_FAILED`），
   消灭「退出条件在 runner、重启条件在 executor」的割裂。
-- **校验（定义时执行，仿 ADK 构造期校验）**：handler 引用存在、start 存在、
-  所有 handler 从 start 可达、无重复边、DEFAULT 每源至多一条、route 覆盖检查（见 3.2）。
+- **校验在构造期自动执行（`__post_init__`，仿 ADK）**：坏图在 import 期即抛 `FlowError`——
+  同一对 (source,target) 不重复、DEFAULT 每源至多一条、所有节点从 start 可达、
+  handler 的 `Literal` route 均有出边接住（见 3.2）。
 
 ### 4.3 类型与归属约束
 

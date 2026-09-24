@@ -190,21 +190,15 @@ async def request_human(
 
 settlement_flow: Flow[SettlementPayload] = Flow(
     name="settlement_flow",
-    start="inspect_helpers",
-    handlers={
-        "inspect_helpers": _inspect_helpers,
-        "already_pending": _noop,
-        "helper_active": _noop,
-        "resolve_from_helper": _resolve_from_helper,
-        "decide_assistance": _decide_assistance,
-        "act": _act,
-    },
+    start=_inspect_helpers,
     edges=(
-        Edge("inspect_helpers", "already_pending", frozenset({"already_pending"})),
-        Edge("inspect_helpers", "helper_active", frozenset({"helper_active"})),
-        Edge("inspect_helpers", "resolve_from_helper", frozenset({"helper_completed"})),
-        Edge("inspect_helpers", "decide_assistance", frozenset({"decide"})),
-        Edge("decide_assistance", "act", frozenset({"act"})),
+        Edge(
+            _inspect_helpers,
+            _noop,
+            frozenset({"already_pending", "helper_active"}),
+        ),
+        Edge(_inspect_helpers, _resolve_from_helper, frozenset({"helper_completed"})),
+        Edge(_inspect_helpers, _decide_assistance, frozenset({"decide"})),
+        Edge(_decide_assistance, _act, frozenset({"act"})),
     ),
 )
-settlement_flow.validate()

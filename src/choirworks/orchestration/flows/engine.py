@@ -32,16 +32,20 @@ class FlowError(ValueError):
     """A malformed flow definition (name/edge/route problems)."""
 
 
+def _label[P](handler: Handler[P]) -> str:
+    return getattr(handler, "__name__", repr(handler))
+
+
 @dataclass(frozen=True, slots=True)
-class Edge:
-    """A declarative transition: ``source`` emits a route that ``routes`` catches.
+class Edge[P]:
+    """A declarative transition; endpoints are handler functions (ADK-style).
 
     An empty ``routes`` set is an unconditional edge; ``DEFAULT`` is the
     fallback taken when no specific route edge matched.
     """
 
-    source: str
-    target: str
+    source: Handler[P]
+    target: Handler[P]
     routes: frozenset[Route] = field(default_factory=frozenset)
 
 
@@ -50,43 +54,43 @@ class Flow[P]:
     """A linear route-tagged flow (design mirror of ADK's Workflow routing)."""
 
     name: str
-    start: str
-    handlers: dict[str, Handler[P]]
-    edges: tuple[Edge, ...]
+    start: Handler[P]
+    edges: tuple[Edge[P], ...]
+
+    def __post_init__(self) -> None:
+        self.validate()
 
     def validate(self) -> None:
-        if self.start not in self.handlers:
-            raise FlowError(f"{self.name}: unknown start handler {self.start!r}")
-        seen_edges: set[tuple[str, str]] = set()
-        defaults_per_source: dict[str, int] = {}
+        seen_edges: set[tuple[Handler[P], Handler[P]]] = set()
+        defaults_per_source: dict[Handler[P], int] = {}
         for edge in self.edges:
-            if edge.source not in self.handlers:
-                raise FlowError(f"{self.name}: edge source {edge.source!r} unknown")
-            if edge.target not in self.handlers:
-                raise FlowError(f"{self.name}: edge target {edge.target!r} unknown")
             key = (edge.source, edge.target)
             if key in seen_edges:
-                raise FlowError(f"{self.name}: duplicate edge {edge.source}->{edge.target}")
+                raise FlowError(
+                    f"{self.name}: duplicate edge {_label(edge.source)}->{_label(edge.target)}"
+                )
             seen_edges.add(key)
             if DEFAULT in edge.routes:
                 defaults_per_source[edge.source] = defaults_per_source.get(edge.source, 0) + 1
         for source, count in defaults_per_source.items():
             if count > 1:
-                raise FlowError(f"{self.name}: multiple DEFAULT edges from {source!r}")
+                raise FlowError(f"{self.name}: multiple DEFAULT edges from {_label(source)}")
 
-        unreachable = set(self.handlers) - self._reachable()
+        unreachable = self._nodes() - self._reachable()
         if unreachable:
-            raise FlowError(f"{self.name}: unreachable handlers {sorted(unreachable)}")
+            raise FlowError(f"{self.name}: unreachable handlers {sorted(map(_label, unreachable))}")
 
-        for name, handler in self.handlers.items():
+        for handler in self._nodes():
             for route in _literal_routes(handler):
-                if self._target_for(name, route) is None:
-                    raise FlowError(f"{self.name}: handler {name!r} emits {route!r} with no edge")
+                if self._target_for(handler, route) is None:
+                    raise FlowError(
+                        f"{self.name}: handler {_label(handler)} emits {route!r} with no edge"
+                    )
 
     async def run(self, ctx: OrchestrationContext, payload: P) -> FlowOutcome:
         current = self.start
         while True:
-            result = await self.handlers[current](ctx, payload)
+            result = await current(ctx, payload)
             if isinstance(result, FlowOutcome):
                 return result
             target = self._target_for(current, result)
@@ -94,12 +98,19 @@ class Flow[P]:
                 return FlowOutcome.END
             current = target
 
-    def _target_for(self, source: str, route: Route) -> str | None:
-        specific: str | None = None
-        unconditional: str | None = None
-        fallback: str | None = None
+    def _nodes(self) -> set[Handler[P]]:
+        nodes = {self.start}
         for edge in self.edges:
-            if edge.source != source:
+            nodes.add(edge.source)
+            nodes.add(edge.target)
+        return nodes
+
+    def _target_for(self, source: Handler[P], route: Route) -> Handler[P] | None:
+        specific: Handler[P] | None = None
+        unconditional: Handler[P] | None = None
+        fallback: Handler[P] | None = None
+        for edge in self.edges:
+            if edge.source is not source:
                 continue
             if not edge.routes:
                 unconditional = unconditional or edge.target
@@ -109,13 +120,13 @@ class Flow[P]:
                 fallback = fallback or edge.target
         return specific or unconditional or fallback
 
-    def _reachable(self) -> set[str]:
+    def _reachable(self) -> set[Handler[P]]:
         reached = {self.start}
         frontier = [self.start]
         while frontier:
             source = frontier.pop()
             for edge in self.edges:
-                if edge.source == source and edge.target not in reached:
+                if edge.source is source and edge.target not in reached:
                     reached.add(edge.target)
                     frontier.append(edge.target)
         return reached
