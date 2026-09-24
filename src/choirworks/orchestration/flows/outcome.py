@@ -10,7 +10,7 @@ import structlog
 
 from choirworks.core.context import build_outcome_user
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.graph import Edge, Flow, FlowOutcome, Route
+from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome, Route
 from choirworks.orchestration.hitl.assist import arbitrate_mentions
 from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.repair import revise_plan

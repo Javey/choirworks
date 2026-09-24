@@ -21,7 +21,7 @@ from choirworks.orchestration.events import (
     emit_state_delta,
 )
 from choirworks.orchestration.execution.runner import start_runner
-from choirworks.orchestration.graph import Edge, Flow, FlowOutcome
+from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.hitl.intervention import answer_intervention
 from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.planner import plan_and_launch

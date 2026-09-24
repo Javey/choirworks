@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from a2a.types.a2a_pb2 import TaskState, TaskStatusUpdateEvent
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.graph import FlowOutcome
-from choirworks.orchestration.plan import plan_flow
+from choirworks.orchestration.flows.engine import FlowOutcome
+from choirworks.orchestration.flows.plan import plan_flow
 from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
 from tests.support.fakes import FakeRegistry, FakeSessions
 

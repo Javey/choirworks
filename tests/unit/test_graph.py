@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
-from choirworks.orchestration.graph import (
+from choirworks.orchestration.flows.engine import (
     DEFAULT,
     Edge,
     Flow,

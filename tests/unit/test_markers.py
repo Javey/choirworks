@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from choirworks.orchestration.outcome import Marker, parse_marker
+from choirworks.orchestration.flows.outcome import Marker, parse_marker
 
 
 def test_need_info_marker():
