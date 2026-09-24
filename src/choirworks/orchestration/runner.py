@@ -5,30 +5,24 @@ import asyncio
 import structlog
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.orchestration import intervention, repair
+from choirworks.orchestration import intervention
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import (
-    emit_event,
-    emit_function_call,
-    emit_pending_questions,
-    emit_state_delta,
-)
+from choirworks.orchestration.events import emit_event, emit_function_call, emit_state_delta
+from choirworks.orchestration.graph import FlowOutcome
 from choirworks.orchestration.node_executor import execute_node
+from choirworks.orchestration.plan import plan_flow
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     PENDING_NODE_STATUSES,
     NodeState,
     NodeStatus,
     OrchestrationState,
-    all_completed,
     failed_nodes,
-    has_failures,
-    has_pending_work,
     input_required_nodes,
     pending_intervention_for,
-    pending_interventions,
     ready_nodes,
 )
+from choirworks.orchestration.transitions import can_retry, can_transition, transition
 
 logger = structlog.get_logger(__name__)
 
@@ -57,8 +51,8 @@ async def run_plan(ctx: OrchestrationContext) -> None:
             async with ctx.lock:
                 state = ctx.state
                 for node in list(failed_nodes(state)):
-                    if node.attempt < ctx.config.max_node_attempts:
-                        node.status = NodeStatus.PENDING
+                    if can_retry(node, ctx.config.max_node_attempts):
+                        await transition(ctx, node, NodeStatus.PENDING, emit=False)
                         node.error = None
 
                 _spawn_settlements(ctx)
@@ -67,13 +61,14 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 slots = max(0, ctx.config.max_parallel - _pending_count(ctx))
                 batch: list[tuple[NodeState, str]] = []
                 for node in ready[:slots]:
-                    mode = (
-                        "recover"
-                        if node.status == "recover"
-                        else ("continue" if node.status == NodeStatus.READY else "dispatch")
-                    )
+                    if node.status == NodeStatus.RECOVER:
+                        mode = "recover"
+                    elif node.status == NodeStatus.READY:
+                        mode = "continue"
+                    else:
+                        mode = "dispatch"
                     if mode != "recover":
-                        node.status = NodeStatus.SUBMITTED
+                        await transition(ctx, node, NodeStatus.SUBMITTED, emit=False)
                     batch.append((node, mode))
                 if batch:
                     await _announce_dispatch(ctx, batch)
@@ -115,7 +110,8 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         node = runtime.node_tasks.pop(finished)
                         exception = finished.exception()
                         if exception is not None:
-                            node.status = NodeStatus.FAILED
+                            if can_transition(node, NodeStatus.FAILED):
+                                await transition(ctx, node, NodeStatus.FAILED, emit=False)
                             node.error = str(exception)
                             logger.warning(
                                 "run_plan raised",
@@ -142,91 +138,16 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                                 error=exception,
                             )
                 if ctx.config.retry_backoff > 0 and any(
-                    n.status == NodeStatus.FAILED and n.attempt < ctx.config.max_node_attempts
-                    for n in ctx.state.nodes.values()
+                    can_retry(n, ctx.config.max_node_attempts) for n in ctx.state.nodes.values()
                 ):
                     await asyncio.sleep(ctx.config.retry_backoff)
                 continue
 
             async with ctx.lock:
-                state = ctx.state
-                if any(
-                    n.status == NodeStatus.FAILED and n.attempt < ctx.config.max_node_attempts
-                    for n in state.nodes.values()
-                ):
-                    continue
-                if input_required_nodes(state):
-                    await ctx.sessions.persist(ctx)
-                    logger.info(
-                        "run_plan state=input_required", task_id=task_id, context_id=context_id
-                    )
-                    if pending_interventions(state):
-                        await emit_pending_questions(ctx)
-                    else:
-                        await emit_event(
-                            ctx,
-                            "",
-                            TaskState.TASK_STATE_INPUT_REQUIRED,
-                        )
-                    return
-                if all_completed(state):
-                    logger.info("run_plan state=completed", task_id=task_id, context_id=context_id)
-                    await emit_event(
-                        ctx,
-                        "",
-                        TaskState.TASK_STATE_COMPLETED,
-                    )
-                    ctx.sessions.evict_session(context_id)
-                    return
-                if has_failures(state):
-                    recovered = False
-                    if (
-                        ctx.config.replan_on_failure
-                        and state.revision_count < ctx.config.max_revisions
-                    ):
-                        logger.info(
-                            "run_plan attempting repair",
-                            task_id=task_id,
-                            context_id=context_id,
-                            revision=state.revision_count + 1,
-                            max_revisions=ctx.config.max_revisions,
-                        )
-                        recovered = await repair.repair_plan(ctx)
-                    if recovered:
-                        logger.info(
-                            "run_plan repair succeeded", task_id=task_id, context_id=context_id
-                        )
-                        continue
-                    logger.info("run_plan state=failed", task_id=task_id, context_id=context_id)
-                    await emit_event(
-                        ctx,
-                        "",
-                        TaskState.TASK_STATE_FAILED,
-                    )
-                    ctx.sessions.evict_session(context_id)
-                    return
-                if has_pending_work(state):
-                    schedulable = bool(ready_nodes(state)) or (_pending_count(ctx) > 0)
-                    if schedulable:
-                        await asyncio.sleep(0)
-                        continue
-                    logger.warning(
-                        "Runner stalled for task",
-                        task_id=task_id,
-                        context_id=context_id,
-                        nodes={node.id: node.status for node in state.nodes.values()},
-                    )
-                else:
-                    logger.warning(
-                        "Runner stalled for task", task_id=task_id, context_id=context_id
-                    )
-                await emit_event(
-                    ctx,
-                    "",
-                    TaskState.TASK_STATE_FAILED,
-                )
-                ctx.sessions.evict_session(context_id)
-                return
+                outcome = await plan_flow.run(ctx, None)
+            if outcome is FlowOutcome.CONTINUE:
+                continue
+            return
     except asyncio.CancelledError:
         raise
     except Exception:

@@ -198,7 +198,7 @@ def test_ready_nodes_requires_all_deps_completed():
     _node(state, "downstream", status=NodeStatus.PENDING, deps=["dep"])
     _node(state, "waiting", status=NodeStatus.PENDING, deps=["upstream", "dep"])
     _node(state, "root", status=NodeStatus.PENDING)
-    _node(state, "recovering", status="recover", deps=["dep"])
+    _node(state, "recovering", status=NodeStatus.RECOVER, deps=["dep"])
 
     ready_ids = {node.id for node in ready_nodes(state)}
 

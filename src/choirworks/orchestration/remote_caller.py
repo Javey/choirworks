@@ -17,6 +17,7 @@ from choirworks.a2a.wire import join_text, struct
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.state import NodeState, NodeStatus
+from choirworks.orchestration.transitions import apply_transition
 
 logger = structlog.get_logger(__name__)
 
@@ -148,7 +149,8 @@ async def consume_chunks(
                     }
                     for artifact in task.artifacts
                 ]
-            node.status = NodeStatus.SUBMITTED if current == NodeStatus.SUBMITTED else node.status
+            if current == NodeStatus.SUBMITTED:
+                apply_transition(node, NodeStatus.SUBMITTED)
             await emit_state_delta(
                 ctx,
                 nodes={

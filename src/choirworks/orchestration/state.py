@@ -19,6 +19,7 @@ class NodeStatus(StrEnum):
     SUBMITTED = "submitted"
     WORKING = "working"
     INPUT_REQUIRED = "input_required"
+    RECOVER = "recover"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
@@ -49,7 +50,7 @@ TERMINAL_NODE_STATUSES = {
     NodeStatus.INVALIDATED,
 }
 ACTIVE_NODE_STATUSES = {NodeStatus.SUBMITTED, NodeStatus.WORKING}
-PENDING_NODE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY}
+PENDING_NODE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY, NodeStatus.RECOVER}
 INPUT_NODE_STATUSES = {NodeStatus.INPUT_REQUIRED}
 MAX_METADATA_OUTPUT = 2000
 
@@ -81,7 +82,7 @@ class NodeState:
     name: str
     agent_name: str
     agent_url: str
-    status: str = NodeStatus.PENDING
+    status: NodeStatus = NodeStatus.PENDING
     attempt: int = 0
     a2a_task_id: str | None = None
     output: str | None = None
@@ -359,7 +360,7 @@ class OrchestrationState:
 def ready_nodes(state: OrchestrationState) -> list[NodeState]:
     ready: list[NodeState] = []
     for node in state.nodes.values():
-        if node.status not in (NodeStatus.PENDING, NodeStatus.READY, "recover"):
+        if node.status not in PENDING_NODE_STATUSES:
             continue
         if all(
             dep in state.nodes and state.nodes[dep].status == NodeStatus.COMPLETED

@@ -6,8 +6,14 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
 from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
+from choirworks.orchestration.transitions import apply_transition
 
-INVALIDATABLE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY, "recover", NodeStatus.FAILED}
+INVALIDATABLE_STATUSES = {
+    NodeStatus.PENDING,
+    NodeStatus.READY,
+    NodeStatus.RECOVER,
+    NodeStatus.FAILED,
+}
 
 
 class PatchNode(BaseModel):
@@ -71,7 +77,7 @@ def apply_patch(
             result.rejected.append(f"unknown node: {node_id}")
             continue
         if node.status in INVALIDATABLE_STATUSES:
-            node.status = NodeStatus.INVALIDATED
+            apply_transition(node, NodeStatus.INVALIDATED)
             invalidated.append(node_id)
             invalidated_set.add(node_id)
         elif node.status != NodeStatus.INVALIDATED:
@@ -87,7 +93,7 @@ def apply_patch(
         if not cascaded:
             break
         for node in cascaded:
-            node.status = NodeStatus.INVALIDATED
+            apply_transition(node, NodeStatus.INVALIDATED)
             invalidated.append(node.id)
             invalidated_set.add(node.id)
 

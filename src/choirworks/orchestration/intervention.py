@@ -26,6 +26,7 @@ from choirworks.orchestration.state import (
     input_required_nodes,
     pending_intervention_for,
 )
+from choirworks.orchestration.transitions import apply_transition
 from choirworks.subagents import ASSISTANCE_SUBAGENT, run_subagent
 from choirworks.tools import ask_user_func
 from choirworks.tools.ask_user import AskUserArgs
@@ -67,7 +68,7 @@ async def settle_node_input(ctx: OrchestrationContext, node: NodeState) -> bool:
             intervention.answer = helper.output
             intervention.responder = helper.id
             node.answer_text = helper.output
-            node.status = NodeStatus.READY
+            apply_transition(node, NodeStatus.READY)
             await ctx.sessions.persist(ctx)
             await emit_state_delta(
                 ctx,
@@ -251,7 +252,7 @@ async def answer_intervention(
     intervention.answer = answer
     intervention.responder = "human"
     node.answer_text = render_answer(intervention)
-    node.status = NodeStatus.READY
+    apply_transition(node, NodeStatus.READY)
     await ctx.sessions.persist(ctx)
     await emit_state_delta(
         ctx,
@@ -281,11 +282,11 @@ async def cancel_node(
     state = ctx.state
     if node.a2a_task_id and node.agent_url:
         await cancel_remote_task(ctx, node.agent_url, node.a2a_task_id)
-    node.status = NodeStatus.CANCELED
+    apply_transition(node, NodeStatus.CANCELED)
     node.a2a_task_id = None
     invalidated = blocked_nodes(state)
     for blocked in invalidated:
-        blocked.status = NodeStatus.INVALIDATED
+        apply_transition(blocked, NodeStatus.INVALIDATED)
     await emit_state_delta(
         ctx,
         nodes={

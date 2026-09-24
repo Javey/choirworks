@@ -33,9 +33,13 @@ class FakeSessions:
 
     def __init__(self) -> None:
         self.persist_count = 0
+        self.evicted: list[str] = []
 
     async def persist(self, ctx: object) -> None:
         self.persist_count += 1
+
+    def evict_session(self, context_id: str) -> None:
+        self.evicted.append(context_id)
 
 
 def make_orch_ctx(

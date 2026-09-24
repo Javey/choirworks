@@ -13,6 +13,7 @@ from choirworks.orchestration.state import (
     blocked_nodes,
     enqueue,
 )
+from choirworks.orchestration.transitions import apply_transition
 
 logger = structlog.get_logger(__name__)
 
@@ -66,10 +67,10 @@ async def route_message(
         )
         if node.a2a_task_id:
             await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
-        node.status = NodeStatus.CANCELED
+        apply_transition(node, NodeStatus.CANCELED)
         invalidated = blocked_nodes(state)
         for blocked in invalidated:
-            blocked.status = NodeStatus.INVALIDATED
+            apply_transition(blocked, NodeStatus.INVALIDATED)
         await emit_state_delta(
             ctx,
             nodes={

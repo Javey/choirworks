@@ -41,6 +41,7 @@ from choirworks.orchestration.state import (
     normalize_interventions,
     pending_interventions,
 )
+from choirworks.orchestration.transitions import apply_transition
 from choirworks.store.contexts import ContextStore
 from choirworks.tools.capabilities import ToolEffects
 
@@ -263,7 +264,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             canceled = 0
             for node in list(state.nodes.values()):
                 if node.status in ACTIVE_NODE_STATUSES | {NodeStatus.READY}:
-                    node.status = NodeStatus.CANCELED
+                    apply_transition(node, NodeStatus.CANCELED)
                     canceled += 1
             await self._persist(runtime)
             for node in list(state.nodes.values()):
@@ -326,7 +327,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         # 活跃节点重置为 recover（有远程 task 可重新订阅）或 pending（重新派发）。
         for node in runtime.state.nodes.values():
             if node.status in ACTIVE_NODE_STATUSES:
-                node.status = "recover" if node.a2a_task_id else NodeStatus.PENDING
+                apply_transition(
+                    node,
+                    NodeStatus.RECOVER if node.a2a_task_id else NodeStatus.PENDING,
+                )
         logger.info(
             "recover nodes",
             task_id=runtime.task_id,

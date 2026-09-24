@@ -6,6 +6,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from choirworks.orchestration.state import NodeStatus, QuestionType, add_intervention
+from choirworks.orchestration.transitions import apply_transition
 from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         question_len=len(ask_args.question),
         question_type=ask_args.question_type,
     )
-    node.status = NodeStatus.INPUT_REQUIRED
+    apply_transition(node, NodeStatus.INPUT_REQUIRED)
     node.question = ask_args.question
 
     intervention = add_intervention(
