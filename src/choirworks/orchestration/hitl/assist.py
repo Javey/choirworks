@@ -6,7 +6,7 @@ import structlog
 
 from choirworks.core.context import build_assist_input
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.functions import execute_function
+from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.derived import DerivedKind, spawn_derived_node
 from choirworks.orchestration.state import NodeState, assist_nodes_for
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func

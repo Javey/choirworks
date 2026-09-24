@@ -4,7 +4,7 @@ import structlog
 
 from choirworks.core.context import build_repair_user
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.functions import execute_function
+from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.state import failed_nodes
 from choirworks.subagents.base import run_subagent

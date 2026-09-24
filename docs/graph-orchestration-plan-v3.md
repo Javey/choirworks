@@ -97,7 +97,7 @@ failed / pending / ready / recover ──(patch invalidate / 级联)→ invalida
 ### 4.2 L2 — 声明式流图（Phase 2 建原语，Phase 3-5 迁移决策梯）
 
 新建 `orchestration/flows/engine.py`（通用流图引擎；原 `flows.py`——工具函数执行流——已更名
-`orchestration/functions.py` 以消除命名歧义）：
+`orchestration/helpers.py` 以消除命名歧义）：
 
 ```python
 DEFAULT = "__default__"
@@ -291,7 +291,7 @@ async def spawn_derived_node(
 ```
 orchestration/
   context.py  session.py  registry.py  events.py  state.py  transitions.py   # 核心/infra
-  functions.py                       # 原 flows.py：AgentFunction 执行辅助
+  helpers.py                         # 原 flows.py：工具调用接缝（execute_function/join_members）
   rewind.py                          # 历史回退（独立特性）
   flows/    engine.py plan.py message.py outcome.py settlement.py            # 通用引擎 + 四张流图
   execution/ runner.py node_executor.py remote_caller.py
@@ -306,7 +306,7 @@ a2a/
 - 2026-09-24 定稿（v3）：以 v2（渐进式）为主体融合 v1 的 ADK 对照细节；
   依据 ADK 2.9.0 源码核实修正事实（deprecated 措辞、`_LoopState` 与 replay 层的关系、
   环的规则、9 条校验出处）；显式放弃 v1 的 `TaskWorkflow`/`AnswerWorkflow` 并记录理由。
-- 2026-09-24 实施完成并做内聚重排：`flows.py→functions.py`、删 `routing`（并入 `derived`）、
+- 2026-09-24 实施完成并做内聚重排：`flows.py→helpers.py`、删 `routing`（并入 `derived`）、
   `markers` 并入 `outcome`；建 `flows/`（engine + 四流图）、`planning/`、`execution/`、`hitl/`
   子包；recover 三件事（造事件/识别/执行）统一收拢到 `a2a/recovery.py`，`rewind` 独立回
   `orchestration/rewind.py`；`message_flow` 前置 `prepare_inbound`（recover 短路）。

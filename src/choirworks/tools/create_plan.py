@@ -7,7 +7,7 @@ import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from choirworks.orchestration.functions import join_members
+from choirworks.orchestration.helpers import join_members
 from choirworks.orchestration.state import NodeState
 from choirworks.tools.base import AgentFunction, FunctionResult
 

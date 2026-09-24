@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
-from choirworks.orchestration.functions import join_members
+from choirworks.orchestration.helpers import join_members
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
 from choirworks.orchestration.state import (
     InterventionDelta,

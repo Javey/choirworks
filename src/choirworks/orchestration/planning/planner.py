@@ -15,7 +15,7 @@ from choirworks.orchestration.events import (
     emit_thought_chunk,
 )
 from choirworks.orchestration.execution.runner import start_runner
-from choirworks.orchestration.functions import execute_function, join_members
+from choirworks.orchestration.helpers import execute_function, join_members
 from choirworks.orchestration.state import start_new_plan
 from choirworks.tools.base import ToolCallResult
 from choirworks.tools.create_plan import create_plan_func

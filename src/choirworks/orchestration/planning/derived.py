@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from choirworks.orchestration.events import emit_state_delta
-from choirworks.orchestration.functions import join_members
+from choirworks.orchestration.helpers import join_members
 from choirworks.orchestration.state import NodeState, NodeStatus
 
 if TYPE_CHECKING:
