@@ -27,8 +27,11 @@ async def join_members(
     invocations (every requested name is already a member) record nothing.
     """
     from choirworks.orchestration.events import emit_state_delta
-    from choirworks.tools import JoinMembersArgs, join_members_func
-    from choirworks.tools.join_members import JoinMembersData
+    from choirworks.tools.join_members import (
+        JoinMembersArgs,
+        JoinMembersData,
+        join_members_func,
+    )
 
     requested = [name for name in dict.fromkeys(names) if name not in ctx.state.members]
     if not requested:

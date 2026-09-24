@@ -8,8 +8,7 @@ from choirworks.orchestration.functions import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.state import failed_nodes
 from choirworks.subagents import REPAIR_SUBAGENT, run_subagent
-from choirworks.tools import revise_plan_func
-from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData
+from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData, revise_plan_func
 
 logger = structlog.get_logger(__name__)
 

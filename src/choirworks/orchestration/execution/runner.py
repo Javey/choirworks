@@ -220,7 +220,8 @@ async def _announce_dispatch(
     ctx: OrchestrationContext,
     batch: list[tuple[NodeState, str]],
 ) -> None:
-    from choirworks.tools import CallSubagentArgs, FunctionResult, call_subagent_func
+    from choirworks.tools.base import FunctionResult
+    from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
     for node, mode in batch:
         if mode != "dispatch" or node.derived or node.attempt != 0:

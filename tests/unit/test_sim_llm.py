@@ -8,7 +8,8 @@ from choirworks.core.planner import PlanDraft, validate_plan
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.sim.litellm_mock import sim_acompletion
-from choirworks.tools import ToolCallResult, create_plan_func
+from choirworks.tools.base import ToolCallResult
+from choirworks.tools.create_plan import create_plan_func
 from choirworks.tools.outcome_decision import (
     OutcomeDecision,
     outcome_decision_schema,

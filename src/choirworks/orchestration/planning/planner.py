@@ -17,7 +17,8 @@ from choirworks.orchestration.events import (
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.functions import execute_function, join_members
 from choirworks.orchestration.state import start_new_plan
-from choirworks.tools import ToolCallResult, create_plan_func
+from choirworks.tools.base import ToolCallResult
+from choirworks.tools.create_plan import create_plan_func
 
 logger = structlog.get_logger(__name__)
 

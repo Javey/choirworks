@@ -27,8 +27,7 @@ from choirworks.orchestration.state import (
 )
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.subagents import ASSISTANCE_SUBAGENT, run_subagent
-from choirworks.tools import ask_user_func
-from choirworks.tools.ask_user import AskUserArgs
+from choirworks.tools.ask_user import AskUserArgs, ask_user_func
 from choirworks.tools.outcome_decision import OutcomeDecision
 
 logger = structlog.get_logger(__name__)
