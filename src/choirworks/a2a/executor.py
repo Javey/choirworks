@@ -20,26 +20,18 @@ from choirworks.a2a.wire import QuestionResponse, parse_question_response, statu
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.events import (
-    emit_intervention_rejected,
-    emit_pending_questions,
-    emit_state_delta,
-)
+from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import join_members
-from choirworks.orchestration.intervention import answer_intervention
+from choirworks.orchestration.message import MessagePayload, message_flow
 from choirworks.orchestration.patch import PatchResult, PlanPatch
-from choirworks.orchestration.planning import plan_and_launch
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.repair import apply_patch_locked
-from choirworks.orchestration.routing import route_message
 from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeStatus,
-    has_pending_work,
     normalize_interventions,
-    pending_interventions,
 )
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.store.contexts import ContextStore
@@ -130,14 +122,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         task_id = context.task_id
         context_id = context.context_id
 
-        if _is_recover_request(context):
+        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
+        recover = _is_recover_request(context)
+        if recover:
             logger.info("execute recover", task_id=task_id, context_id=context_id)
-            await self._recover_task(task_id, context_id, event_queue)
-            return
 
         text = (context.get_user_input() or "").strip()
-        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
-
         responses: list[QuestionResponse] = []
         malformed: str | None = None
         if context.message is not None:
@@ -164,84 +154,17 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         if mentions:
             room["mentions"] = mentions
 
+        payload = MessagePayload(
+            text=text,
+            room=room,
+            updater=updater,
+            responses=responses,
+            malformed=malformed,
+            recover=recover,
+            run_recover=lambda: self._recover(runtime),
+        )
         async with runtime.lock:
-            state = runtime.state
-            if malformed is not None:
-                logger.info(
-                    "execute route=intervention_malformed",
-                    task_id=task_id,
-                    context_id=context_id,
-                )
-                await emit_intervention_rejected(self._build_ctx(runtime), "", malformed)
-                return
-            if responses:
-                logger.info(
-                    "execute route=intervention_answers",
-                    task_id=task_id,
-                    context_id=context_id,
-                    answers=len(responses),
-                )
-                orch_ctx = self._build_ctx(runtime)
-                resolved = False
-                for response in responses:
-                    if await answer_intervention(
-                        orch_ctx,
-                        intervention_id=response.intervention_id,
-                        answer=response.answer,
-                    ):
-                        resolved = True
-                if resolved:
-                    if pending_interventions(state):
-                        await emit_pending_questions(orch_ctx)
-                    runtime.wake.set()
-                    self._start_runner(runtime)
-                return
-
-            if pending_interventions(state):
-                logger.info(
-                    "execute route=intervention_unanswered",
-                    task_id=task_id,
-                    context_id=context_id,
-                    text_len=len(text),
-                )
-                await emit_pending_questions(self._build_ctx(runtime))
-                return
-
-            if runtime.runner is not None and not runtime.runner.done():
-                logger.info(
-                    "execute route=active_runner",
-                    task_id=task_id,
-                    context_id=context_id,
-                    text_len=len(text),
-                )
-                await route_message(self._build_ctx(runtime), text, room)
-                return
-
-            if has_pending_work(state):
-                logger.info(
-                    "execute route=pending_work",
-                    task_id=task_id,
-                    context_id=context_id,
-                    text_len=len(text),
-                )
-                await route_message(self._build_ctx(runtime), text, room)
-                self._start_runner(runtime)
-                return
-
-            if not text:
-                logger.info("execute route=empty_complete", task_id=task_id, context_id=context_id)
-                await updater.complete()
-                self._session_mgr.evict_session(context_id)
-                return
-
-            logger.info(
-                "execute route=plan_and_launch",
-                task_id=task_id,
-                context_id=context_id,
-                text_len=len(text),
-            )
-            await updater.start_work()
-            await plan_and_launch(self._build_ctx(runtime), text, room=room)
+            _ = await message_flow.run(self._build_ctx(runtime), payload)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         assert context.task_id is not None
@@ -288,14 +211,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             for node_task in list(runtime.node_tasks):
                 node_task.cancel()
         self._sessions.clear()
-
-    async def _recover_task(self, task_id: str, context_id: str, event_queue: EventQueue) -> None:
-        # ensure_session 内部已从 context_store 加载 state 到 runtime.state。
-        # recover_tasks 在调 on_message_send 前已保证 context_store 中存在
-        # 该 context_id（recovery.py:55-57），所以 runtime.state 不会为空。
-        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
-        logger.info("recover state loaded", task_id=task_id, context_id=context_id)
-        await self._recover(runtime)
 
     async def _recover(self, runtime: SessionRuntime) -> None:
         # 计划修订（repair.py）会对活跃节点创建 confirm_cancel 干预，
