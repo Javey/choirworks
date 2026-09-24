@@ -6,9 +6,9 @@ import structlog
 
 from choirworks.core.context import build_assist_input
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
-from choirworks.orchestration.flows import execute_function, join_members
-from choirworks.orchestration.state import NodeState, NodeStatus, assist_nodes_for
+from choirworks.orchestration.derived import DerivedKind, spawn_derived_node
+from choirworks.orchestration.flows import execute_function
+from choirworks.orchestration.state import NodeState, assist_nodes_for
 from choirworks.tools.call_subagent import CallSubagentArgs, call_subagent_func
 
 logger = structlog.get_logger(__name__)
@@ -36,39 +36,18 @@ async def arbitrate_mentions(
             continue
         if assist_nodes_for(state, name, node.id):
             continue
-        if state.derived_count >= ctx.config.max_derived_nodes:
-            logger.info(
-                "arbitrate_mentions max_derived reached, skipping",
-                node=node.id,
-                name=name,
-            )
-            return
-        state.derived_count += 1
-        helper_id = f"{node.id}-a{state.derived_count}"
-        helper = NodeState(
-            id=helper_id,
-            name="",
+        helper = await spawn_derived_node(
+            ctx,
+            DerivedKind.ASSIST,
+            parent_id=node.id,
             agent_name=name,
             agent_url=known[name].card_url,
-            deps=[],
             input_text=build_assist_input(node.agent_name, node.output),
-            derived=True,
             assist_requested_by=node.id,
             source_message_id=node.id,
         )
-        state.nodes[helper_id] = helper
-        await join_members(ctx, [name], "agent_mention")
-        await emit_state_delta(
-            ctx,
-            nodes={
-                helper_id: {
-                    "status": NodeStatus.PENDING,
-                    "agent_name": helper.agent_name,
-                    "input_text": helper.input_text,
-                },
-            },
-        )
-        await ctx.sessions.persist(ctx)
+        if helper is None:
+            return
 
 
 async def spawn_assist(

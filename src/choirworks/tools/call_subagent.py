@@ -6,7 +6,7 @@ import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.context import build_peer_fallback_input
-from choirworks.orchestration.state import NodeState
+from choirworks.orchestration.derived import DerivedKind, spawn_derived_node
 from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:
@@ -81,37 +81,30 @@ async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> F
             error="orchestrator dispatch does not create helper nodes",
         )
 
-    if state.derived_count >= ctx.effects.max_derived_nodes:
-        return FunctionResult(success=False, error="max derived nodes reached")
-
     agents = await ctx.registry.list()
     agent = next((item for item in agents if item.name == call_args.target_agent), None)
     if agent is None:
         return FunctionResult(success=False, error=f"unknown agent: {call_args.target_agent}")
 
-    state.derived_count += 1
     requester_node = state.nodes.get(call_args.requested_by)
-    helper_id = f"{call_args.requested_by}-h{state.derived_count}"
-
-    helper = NodeState(
-        id=helper_id,
-        name="",
+    helper = await spawn_derived_node(
+        ctx,
+        DerivedKind.HELPER,
+        parent_id=call_args.requested_by,
         agent_name=agent.name,
         agent_url=agent.card_url,
-        deps=[],
         input_text=call_args.instruction
         or build_peer_fallback_input((requester_node.question if requester_node else None) or ""),
-        derived=True,
         assist_requested_by=call_args.requested_by,
+        emit=False,
     )
-    state.nodes[helper_id] = helper
-    await ctx.effects.join_members([agent.name], "peer_assist")
-    await ctx.effects.persist()
+    if helper is None:
+        return FunctionResult(success=False, error="max derived nodes reached")
 
     return FunctionResult(
         success=True,
         data=CallSubagentData(
-            helper_node_id=helper_id,
+            helper_node_id=helper.id,
             helper=agent.name,
             requester=requester_node.agent_name if requester_node else "",
         ),
