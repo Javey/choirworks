@@ -159,6 +159,9 @@ curl localhost:8567/v1/conversations
 ## 设计文档与计划
 
 - 产品说明：`docs/product.md`
+- 编排图化设计（渐进式，定稿待实施）：`docs/graph-orchestration-plan-v2.md`
+- 编排图化设计（v1 备选方案，完整引擎）：`docs/graph-orchestration-plan.md`
+- HITL 问题交互改造：`docs/hitl-plan.md`
 - 以下 `docs/superpowers/**` 为旧版事件溯源栈的历史设计与实施计划，仅作归档参考，
   与当前 A2A SDK 实现不一致：
   - `docs/superpowers/specs/2026-09-12-a2a-orchestration-platform-design.md`
