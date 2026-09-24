@@ -61,7 +61,7 @@ async def emit_event(
         "emit_event",
         task_id=ctx.task_id,
         kind=kind or "(none)",
-        state=effective,
+        state=TaskState.Name(effective),
     )
     await ctx.queue.enqueue_event(
         status_update(

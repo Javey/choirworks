@@ -17,6 +17,7 @@ from a2a.types import (
     SubscribeToTaskRequest,
     Task,
 )
+from a2a.types.a2a_pb2 import TaskState
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from pydantic import AnyHttpUrl, JsonValue
 
@@ -121,7 +122,7 @@ class RemoteAgentClient:
                 "get_task",
                 agent_url=agent_url,
                 task_id=remote_task_id,
-                state=task.status.state if task else "none",
+                state=TaskState.Name(task.status.state) if task else "none",
             )
             return task
         except Exception:  # noqa: BLE001 - 远程任务可能已过期/不存在
