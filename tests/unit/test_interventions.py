@@ -7,11 +7,8 @@ from a2a.types.a2a_pb2 import TaskState, TaskStatusUpdateEvent
 from google.protobuf.json_format import MessageToDict
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.intervention import (
-    answer_intervention,
-    request_human,
-    settle_input,
-)
+from choirworks.orchestration.intervention import answer_intervention
+from choirworks.orchestration.settlement import request_human, settle_input
 from choirworks.orchestration.state import (
     InterventionStatus,
     NodeState,

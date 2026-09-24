@@ -5,7 +5,7 @@ import asyncio
 import structlog
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.orchestration import intervention
+from choirworks.orchestration import settlement
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_event, emit_function_call, emit_state_delta
 from choirworks.orchestration.graph import FlowOutcome
@@ -200,7 +200,7 @@ async def _wait_for_wake(event: asyncio.Event) -> None:
 
 
 async def _run_settlement(ctx: OrchestrationContext, node: NodeState) -> None:
-    await intervention.settle_node_input(ctx, node)
+    await settlement.settle_node_input(ctx, node)
 
 
 def _has_active_helper(state: OrchestrationState, node_id: str) -> bool:

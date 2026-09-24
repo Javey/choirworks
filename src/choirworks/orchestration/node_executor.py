@@ -5,21 +5,16 @@ import asyncio
 import structlog
 
 from choirworks.core.context import build_continuation_text, build_dispatch_text
-from choirworks.orchestration.assist import arbitrate_mentions
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_pending_questions, emit_state_delta
+from choirworks.orchestration.outcome import OutcomePayload, outcome_flow
 from choirworks.orchestration.remote_caller import recover_remote, stream_remote
-from choirworks.orchestration.repair import revise_plan
-from choirworks.orchestration.routing import spawn_followup_node
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
     expire_cancel_requests,
-    take_queued,
 )
 from choirworks.orchestration.transitions import transition
-from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
-from choirworks.tools.outcome_decision import OutcomeDecision
 
 logger = structlog.get_logger(__name__)
 
@@ -79,7 +74,7 @@ async def execute_node(
         node.error = str(exc)
 
     if current == NodeStatus.COMPLETED:
-        await _handle_completed(ctx, node)
+        _ = await outcome_flow.run(ctx, OutcomePayload(node=node))
     elif current == NodeStatus.CANCELED:
         logger.info("execute_node canceled", context_id=ctx.context_id, node_id=node.id)
         await transition(ctx, node, NodeStatus.CANCELED)
@@ -121,80 +116,3 @@ async def execute_node(
         )
     await ctx.sessions.persist(ctx)
     await emit_pending_questions(ctx)
-
-
-async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:
-    decision = await _interpret_outcome(ctx, node)
-    logger.info(
-        "handle_completed",
-        context_id=ctx.context_id,
-        node_id=node.id,
-        intent=decision.intent,
-    )
-    if decision.intent == "need_info":
-        node.question = decision.question or node.output
-        node.a2a_task_id = None
-        await transition(
-            ctx,
-            node,
-            NodeStatus.INPUT_REQUIRED,
-            delta={"question": node.question or "", "agent_name": node.agent_name},
-        )
-    else:
-        if decision.intent == "revise" and decision.patch is not None:
-            if ctx.state.revision_count < ctx.config.max_revisions:
-                async with ctx.lock:
-                    await revise_plan(ctx, decision.patch)
-            else:
-                logger.warning(
-                    "Revision limit reached, skipping",
-                    context_id=ctx.context_id,
-                )
-        await transition(
-            ctx,
-            node,
-            NodeStatus.COMPLETED,
-            delta={"agent_name": node.agent_name, "output": (node.output or "")[:200]},
-        )
-        await arbitrate_mentions(ctx, node)
-        await _deliver_queued(ctx, node)
-
-
-async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> OutcomeDecision:
-    from choirworks.orchestration.markers import parse_marker
-
-    marker = parse_marker(node.output)
-    if marker is not None:
-        return OutcomeDecision(intent=marker.intent, question=marker.text)
-    if not node.output:
-        return OutcomeDecision(intent="deliver")
-    agents = await ctx.registry.list()
-    candidates = [agent for agent in agents if agent.name != node.agent_name]
-    from choirworks.core.context import build_outcome_user
-
-    user = build_outcome_user(
-        node.agent_name,
-        node.input_text,
-        node.output,
-        candidates,
-    )
-    try:
-        return await run_subagent(
-            OUTCOME_SUBAGENT,
-            ctx,
-            user,
-            exclude_agent=node.agent_name,
-        )
-    except Exception:
-        logger.exception(
-            "outcome interpretation failed", context_id=ctx.context_id, node_id=node.id
-        )
-        return OutcomeDecision(intent="deliver")
-
-
-async def _deliver_queued(ctx: OrchestrationContext, node: NodeState) -> None:
-    messages = take_queued(ctx.state, node.id)
-    if not messages:
-        return
-    text = "\n\n".join(message.text for message in messages)
-    await spawn_followup_node(ctx, text, node, deps=[node.id])

@@ -2,153 +2,22 @@ from __future__ import annotations
 
 import structlog
 
-from choirworks.core.context import build_assistance_decision_user
-from choirworks.orchestration.assist import spawn_assist
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import (
-    emit_intervention_rejected,
-    emit_pending_questions,
-    emit_state_delta,
-)
-from choirworks.orchestration.flows import execute_function
+from choirworks.orchestration.events import emit_intervention_rejected, emit_state_delta
 from choirworks.orchestration.remote_caller import cancel_remote_task
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
-    PENDING_NODE_STATUSES,
     Intervention,
     InterventionKind,
     InterventionStatus,
     NodeState,
     NodeStatus,
     QuestionType,
-    add_intervention,
     blocked_nodes,
-    input_required_nodes,
-    pending_intervention_for,
 )
 from choirworks.orchestration.transitions import apply_transition
-from choirworks.subagents import ASSISTANCE_SUBAGENT, run_subagent
-from choirworks.tools import ask_user_func
-from choirworks.tools.ask_user import AskUserArgs
-from choirworks.tools.outcome_decision import OutcomeDecision
 
 logger = structlog.get_logger(__name__)
-
-
-async def settle_input(ctx: OrchestrationContext) -> bool:
-    """Resolve all ``input_required`` nodes (bulk wrapper for tests/recovery)."""
-    progress = False
-    for node in list(input_required_nodes(ctx.state)):
-        if await settle_node_input(ctx, node):
-            progress = True
-    return progress
-
-
-async def settle_node_input(ctx: OrchestrationContext, node: NodeState) -> bool:
-    """Settle one ``input_required`` node: peer assistance or a human question.
-
-    Mutations run under ``ctx.lock`` so this can execute as a background task
-    while the runner keeps dispatching other nodes.
-    """
-    state = ctx.state
-    if pending_intervention_for(state, node.id) is not None:
-        return False
-    helpers = [
-        n
-        for n in state.nodes.values()
-        if n.derived and n.assist_requested_by == node.id and n.status == NodeStatus.COMPLETED
-    ]
-    if helpers:
-        helper = helpers[0]
-        async with ctx.lock:
-            intervention = pending_intervention_for(ctx.state, node.id)
-            if intervention is None:
-                intervention = add_intervention(ctx.state, node.id, node.question or "")
-            intervention.status = InterventionStatus.RESOLVED
-            intervention.answer = helper.output
-            intervention.responder = helper.id
-            node.answer_text = helper.output
-            apply_transition(node, NodeStatus.READY)
-            await ctx.sessions.persist(ctx)
-            await emit_state_delta(
-                ctx,
-                nodes={node.id: {"status": NodeStatus.READY}},
-                interventions={
-                    intervention.id: {
-                        "status": "resolved",
-                        "node_id": node.id,
-                        "kind": intervention.kind,
-                        "responder": helper.id,
-                    },
-                },
-            )
-        return True
-    active_helpers = [
-        n
-        for n in state.nodes.values()
-        if n.derived
-        and n.assist_requested_by == node.id
-        and n.status in ACTIVE_NODE_STATUSES | PENDING_NODE_STATUSES
-    ]
-    if active_helpers:
-        return False
-
-    decision = await _decide_assistance(ctx, node)
-    async with ctx.lock:
-        if pending_intervention_for(ctx.state, node.id) is not None:
-            return False
-        if decision is not None and decision.target_agent:
-            if await spawn_assist(ctx, node, decision):
-                return True
-        await request_human(ctx, node, decision)
-    return False
-
-
-async def _decide_assistance(ctx: OrchestrationContext, node: NodeState) -> OutcomeDecision | None:
-    if node.question is None:
-        return None
-    agents = await ctx.registry.list()
-    candidates = [agent for agent in agents if agent.name != node.agent_name]
-    if not candidates:
-        return OutcomeDecision(intent="need_info")
-    user = build_assistance_decision_user(
-        node.agent_name,
-        node.question or node.input_text,
-        candidates,
-    )
-    try:
-        return await run_subagent(
-            ASSISTANCE_SUBAGENT,
-            ctx,
-            user,
-            exclude_agent=node.agent_name,
-        )
-    except Exception:
-        logger.exception("assistance decision failed", node=node.id)
-        return OutcomeDecision(intent="need_info")
-
-
-async def request_human(
-    ctx: OrchestrationContext,
-    node: NodeState,
-    decision: OutcomeDecision | None = None,
-) -> None:
-    logger.info(
-        "request_human",
-        node=node.id,
-        agent=node.agent_name,
-        question_len=len(node.question or node.output or ""),
-    )
-    args = AskUserArgs(
-        node_id=node.id,
-        question=node.question or node.output or "",
-        question_type=decision.question_type if decision else QuestionType.INPUT,
-        options=list(decision.options) if decision else [],
-        multi=decision.multi if decision else False,
-    )
-    await execute_function(ctx, ask_user_func, args)
-    await ctx.sessions.persist(ctx)
-    await emit_pending_questions(ctx)
 
 
 def render_answer(intervention: Intervention) -> str:
