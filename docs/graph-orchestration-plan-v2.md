@@ -1,6 +1,7 @@
-# choirworks 编排图化设计方案 v2（渐进式）
+# choirworks 编排图化设计方案 v2（渐进式，归档备查）
 
-> 状态：**已定稿，待实施**（2026-09-24）。
+> 状态：**已被取代，保留备查**。实施依据改用 `docs/graph-orchestration-plan-v3.md`
+> （本稿为主体的融合定稿）。
 > 前版：`docs/graph-orchestration-plan.md`（v1，未实施）。v2 与 v1 的核心差异见「二、与 v1 的差异」。
 > 设计借鉴：google-adk（`/home/javey/Workspaces/adk-python`，Apache License 2.0，
 > Copyright 2026 Google LLC）的 workflow 图机制。**仅借鉴设计，不复制代码、不引入依赖**；
