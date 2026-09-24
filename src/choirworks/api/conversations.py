@@ -18,7 +18,7 @@ from choirworks.a2a.executor import ChoirWorksAgentExecutor
 from choirworks.a2a.tasks import REWIND_KEY, list_all_tasks
 from choirworks.api.deps import get_context_store, get_executor, get_task_store
 from choirworks.api.replay import synthesize_replay_events
-from choirworks.orchestration.recovery.rewind import (
+from choirworks.orchestration.rewind import (
     RewindUnavailable,
     is_human_turn,
     restore_state,

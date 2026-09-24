@@ -5,7 +5,7 @@ from a2a.types.a2a_pb2 import Message, Role, Task, TaskState, TaskStatus
 from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.room import A2A_ROOM_URI
-from choirworks.orchestration.recovery.rewind import (
+from choirworks.orchestration.rewind import (
     RewindUnavailable,
     is_human_turn,
     restore_state,

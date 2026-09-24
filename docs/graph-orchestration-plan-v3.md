@@ -187,8 +187,9 @@ classify_room ─┬ "quote_active"    → do_enqueue
 `executor.execute` 只留结构性三样：`ensure_session`（产出 runtime）、`_build_ctx`（图的 ctx）、
 `runtime.lock`（作用域），其余一行 `await message_flow.run(ctx, payload)`。
 
-recover 逻辑（协议探测 `is_recover_request` + 领域逻辑 `recover_session`）全部抽离到
-`orchestration/recovery/session_recovery.py`，executor 不再含任何 recover 代码。
+recover 逻辑全部收拢到 `a2a/recovery.py`（与 `recover_tasks` 同文件）：`recover_tasks`/内部
+消息负责**造事件**，`is_recover_request` 负责识别，`recover_session` 负责**执行**。executor
+不再含任何 recover 代码。
 
 **② `outcome_flow`（交付结果分支，`node_executor.py:149-193`）**——payload: `OutcomePayload`
 
@@ -240,7 +241,7 @@ async def spawn_derived_node(
 | 1 | L1 状态机：RECOVER 入枚举 + `transitions.py` + 迁移全部变更点 | `state.py`、`transitions.py`（新）+ 7 个调用方 | 全量测试全绿；非法转移抛错有单测 |
 | 2 | L2 原语：`graph.py` + `validate()` + 单测 | `graph.py`（新）、`tests/unit/test_graph.py`（新） | 校验器单测：不可达 handler、重复边、多重 DEFAULT、Literal route 缺边 |
 | 3 | ① `plan_flow`（最高优先） | `runner.py` 决策段 → `plan_flow` | test_recovery、test_a2a_recovery；退出/重启条件同表可见 |
-| 4 | ③ `message_flow`（含 `prepare_inbound`；recover 逻辑抽到 `recover.py`） | `executor.py`、`message.py`（新）、`routing.py`、`recover.py`（新） | test_a2a_send / queue / hitl / stream / rewind、test_recovery |
+| 4 | ③ `message_flow`（含 `prepare_inbound`；recover 逻辑并入 `a2a/recovery.py`） | `a2a/executor.py`、`flows/message.py`（新）、`a2a/recovery.py` | test_a2a_send / queue / hitl / stream / rewind、test_recovery |
 | 5 | ② `outcome_flow` + ④ `settlement_flow` | `node_executor.py`、`intervention.py` | test_interventions、test_a2a_announcements / revise / sim_flow |
 | 6 | 派生节点统一 `derived.py` | `routing.py`、`assist.py`、`call_subagent.py` | 三处行为等价（id 方案、上限、join 差异保留） |
 
@@ -290,11 +291,13 @@ async def spawn_derived_node(
 orchestration/
   context.py  session.py  registry.py  events.py  state.py  transitions.py   # 核心/infra
   functions.py                       # 原 flows.py：AgentFunction 执行辅助
+  rewind.py                          # 历史回退（独立特性）
   flows/    engine.py plan.py message.py outcome.py settlement.py            # 通用引擎 + 四张流图
   execution/ runner.py node_executor.py remote_caller.py
   planning/  planner.py patch.py repair.py derived.py
   hitl/      intervention.py assist.py
-  recovery/  session_recovery.py rewind.py
+a2a/
+  recovery.py                        # recover_tasks（造事件）+ is_recover_request + recover_session（执行）
 ```
 
 ## 十二、修订记录
@@ -303,6 +306,6 @@ orchestration/
   依据 ADK 2.9.0 源码核实修正事实（deprecated 措辞、`_LoopState` 与 replay 层的关系、
   环的规则、9 条校验出处）；显式放弃 v1 的 `TaskWorkflow`/`AnswerWorkflow` 并记录理由。
 - 2026-09-24 实施完成并做内聚重排：`flows.py→functions.py`、删 `routing`（并入 `derived`）、
-  `markers` 并入 `outcome`；建 `flows/`（engine + 四流图）、`planning/`、`execution/`、`hitl/`、
-  `recovery/` 子包；recover 逻辑抽到 `recovery/session_recovery.py` 且 `message_flow` 前置
-  `prepare_inbound`（recover 短路）。
+  `markers` 并入 `outcome`；建 `flows/`（engine + 四流图）、`planning/`、`execution/`、`hitl/`
+  子包；recover 三件事（造事件/识别/执行）统一收拢到 `a2a/recovery.py`，`rewind` 独立回
+  `orchestration/rewind.py`；`message_flow` 前置 `prepare_inbound`（recover 短路）。

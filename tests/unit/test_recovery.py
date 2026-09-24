@@ -12,9 +12,8 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.recovery import recover_tasks
+from choirworks.a2a.recovery import is_recover_request, recover_tasks
 from choirworks.a2a.tasks import RECOVER_KEY, REWIND_KEY
-from choirworks.orchestration.recovery.session_recovery import is_recover_request
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 

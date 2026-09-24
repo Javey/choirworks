@@ -12,6 +12,7 @@ from a2a.server.agent_execution import RequestContext
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import TaskState
 
+from choirworks.a2a.recovery import is_recover_request, recover_session
 from choirworks.a2a.room import RoomOptions, room_options
 from choirworks.a2a.wire import QuestionResponse, parse_question_response
 from choirworks.orchestration.context import OrchestrationContext
@@ -25,7 +26,6 @@ from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.hitl.intervention import answer_intervention
 from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.planner import plan_and_launch
-from choirworks.orchestration.recovery.session_recovery import is_recover_request, recover_session
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeState,
