@@ -96,7 +96,8 @@ failed / pending / ready / recover ──(patch invalidate / 级联)→ invalida
 
 ### 4.2 L2 — 声明式流图（Phase 2 建原语，Phase 3-5 迁移决策梯）
 
-新建 `orchestration/graph.py`（与既有 `flows.py`——工具函数执行流——无关，命名已确认无冲突）：
+新建 `orchestration/flows/engine.py`（通用流图引擎；原 `flows.py`——工具函数执行流——已更名
+`orchestration/functions.py` 以消除命名歧义）：
 
 ```python
 DEFAULT = "__default__"
@@ -134,7 +135,7 @@ class Flow(Generic[P]):
 
 - **禁止 Any**（AGENTS.md）：payload 用 typed dataclass，节点间数据流用 `object` + isinstance /
   pydantic `TypeAdapter` 收窄。
-- 归属注释格式（`orchestration/graph.py` 文件头）：
+- 归属注释格式（`orchestration/flows/engine.py` 文件头）：
 
   ```python
   # 设计参考 google-adk workflow（Apache-2.0, Copyright 2026 Google LLC）：
@@ -161,7 +162,7 @@ start: check_retryable ──"retry"──→ do_backoff_continue      # 终端:
       └─无条件─→ do_stalled_failed      # EXIT_FAILED
 ```
 
-**③ `message_flow`（入口路由链，`executor.py` + `routing.py`）**——payload: `MessagePayload`
+**③ `message_flow`（入口路由链，`orchestration/flows/message.py`）**——payload: `MessagePayload`
 
 ```
 start: prepare_inbound ─┬ "recover" → do_recover ─→ END   # 协议准备短路
@@ -187,7 +188,7 @@ classify_room ─┬ "quote_active"    → do_enqueue
 `runtime.lock`（作用域），其余一行 `await message_flow.run(ctx, payload)`。
 
 recover 逻辑（协议探测 `is_recover_request` + 领域逻辑 `recover_session`）全部抽离到
-`orchestration/recover.py`，executor 不再含任何 recover 代码。
+`orchestration/recovery/session_recovery.py`，executor 不再含任何 recover 代码。
 
 **② `outcome_flow`（交付结果分支，`node_executor.py:149-193`）**——payload: `OutcomePayload`
 
@@ -218,7 +219,7 @@ start: inspect_helpers ─┬ "already_pending"  → already_pending(noop) ─�
 
 ## 六、Phase 6：统一派生节点生成
 
-新建 `orchestration/derived.py`：
+新建 `orchestration/planning/derived.py`：
 
 ```python
 async def spawn_derived_node(
@@ -281,8 +282,27 @@ async def spawn_derived_node(
    （目前判断：不需要，四个梯子都是线性链），说明渐进式选型不当，
    该梯升级为 v1 引擎方案（`docs/graph-orchestration-plan.md` 备查），其余梯不受影响。
 
-## 十一、修订记录
+## 十一、实施后的文件布局（收拢内聚）
+
+实施完成后再做了一次纯结构调整（无行为变化）：
+
+```
+orchestration/
+  context.py  session.py  registry.py  events.py  state.py  transitions.py   # 核心/infra
+  functions.py                       # 原 flows.py：AgentFunction 执行辅助
+  flows/    engine.py plan.py message.py outcome.py settlement.py            # 通用引擎 + 四张流图
+  execution/ runner.py node_executor.py remote_caller.py
+  planning/  planner.py patch.py repair.py derived.py
+  hitl/      intervention.py assist.py
+  recovery/  session_recovery.py rewind.py
+```
+
+## 十二、修订记录
 
 - 2026-09-24 定稿（v3）：以 v2（渐进式）为主体融合 v1 的 ADK 对照细节；
   依据 ADK 2.9.0 源码核实修正事实（deprecated 措辞、`_LoopState` 与 replay 层的关系、
   环的规则、9 条校验出处）；显式放弃 v1 的 `TaskWorkflow`/`AnswerWorkflow` 并记录理由。
+- 2026-09-24 实施完成并做内聚重排：`flows.py→functions.py`、删 `routing`（并入 `derived`）、
+  `markers` 并入 `outcome`；建 `flows/`（engine + 四流图）、`planning/`、`execution/`、`hitl/`、
+  `recovery/` 子包；recover 逻辑抽到 `recovery/session_recovery.py` 且 `message_flow` 前置
+  `prepare_inbound`（recover 短路）。
