@@ -108,7 +108,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         runtime = await self._session_mgr.ensure_session(
             context.context_id, context.task_id, event_queue
         )
-        payload = MessagePayload(context=context, event_queue=event_queue)
+        payload = MessagePayload(context=context)
         async with runtime.lock:
             _ = await message_flow.run(self._build_ctx(runtime), payload)
 

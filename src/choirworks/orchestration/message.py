@@ -9,7 +9,6 @@ from typing import Literal
 import structlog
 from a2a.helpers import new_task
 from a2a.server.agent_execution import RequestContext
-from a2a.server.events import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import TaskState
 
@@ -45,7 +44,6 @@ logger = structlog.get_logger(__name__)
 @dataclass(slots=True)
 class MessagePayload:
     context: RequestContext
-    event_queue: EventQueue
     text: str = ""
     room: RoomOptions = field(default_factory=RoomOptions)
     updater: TaskUpdater | None = None
@@ -63,8 +61,6 @@ async def _prepare_inbound(
         logger.info("execute recover", task_id=ctx.task_id, context_id=ctx.context_id)
         return "recover"
     context = payload.context
-    assert context.task_id is not None
-    assert context.context_id is not None
     payload.text = (context.get_user_input() or "").strip()
     if context.message is not None:
         try:
@@ -73,13 +69,13 @@ async def _prepare_inbound(
             payload.malformed = str(exc)
     if context.current_task is None:
         initial_task = new_task(
-            task_id=context.task_id,
-            context_id=context.context_id,
+            task_id=ctx.task_id,
+            context_id=ctx.context_id,
             state=TaskState.TASK_STATE_SUBMITTED,
             history=[context.message] if context.message else None,
         )
-        await payload.event_queue.enqueue_event(initial_task)
-    payload.updater = TaskUpdater(payload.event_queue, context.task_id, context.context_id)
+        await ctx.queue.enqueue_event(initial_task)
+    payload.updater = TaskUpdater(ctx.queue, ctx.task_id, ctx.context_id)
     room = room_options(context.message)
     mentions = list(room.get("mentions") or [])
     for name in re.findall(r"@([A-Za-z0-9_-]+)", payload.text):
