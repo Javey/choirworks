@@ -50,6 +50,9 @@ class AgentFunction:
     * ``is_long_running`` – when *True* the function returns an ack
       immediately; the real result propagates later as state deltas.
       The model is **not** kept in the loop waiting for a response.
+    * ``emit_artifact`` – when *False* the function call is not surfaced as a
+      ``function_call`` artifact; callers emit their own state events
+      (e.g. ``ask_user`` delivers its question via ``status.message``).
 
     ``name`` is the wire-format identifier (``"create_plan"``, ``"ask_user"``
     …); ``description`` is the human / LLM facing description.
@@ -60,3 +63,4 @@ class AgentFunction:
     args_model: Callable[[OrchestrationContext], Awaitable[type[BaseModel]]]
     execute: Callable[[OrchestrationContext, BaseModel], Awaitable[FunctionResult]]
     is_long_running: bool = False
+    emit_artifact: bool = True

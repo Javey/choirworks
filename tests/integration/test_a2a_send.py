@@ -17,8 +17,10 @@ from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import (
+    answer_message,
     context_nodes,
     context_state,
+    pending_intervention_id,
     sdk_hub,
     task_nodes,
     task_state,
@@ -105,7 +107,14 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         interventions = task_state(pending).get("interventions", [])
         assert any(item.get("status") == "pending" for item in interventions)
         resumed_id = await _send_once(
-            client, _message("这是答复", task_id=task_id, context_id=pending.context_id)
+            client,
+            answer_message(
+                pending_intervention_id(pending),
+                "这是答复",
+                task_id=task_id,
+                context_id=pending.context_id,
+                text="这是答复",
+            ),
         )
         assert resumed_id == task_id
         resumed = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})

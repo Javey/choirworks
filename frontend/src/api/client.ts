@@ -57,12 +57,6 @@ export const api = {
   getTask: (taskId: string) => request<TaskSnapshotDto>("GET", `/v1/tasks/${taskId}`),
   listCheckpoints: (taskId: string) =>
     request<CheckpointDto[]>("GET", `/v1/tasks/${taskId}/checkpoints`),
-  answerIntervention: (taskId: string, interventionId: string, text: string) =>
-    request<unknown>(
-      "POST",
-      `/v1/tasks/${taskId}/interventions/${interventionId}`,
-      { text },
-    ),
   rollback: (taskId: string, checkpointId: string, mode: "restart" | "dry_run") =>
     request<RollbackReportDto>("POST", `/v1/tasks/${taskId}/rollback`, {
       checkpoint_id: checkpointId,

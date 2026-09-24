@@ -32,7 +32,8 @@ class SessionRuntime:
     queue: EventQueue
     runner: asyncio.Task[None] | None = None
     node_tasks: dict[asyncio.Task[None], NodeState] = field(default_factory=dict)
-    runner_start_requested: bool = False
+    settle_tasks: dict[asyncio.Task[None], str] = field(default_factory=dict)
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class SessionManager:
@@ -96,6 +97,7 @@ class SessionManager:
         if runtime is not None:
             runtime.runner = None
             runtime.node_tasks.clear()
+            runtime.settle_tasks.clear()
             logger.info("evict_session", context_id=context_id)
 
     def session_is_active(self, context_id: str) -> bool:

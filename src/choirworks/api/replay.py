@@ -14,6 +14,7 @@ from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict, ParseDict
 
 from choirworks.orchestration.state import (
+    Intervention,
     InterventionDelta,
     MemberDict,
     NodeDelta,
@@ -25,6 +26,23 @@ def _struct(d: dict[str, object]) -> struct_pb2.Struct:
     s = struct_pb2.Struct()
     ParseDict(d, s)
     return s
+
+
+def _intervention_delta(intervention: Intervention) -> InterventionDelta:
+    delta: InterventionDelta = {
+        "status": intervention.status,
+        "node_id": intervention.node_id,
+        "kind": intervention.kind,
+        "question": intervention.question,
+        "responder": intervention.responder or "",
+        "question_type": intervention.question_type,
+        "options": list(intervention.options),
+        "multi": intervention.multi,
+        "requester": intervention.requester,
+    }
+    if intervention.answer is not None:
+        delta["answer"] = intervention.answer
+    return delta
 
 
 def _state_delta_event(
@@ -48,13 +66,7 @@ def _state_delta_event(
     members: list[MemberDict] = [member.to_dict() for member in state.members.values()]
 
     interventions: dict[str, InterventionDelta] = {
-        intervention.id: {
-            "status": intervention.status,
-            "node_id": intervention.node_id,
-            "kind": intervention.kind,
-            "question": intervention.question,
-            "responder": intervention.responder or "",
-        }
+        intervention.id: _intervention_delta(intervention)
         for intervention in state.interventions.values()
         if intervention.id
     }

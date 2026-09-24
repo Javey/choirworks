@@ -36,7 +36,8 @@ export interface WorkingBubble {
 export type TimelineItem =
   | { type: "message"; seq: number; data: ChatMessage }
   | { type: "notification"; seq: number; data: SystemNotification }
-  | { type: "working"; seq: number; data: WorkingBubble };
+  | { type: "working"; seq: number; data: WorkingBubble }
+  | { type: "question"; seq: number; data: QuestionInfo };
 
 /**
  * Coalesce timeline-adjacent "X 加入了群聊" notifications into one row
@@ -98,6 +99,23 @@ export interface InterventionInfo {
   question?: string;
 }
 
+export type QuestionStatus = "pending" | "resolved" | "expired" | "rejected";
+
+export interface QuestionInfo {
+  id: string;
+  node_id: string;
+  requester: string;
+  kind: string;
+  question: string;
+  question_type: "input" | "select" | "confirm";
+  options: string[];
+  multi: boolean;
+  status: QuestionStatus;
+  answer: string | string[] | boolean | null;
+  error?: string;
+  seq: number;
+}
+
 export interface ConversationView {
   taskId: string;
   contextId: string;
@@ -107,6 +125,7 @@ export interface ConversationView {
   members: RoomMemberDto[];
   nodes: TaskNodeInfo[];
   interventions: Record<string, InterventionInfo>;
+  questions: Record<string, QuestionInfo>;
   activeArtifactIds: Set<string>;
   workingBubbles: WorkingBubble[];
   seenArtifactIds: Set<string>;
@@ -122,6 +141,7 @@ export const emptyConversation: ConversationView = {
   members: [],
   nodes: [],
   interventions: {},
+  questions: {},
   activeArtifactIds: new Set(),
   workingBubbles: [],
   seenArtifactIds: new Set(),
@@ -156,6 +176,52 @@ function metaOf(container: ProtoStruct): ProtoStruct {
 function roomMetaOf(container: ProtoStruct): ProtoStruct {
   const meta = metaOf(container);
   return (meta[ROOM_META_KEY] as ProtoStruct | undefined) ?? {};
+}
+
+function questionPartsOf(container: ProtoStruct): QuestionInfo[] {
+  const parts = (container.parts as ProtoStruct[] | undefined) ?? [];
+  const found: QuestionInfo[] = [];
+  for (const part of parts) {
+    const content = part.content as { $case?: string; value?: unknown } | undefined;
+    if (content?.$case !== "data") continue;
+    const partMeta = (part.metadata as ProtoStruct | undefined) ?? {};
+    if (partMeta.cw_type !== "question") continue;
+    const data = content.value as ProtoStruct;
+    const id = String(data.intervention_id ?? "");
+    if (!id) continue;
+    const rawType = String(data.question_type ?? "input");
+    const questionType = (["input", "select", "confirm"].includes(rawType)
+      ? rawType
+      : "input") as QuestionInfo["question_type"];
+    found.push({
+      id,
+      node_id: String(data.node_id ?? ""),
+      requester: String(data.requester ?? ""),
+      kind: String(data.kind ?? "question"),
+      question: String(data.question ?? ""),
+      question_type: questionType,
+      options: Array.isArray(data.options) ? data.options.map(String) : [],
+      multi: data.multi === true,
+      status: "pending",
+      answer: null,
+      seq: 0,
+    });
+  }
+  return found;
+}
+
+function upsertQuestions(
+  questions: Record<string, QuestionInfo>,
+  incoming: QuestionInfo[],
+  seq: number,
+): Record<string, QuestionInfo> {
+  if (incoming.length === 0) return questions;
+  const next = { ...questions };
+  for (const info of incoming) {
+    const prev = next[info.id];
+    next[info.id] = prev ? { ...prev, ...info, seq: prev.seq } : { ...info, seq };
+  }
+  return next;
 }
 
 const TERMINAL_NODE_STATUSES = new Set(["completed", "failed", "canceled", "invalidated"]);
@@ -202,6 +268,7 @@ function applyStateDelta(
   let nodes = view.nodes;
   let members = view.members;
   let interventions = view.interventions;
+  let questions = view.questions;
 
   // --- nodes ---
   const nodesDelta = meta.nodes as Record<string, ProtoStruct> | undefined;
@@ -295,6 +362,39 @@ function applyStateDelta(
         question: question || prev?.question,
       };
 
+      const prevQuestion = questions[id];
+      const rawType =
+        typeof changes.question_type === "string"
+          ? changes.question_type
+          : (prevQuestion?.question_type ?? "input");
+      questions = {
+        ...questions,
+        [id]: {
+          id,
+          node_id: nodeId || prevQuestion?.node_id || "",
+          requester:
+            typeof changes.requester === "string"
+              ? changes.requester
+              : (prevQuestion?.requester ?? ""),
+          kind: ivKind || prevQuestion?.kind || "question",
+          question: question || prevQuestion?.question || "",
+          question_type: (["input", "select", "confirm"].includes(rawType)
+            ? rawType
+            : "input") as QuestionInfo["question_type"],
+          options: Array.isArray(changes.options)
+            ? changes.options.map(String)
+            : (prevQuestion?.options ?? []),
+          multi:
+            typeof changes.multi === "boolean" ? changes.multi : (prevQuestion?.multi ?? false),
+          status: (status || prevQuestion?.status || "pending") as QuestionStatus,
+          answer:
+            "answer" in changes
+              ? (changes.answer as QuestionInfo["answer"])
+              : (prevQuestion?.answer ?? null),
+          seq: prevQuestion?.seq ?? seq,
+        },
+      };
+
       // Derive notification from state transition
       if (!prev && status === "pending" && ivKind === "confirm_cancel") {
         notifications.push({
@@ -339,6 +439,7 @@ function applyStateDelta(
     nodes,
     members,
     interventions,
+    questions,
     workingBubbles,
     notifications: notifications.length
       ? [...materialized.notifications, ...notifications]
@@ -420,9 +521,16 @@ function applyStreamEventInner(
     );
     const history = (result.history as ProtoStruct[] | undefined) ?? [];
     const newMessages: ChatMessage[] = [];
+    let historyQuestions: QuestionInfo[] = [];
     const seenIds = new Set(view.messages.map((m) => m.id));
     for (const msg of history) {
       const id = String(msg.messageId ?? "");
+      const infos = questionPartsOf(msg);
+      if (infos.length > 0) {
+        historyQuestions = [...historyQuestions, ...infos];
+        seenIds.add(id);
+        continue;
+      }
       if (seenIds.has(id)) continue;
       seenIds.add(id);
       const rm = roomMetaOf(msg);
@@ -447,6 +555,7 @@ function applyStreamEventInner(
       taskId,
       state,
       messages: [...view.messages, ...newMessages],
+      questions: upsertQuestions(view.questions, historyQuestions, seq),
       nodes: view.nodes,
       contextId: String(result.contextId ?? view.contextId),
       lastSeq: Math.max(view.lastSeq, seq),
@@ -474,6 +583,36 @@ function applyStreamEventInner(
 
     if (kind === "state_delta") {
       return applyStateDelta(view, meta, state, seq);
+    }
+
+    if (kind === "intervention.rejected") {
+      const interventionId = typeof meta.intervention_id === "string" ? meta.intervention_id : "";
+      const reason = typeof meta.reason === "string" ? meta.reason : "";
+      if (!interventionId || !view.questions[interventionId]) {
+        return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };
+      }
+      return {
+        ...view,
+        state,
+        questions: {
+          ...view.questions,
+          [interventionId]: { ...view.questions[interventionId], status: "rejected", error: reason },
+        },
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
+    }
+
+    // Question message: aggregate input-required message with cw_type=question parts.
+    if (statusMsg) {
+      const infos = questionPartsOf(statusMsg);
+      if (infos.length > 0) {
+        return {
+          ...view,
+          state,
+          questions: upsertQuestions(view.questions, infos, seq),
+          lastSeq: Math.max(view.lastSeq, seq),
+        };
+      }
     }
 
     // StatusUpdate with message = thinking (assistant reasoning, plan.announced, etc.)
@@ -580,9 +719,10 @@ function applyStreamEventInner(
 
       if (funcName === "revise_plan") {
         const reason = typeof funcArgs.reason === "string" ? funcArgs.reason : "";
-        const addedNodes = (funcResult.added_nodes as ProtoStruct[] | undefined) ?? [];
-        const invalidated = Array.isArray(funcResult.invalidated)
-          ? (funcResult.invalidated as unknown[]).map(String)
+        const resultData = (funcResult.data as ProtoStruct | undefined) ?? {};
+        const addedNodes = (resultData.added_nodes as ProtoStruct[] | undefined) ?? [];
+        const invalidated = Array.isArray(resultData.invalidated)
+          ? (resultData.invalidated as unknown[]).map(String)
           : [];
         const added: TaskNodeInfo[] = addedNodes.map((n: ProtoStruct) => ({
           id: String(n.id ?? ""),
@@ -608,30 +748,6 @@ function applyStreamEventInner(
             id: `sys-revised-${seq}`,
             kind: "plan.revised",
             text: `计划已修订：${partsText.join("，") || "无变化"}${reason ? `（${reason}）` : ""}`,
-            created_at: new Date().toISOString(),
-            seq,
-          }],
-          lastSeq: Math.max(view.lastSeq, seq),
-        };
-      }
-
-      if (funcName === "ask_user") {
-        const nodeId = String(funcArgs.node_id ?? funcResult.node_id ?? "");
-        const question = typeof (funcResult.question ?? funcArgs.question) === "string"
-          ? String(funcResult.question ?? funcArgs.question)
-          : "";
-        const interventionId = String(funcResult.intervention_id ?? seq);
-        return {
-          ...view,
-          state: taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
-          nodes: view.nodes.map((n) =>
-            n.id === nodeId ? { ...n, status: "input_required" } : n,
-          ),
-          notifications: [...view.notifications, {
-            id: `sys-intervention-${interventionId}`,
-            kind: "intervention.requested",
-            text: question || "等待人工答复",
-            node_id: nodeId || undefined,
             created_at: new Date().toISOString(),
             seq,
           }],

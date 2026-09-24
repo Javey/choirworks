@@ -65,8 +65,10 @@ async def execute_function(
 ) -> FunctionResult:
     """Execute an AgentFunction and emit the function-call event.
 
-    Calls execute with the orchestration context, emits the result artifact,
-    and returns the FunctionResult for the caller to inspect.
+    Calls execute with the orchestration context and emits the result artifact
+    when ``func.emit_artifact`` is True.  Functions that deliver their outcome
+    through their own state events (``emit_artifact=False``, e.g. ``ask_user``)
+    emit nothing here — the caller owns the state event.
     """
     from choirworks.orchestration.events import emit_function_call
 
@@ -80,5 +82,6 @@ async def execute_function(
         function=func.name,
         success=result.success,
     )
-    await emit_function_call(ctx, func, args, result, state_name=state_name)
+    if func.emit_artifact:
+        await emit_function_call(ctx, func, args, result, state_name=state_name)
     return result

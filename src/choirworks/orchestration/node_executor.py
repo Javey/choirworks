@@ -7,7 +7,7 @@ import structlog
 from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.assist import arbitrate_mentions
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import emit_pending_questions, emit_state_delta
 from choirworks.orchestration.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.repair import revise_plan
 from choirworks.orchestration.routing import spawn_followup_node
@@ -143,6 +143,7 @@ async def execute_node(
             },
         )
     await ctx.sessions.persist(ctx)
+    await emit_pending_questions(ctx)
 
 
 async def _handle_completed(ctx: OrchestrationContext, node: NodeState) -> None:

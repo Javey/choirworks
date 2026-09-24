@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Role, StreamResponse, TaskState, taskStateToJSON } from "@a2a-js/sdk";
+import type { Part } from "@a2a-js/sdk";
 
 import { getClient } from "../api/a2a-client";
 import { api } from "../api/client";
 import {
   applyStreamEvent,
   emptyConversation,
+  type QuestionInfo,
   type ConversationView,
 } from "../lib/conversationView";
 
@@ -15,6 +17,8 @@ export interface ConversationSendInput {
   mentions?: string[];
   quote_id?: string;
   interrupt?: boolean;
+  interventionId?: string;
+  answer?: string | string[] | boolean;
 }
 
 const SETTLED_STATES = new Set([
@@ -22,7 +26,6 @@ const SETTLED_STATES = new Set([
   taskStateToJSON(TaskState.TASK_STATE_FAILED),
   taskStateToJSON(TaskState.TASK_STATE_CANCELED),
   taskStateToJSON(TaskState.TASK_STATE_REJECTED),
-  taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED),
 ]);
 
 function isSettled(state: string | undefined): boolean {
@@ -116,17 +119,30 @@ export function useConversation(contextId: string | null) {
       const settled = isSettled(current.state);
       const taskId = settled ? "" : current.taskId;
       let knownContextId = current.contextId;
+      const parts: Part[] = [];
+      if (input.text) {
+        parts.push({
+          content: { $case: "text", value: input.text },
+          metadata: undefined,
+          filename: "",
+          mediaType: "text/plain",
+        });
+      }
+      if (input.interventionId !== undefined && input.answer !== undefined) {
+        parts.push({
+          content: {
+            $case: "data",
+            value: { intervention_id: input.interventionId, answer: input.answer },
+          },
+          metadata: { cw_type: "question_response" },
+          filename: "",
+          mediaType: "",
+        });
+      }
       const message = {
         messageId: crypto.randomUUID(),
         role: Role.ROLE_USER,
-        parts: [
-          {
-            content: { $case: "text" as const, value: input.text },
-            metadata: undefined,
-            filename: "",
-            mediaType: "text/plain",
-          },
-        ],
+        parts,
         contextId: knownContextId,
         taskId,
         metadata: undefined,
@@ -160,5 +176,12 @@ export function useConversation(contextId: string | null) {
     [apply, follow],
   );
 
-  return { view, rawEvents, error, send };
+  const answerQuestion = useCallback(
+    async (question: QuestionInfo, answer: string | string[] | boolean, text: string) => {
+      await send({ text, interventionId: question.id, answer });
+    },
+    [send],
+  );
+
+  return { view, rawEvents, error, send, answerQuestion };
 }

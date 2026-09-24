@@ -1,14 +1,20 @@
-from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
+from a2a.types import GetTaskRequest, Message, Part, Role, SendMessageRequest, TaskState
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
 from choirworks.tools.outcome_decision import OutcomeDecision
 from tests.support.sdk import (
+    answer_message,
+    pending_intervention_id,
+    question_ids_from_status,
     sdk_hub,
     task_artifact_text,
     task_nodes,
     task_state,
+    wait_for_intervention_status,
+    wait_for_pending_interventions,
+    wait_for_question_parts,
     wait_for_task,
 )
 
@@ -65,7 +71,14 @@ async def test_llm_routes_to_human(tmp_path, ask_agent):
         pending = await wait_for_task(client, task_id, {TaskState.TASK_STATE_INPUT_REQUIRED})
         assert task_state(pending).get("interventions")
         await _send_once(
-            client, _message("人工答复", task_id=task_id, context_id=pending.context_id)
+            client,
+            answer_message(
+                pending_intervention_id(pending),
+                "人工答复",
+                task_id=task_id,
+                context_id=pending.context_id,
+                text="人工答复",
+            ),
         )
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
         assert "answered:" in task_artifact_text(task)
@@ -101,7 +114,13 @@ async def test_text_marker_needs_info_routes_to_human(tmp_path):
             assert any(item["status"] == "pending" for item in task_state(pending)["interventions"])
             await _send_once(
                 client,
-                _message("补充需求", task_id=task_id, context_id=pending.context_id),
+                answer_message(
+                    pending_intervention_id(pending),
+                    "补充需求",
+                    task_id=task_id,
+                    context_id=pending.context_id,
+                    text="补充需求",
+                ),
             )
             task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED})
             assert "已获得补充信息" in task_artifact_text(task)
@@ -157,3 +176,118 @@ async def test_llm_routes_to_peer_agent(tmp_path):
     finally:
         await pm.stop()
         await qa.stop()
+
+
+async def test_question_pushed_while_parallel_node_running(tmp_path, ask_agent):
+    slow = await start_fake_agent("slow", name="slow")
+    try:
+        settings = Settings(
+            store={"db_path": tmp_path / "parallel.db"},
+            a2a={"public_url": "http://test"},
+            scheduler={"retry_backoff_seconds": 0.0},
+        )
+        from tests.support.fakes import FakeLLM
+
+        llm = FakeLLM(
+            structured_results=[
+                PlanDraft(
+                    nodes=[
+                        PlanNodeDraft(
+                            id="n1", name="ask", agent_name="ask", input={"text": "请评估"}
+                        ),
+                        PlanNodeDraft(
+                            id="n2", name="slow", agent_name="slow", input={"text": "慢任务"}
+                        ),
+                    ],
+                ),
+                OutcomeDecision(intent="need_info", question_type="confirm"),
+                OutcomeDecision(intent="deliver"),
+            ],
+        )
+        async with sdk_hub(tmp_path, "parallel.db", settings=settings, llm=llm) as (
+            _app,
+            http,
+            client,
+        ):
+            await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
+            await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
+            task_id = await _send_once(client, _message("并行任务"))
+            pending = await wait_for_question_parts(client, task_id, 1)
+            # 问题已推送，但并行节点仍在运行（未被排空阻塞）
+            assert task_nodes(pending)["n2"]["status"] in {"dispatched", "working"}
+            assert pending.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+            ids = question_ids_from_status(pending)
+            assert ids
+            await _send_once(
+                client,
+                answer_message(
+                    ids[0],
+                    True,
+                    task_id=task_id,
+                    context_id=pending.context_id,
+                ),
+            )
+            task = await wait_for_task(
+                client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30
+            )
+            assert task_nodes(task)["n2"]["status"] == "completed"
+    finally:
+        await slow.stop()
+
+
+async def test_multiple_questions_aggregate_and_answer_separately(tmp_path, ask_agent):
+    settings = Settings(
+        store={"db_path": tmp_path / "multi.db"},
+        a2a={"public_url": "http://test"},
+        scheduler={"retry_backoff_seconds": 0.0},
+    )
+    from tests.support.fakes import FakeLLM
+
+    llm = FakeLLM(
+        structured_results=[
+            PlanDraft(
+                nodes=[
+                    PlanNodeDraft(id="n1", name="ask", agent_name="ask", input={"text": "第一问"}),
+                    PlanNodeDraft(id="n2", name="ask", agent_name="ask", input={"text": "第二问"}),
+                ],
+            ),
+            OutcomeDecision(intent="deliver"),
+            OutcomeDecision(intent="deliver"),
+        ],
+    )
+    async with sdk_hub(tmp_path, "multi.db", settings=settings, llm=llm) as (_app, http, client):
+        await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
+        task_id = await _send_once(client, _message("两个问题"))
+        await wait_for_pending_interventions(client, task_id, 2)
+        pending = await wait_for_question_parts(client, task_id, 2)
+        ids = question_ids_from_status(pending)
+        assert len(ids) == 2
+
+        await _send_once(
+            client,
+            answer_message(
+                ids[0],
+                "答一",
+                task_id=task_id,
+                context_id=pending.context_id,
+                text="答一",
+            ),
+        )
+        await wait_for_intervention_status(client, task_id, ids[0], "resolved")
+        still = await client.get_task(GetTaskRequest(id=task_id))
+        still_pending = [
+            item for item in task_state(still)["interventions"] if item.get("status") == "pending"
+        ]
+        assert len(still_pending) == 1
+
+        await _send_once(
+            client,
+            answer_message(
+                str(still_pending[0]["id"]),
+                "答二",
+                task_id=task_id,
+                context_id=pending.context_id,
+                text="答二",
+            ),
+        )
+        await wait_for_task(client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30)

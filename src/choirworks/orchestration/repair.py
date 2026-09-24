@@ -4,7 +4,7 @@ import structlog
 
 from choirworks.core.context import build_repair_user
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import emit_pending_questions, emit_state_delta
 from choirworks.orchestration.flows import execute_function, join_members
 from choirworks.orchestration.patch import PatchResult, PlanPatch, apply_patch
 from choirworks.orchestration.state import (
@@ -106,4 +106,5 @@ async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> Pat
             ctx, nodes={node_id: {"status": "invalidated"} for node_id in result.invalidated}
         )
     await ctx.sessions.persist(ctx)
+    await emit_pending_questions(ctx)
     return result

@@ -16,11 +16,15 @@ from a2a.types.a2a_pb2 import (
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.room import room_options
 from choirworks.a2a.tasks import RECOVER_KEY
-from choirworks.a2a.wire import status_update
+from choirworks.a2a.wire import QuestionResponse, parse_question_response, status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import (
+    emit_intervention_rejected,
+    emit_pending_questions,
+    emit_state_delta,
+)
 from choirworks.orchestration.flows import join_members
 from choirworks.orchestration.intervention import answer_intervention
 from choirworks.orchestration.patch import PatchResult, PlanPatch
@@ -34,7 +38,7 @@ from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeStatus,
     has_pending_work,
-    normalize_cancel_requests,
+    normalize_interventions,
     pending_interventions,
 )
 from choirworks.store.contexts import ContextStore
@@ -133,6 +137,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         text = (context.get_user_input() or "").strip()
         runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
 
+        responses: list[QuestionResponse] = []
+        malformed: str | None = None
+        if context.message is not None:
+            try:
+                responses = parse_question_response(context.message)
+            except ValueError as exc:
+                malformed = str(exc)
+
         if context.current_task is None:
             initial_task = new_task(
                 task_id=task_id,
@@ -153,20 +165,45 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
         async with runtime.lock:
             state = runtime.state
+            if malformed is not None:
+                logger.info(
+                    "execute route=intervention_malformed",
+                    task_id=task_id,
+                    context_id=context_id,
+                )
+                await emit_intervention_rejected(self._build_ctx(runtime), "", malformed)
+                return
+            if responses:
+                logger.info(
+                    "execute route=intervention_answers",
+                    task_id=task_id,
+                    context_id=context_id,
+                    answers=len(responses),
+                )
+                orch_ctx = self._build_ctx(runtime)
+                resolved = False
+                for response in responses:
+                    if await answer_intervention(
+                        orch_ctx,
+                        intervention_id=response.intervention_id,
+                        answer=response.answer,
+                    ):
+                        resolved = True
+                if resolved:
+                    if pending_interventions(state):
+                        await emit_pending_questions(orch_ctx)
+                    runtime.wake.set()
+                    self._start_runner(runtime)
+                return
+
             if pending_interventions(state):
-                if text:
-                    logger.info(
-                        "execute route=intervention",
-                        task_id=task_id,
-                        context_id=context_id,
-                        text_len=len(text),
-                    )
-                    orch_ctx = self._build_ctx(runtime)
-                    runtime.runner_start_requested = False
-                    await answer_intervention(orch_ctx, text)
-                    if runtime.runner_start_requested:
-                        runtime.runner_start_requested = False
-                        self._start_runner(runtime)
+                logger.info(
+                    "execute route=intervention_unanswered",
+                    task_id=task_id,
+                    context_id=context_id,
+                    text_len=len(text),
+                )
+                await emit_pending_questions(self._build_ctx(runtime))
                 return
 
             if runtime.runner is not None and not runtime.runner.done():
@@ -266,7 +303,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         #   该干预已无意义，立即标记为 expired 清理掉。
         # - 若目标节点仍为活跃状态，干预保留为 pending，由后续 runner
         #   重新挂接远程 task 后，通过 expire_cancel_requests 正常处理。
-        expired = normalize_cancel_requests(runtime.state)
+        expired = normalize_interventions(runtime.state)
         if expired:
             logger.info(
                 "recover expired interventions",
@@ -280,8 +317,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 interventions={
                     iv.id: {
                         "status": "expired",
-                        "node_id": iv.target_node_id or "",
-                        "kind": "confirm_cancel",
+                        "node_id": iv.node_id,
+                        "kind": iv.kind,
                     }
                     for iv in expired
                 },

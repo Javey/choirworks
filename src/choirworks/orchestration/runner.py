@@ -10,17 +10,23 @@ from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
     emit_function_call,
+    emit_pending_questions,
     emit_state_delta,
 )
 from choirworks.orchestration.node_executor import execute_node
 from choirworks.orchestration.state import (
+    ACTIVE_NODE_STATUSES,
+    PENDING_NODE_STATUSES,
     NodeState,
     NodeStatus,
+    OrchestrationState,
     all_completed,
     failed_nodes,
     has_failures,
     has_pending_work,
     input_required_nodes,
+    pending_intervention_for,
+    pending_interventions,
     ready_nodes,
 )
 
@@ -47,12 +53,15 @@ async def run_plan(ctx: OrchestrationContext) -> None:
     task_id = ctx.task_id
     try:
         while True:
+            runtime.wake.clear()
             async with ctx.lock:
                 state = ctx.state
                 for node in list(failed_nodes(state)):
                     if node.attempt < ctx.config.max_node_attempts:
                         node.status = NodeStatus.PENDING
                         node.error = None
+
+                _spawn_settlements(ctx)
 
                 ready = ready_nodes(state)
                 slots = max(0, ctx.config.max_parallel - _pending_count(ctx))
@@ -83,28 +92,55 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 if batch:
                     await ctx.sessions.persist(ctx)
 
-            pending = dict(runtime.node_tasks)
-            if pending:
-                done, _ = await asyncio.wait(set(pending), return_when=asyncio.FIRST_COMPLETED)
+            waiters = set(runtime.node_tasks) | set(runtime.settle_tasks)
+            if waiters:
+                wake_task = asyncio.create_task(
+                    _wait_for_wake(runtime.wake), name=f"choirworks-wake:{context_id}"
+                )
+                done, _ = await asyncio.wait(
+                    [*waiters, wake_task], return_when=asyncio.FIRST_COMPLETED
+                )
+                if wake_task in done:
+                    runtime.wake.clear()
+                else:
+                    wake_task.cancel()
+                    try:
+                        await wake_task
+                    except asyncio.CancelledError:
+                        pass
                 for finished in done:
-                    node = runtime.node_tasks.pop(finished)
-                    exception = finished.exception()
-                    if exception is not None:
-                        node.status = NodeStatus.FAILED
-                        node.error = str(exception)
-                        logger.warning(
-                            "run_plan raised",
-                            task_id=task_id,
-                            context_id=context_id,
-                            node_id=node.id,
-                            error=exception,
-                        )
-                        await emit_state_delta(
-                            ctx,
-                            nodes={
-                                node.id: {"status": "failed", "error": node.error},
-                            },
-                        )
+                    if finished is wake_task:
+                        continue
+                    if finished in runtime.node_tasks:
+                        node = runtime.node_tasks.pop(finished)
+                        exception = finished.exception()
+                        if exception is not None:
+                            node.status = NodeStatus.FAILED
+                            node.error = str(exception)
+                            logger.warning(
+                                "run_plan raised",
+                                task_id=task_id,
+                                context_id=context_id,
+                                node_id=node.id,
+                                error=exception,
+                            )
+                            await emit_state_delta(
+                                ctx,
+                                nodes={
+                                    node.id: {"status": "failed", "error": node.error},
+                                },
+                            )
+                    elif finished in runtime.settle_tasks:
+                        node_id = runtime.settle_tasks.pop(finished)
+                        exception = finished.exception()
+                        if exception is not None:
+                            logger.warning(
+                                "run_plan settle raised",
+                                task_id=task_id,
+                                context_id=context_id,
+                                node_id=node_id,
+                                error=exception,
+                            )
                 if ctx.config.retry_backoff > 0 and any(
                     n.status == NodeStatus.FAILED and n.attempt < ctx.config.max_node_attempts
                     for n in ctx.state.nodes.values()
@@ -120,18 +156,18 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 ):
                     continue
                 if input_required_nodes(state):
-                    progress = await intervention.settle_input(ctx)
-                    if progress:
-                        continue
                     await ctx.sessions.persist(ctx)
                     logger.info(
                         "run_plan state=input_required", task_id=task_id, context_id=context_id
                     )
-                    await emit_event(
-                        ctx,
-                        "",
-                        TaskState.TASK_STATE_INPUT_REQUIRED,
-                    )
+                    if pending_interventions(state):
+                        await emit_pending_questions(ctx)
+                    else:
+                        await emit_event(
+                            ctx,
+                            "",
+                            TaskState.TASK_STATE_INPUT_REQUIRED,
+                        )
                     return
                 if all_completed(state):
                     logger.info("run_plan state=completed", task_id=task_id, context_id=context_id)
@@ -213,6 +249,46 @@ async def run_plan(ctx: OrchestrationContext) -> None:
         for node_task in list(runtime.node_tasks):
             node_task.cancel()
         runtime.node_tasks.clear()
+        for settle_task in list(runtime.settle_tasks):
+            settle_task.cancel()
+        runtime.settle_tasks.clear()
+
+
+def _spawn_settlements(ctx: OrchestrationContext) -> None:
+    """Spawn per-node background settlement for undecided input_required nodes."""
+    runtime = ctx.runtime
+    state = ctx.state
+    settled = set(runtime.settle_tasks.values())
+    for node in input_required_nodes(state):
+        if node.id in settled:
+            continue
+        if pending_intervention_for(state, node.id) is not None:
+            continue
+        if _has_active_helper(state, node.id):
+            continue
+        task = asyncio.create_task(
+            _run_settlement(ctx, node),
+            name=f"choirworks-settle:{ctx.context_id}:{node.id}",
+        )
+        runtime.settle_tasks[task] = node.id
+        logger.info("run_plan settle spawned", task_id=ctx.task_id, node_id=node.id)
+
+
+async def _wait_for_wake(event: asyncio.Event) -> None:
+    await event.wait()
+
+
+async def _run_settlement(ctx: OrchestrationContext, node: NodeState) -> None:
+    await intervention.settle_node_input(ctx, node)
+
+
+def _has_active_helper(state: OrchestrationState, node_id: str) -> bool:
+    return any(
+        n.derived
+        and n.assist_requested_by == node_id
+        and n.status in ACTIVE_NODE_STATUSES | PENDING_NODE_STATUSES
+        for n in state.nodes.values()
+    )
 
 
 def _pending_count(ctx: OrchestrationContext) -> int:

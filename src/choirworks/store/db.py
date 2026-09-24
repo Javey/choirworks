@@ -69,7 +69,11 @@ class Database:
     async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
         async with self._tx_lock:
             conn = self.conn
-            await conn.execute("BEGIN")
+            # BEGIN IMMEDIATE takes the write lock upfront (busy_timeout applies);
+            # a deferred BEGIN that later upgrades would surface as
+            # SQLITE_BUSY_SNAPSHOT when another connection (A2A task store)
+            # commits in between.
+            await conn.execute("BEGIN IMMEDIATE")
             try:
                 yield conn
             except BaseException:

@@ -15,7 +15,7 @@ from choirworks.orchestration.patch import PatchNode, PlanPatch
 from choirworks.sim.fake_agent import start_fake_agent
 from choirworks.tools.outcome_decision import OutcomeDecision
 from tests.support.fakes import FakeLLM
-from tests.support.sdk import sdk_hub, task_nodes, task_state, wait_for_task
+from tests.support.sdk import answer_message, sdk_hub, task_nodes, task_state, wait_for_task
 
 
 def _settings(db_path) -> Settings:
@@ -159,7 +159,13 @@ async def test_revise_in_flight_requires_confirmation(tmp_path):
             pending, confirm = await _wait_for_cancel_request(client, task_id)
             assert confirm["target_node_id"] == "n2"
             await _send_once(
-                client, _message("确认", task_id=task_id, context_id=pending.context_id)
+                client,
+                answer_message(
+                    str(confirm["id"]),
+                    True,
+                    task_id=task_id,
+                    context_id=pending.context_id,
+                ),
             )
             task = await wait_for_task(
                 client, task_id, {TaskState.TASK_STATE_COMPLETED}, timeout_seconds=30

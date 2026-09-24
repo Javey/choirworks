@@ -5,11 +5,13 @@ import remarkGfm from "remark-gfm";
 import type {
   ChatMessage,
   ConversationView,
+  QuestionInfo,
   SystemNotification,
   WorkingBubble,
 } from "../lib/conversationView";
 import { mergeConsecutiveJoins, type TimelineItem } from "../lib/conversationView";
 import { isMemberAnchor, remarkMention, splitMentions } from "../lib/mentions";
+import { QuestionCard } from "./room/QuestionCard";
 
 const AVATAR_COLORS = [
   "#3370ff", "#7c3aed", "#34c759", "#ff9500",
@@ -180,7 +182,17 @@ function WorkingItem({ bubble, thinking }: { bubble: WorkingBubble; thinking?: C
   );
 }
 
-export function ChatPanel({ view }: { view: ConversationView }) {
+export function ChatPanel({
+  view,
+  onAnswer,
+}: {
+  view: ConversationView;
+  onAnswer?: (
+    question: QuestionInfo,
+    answer: string | string[] | boolean,
+    text: string,
+  ) => void;
+}) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -191,6 +203,11 @@ export function ChatPanel({ view }: { view: ConversationView }) {
     ...view.messages.map((m) => ({ type: "message" as const, seq: m.seq, data: m })),
     ...view.notifications.map((n) => ({ type: "notification" as const, seq: n.seq, data: n })),
     ...view.workingBubbles.map((b, i) => ({ type: "working" as const, seq: 1000000 + i, data: b })),
+    ...Object.values(view.questions).map((q) => ({
+      type: "question" as const,
+      seq: q.seq,
+      data: q,
+    })),
   ].sort((a, b) => a.seq - b.seq);
   const timeline = mergeConsecutiveJoins(items);
 
@@ -242,6 +259,16 @@ export function ChatPanel({ view }: { view: ConversationView }) {
       rendered.push(
         <div key={`notif-${item.data.id}`} className="animate-[fade-in_0.3s_ease-out]">
           <NotificationItem notif={item.data} thinking={pendingThinking} />
+        </div>,
+      );
+      pendingThinking = null;
+    } else if (item.type === "question") {
+      rendered.push(
+        <div key={`question-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
+          <QuestionCard
+            question={item.data}
+            onAnswer={(question, answer, text) => onAnswer?.(question, answer, text)}
+          />
         </div>,
       );
       pendingThinking = null;

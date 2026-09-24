@@ -57,22 +57,22 @@ class ContextStore:
 
     async def create(self, context_id: str, *, title: str = "") -> None:
         now = now_iso()
-        await self._db.conn.execute(
-            "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
-            " VALUES (?, '{}', ?, ?, ?)"
-            " ON CONFLICT(context_id) DO UPDATE SET title = excluded.title"
-            " WHERE contexts.title = ''",
-            (context_id, title, now, now),
-        )
-        await self._db.conn.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
+                " VALUES (?, '{}', ?, ?, ?)"
+                " ON CONFLICT(context_id) DO UPDATE SET title = excluded.title"
+                " WHERE contexts.title = ''",
+                (context_id, title, now, now),
+            )
 
     async def upsert_state(self, context_id: str, state: str) -> None:
         now = now_iso()
-        await self._db.conn.execute(
-            "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
-            " VALUES (?, ?, '', ?, ?)"
-            " ON CONFLICT(context_id) DO UPDATE SET"
-            " state = excluded.state, updated_at = excluded.updated_at",
-            (context_id, state, now, now),
-        )
-        await self._db.conn.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "INSERT INTO contexts (context_id, state, title, created_at, updated_at)"
+                " VALUES (?, ?, '', ?, ?)"
+                " ON CONFLICT(context_id) DO UPDATE SET"
+                " state = excluded.state, updated_at = excluded.updated_at",
+                (context_id, state, now, now),
+            )

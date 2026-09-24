@@ -4,13 +4,15 @@ from collections.abc import Collection, Mapping
 from typing import cast
 
 from a2a.types.a2a_pb2 import (
+    Message,
     Part,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
 from google.protobuf import struct_pb2, timestamp_pb2
-from google.protobuf.json_format import ParseDict
+from google.protobuf.json_format import MessageToDict, ParseDict
+from pydantic import BaseModel, ValidationError
 
 
 def strip_none(value: object) -> object:
@@ -42,8 +44,9 @@ def status_update(
     *,
     kind: str | None = None,
     metadata: Mapping[str, object] | None = None,
+    message: Message | None = None,
 ) -> TaskStatusUpdateEvent:
-    """Build a TaskStatusUpdateEvent with optional kind and metadata."""
+    """Build a TaskStatusUpdateEvent with optional kind, metadata and message."""
     meta: dict[str, object] = {}
     if kind:
         meta["kind"] = kind
@@ -51,10 +54,13 @@ def status_update(
         meta.update(metadata)
     timestamp = timestamp_pb2.Timestamp()
     timestamp.GetCurrentTime()
+    status = TaskStatus(state=state, timestamp=timestamp)
+    if message is not None:
+        status.message.CopyFrom(message)
     return TaskStatusUpdateEvent(
         task_id=task_id,
         context_id=context_id,
-        status=TaskStatus(state=state, timestamp=timestamp),
+        status=status,
         metadata=struct(meta) if meta else None,
     )
 
@@ -80,3 +86,41 @@ def function_call_part(
     part.data.CopyFrom(data_value)
     part.metadata.CopyFrom(part_meta)
     return part
+
+
+def data_part(data: Mapping[str, object], metadata: Mapping[str, object]) -> Part:
+    """Build a protobuf Part carrying a data payload plus part metadata."""
+    data_value = struct_pb2.Value()
+    ParseDict(cast("dict[str, object]", strip_none(data)), data_value)
+    part = Part()
+    part.data.CopyFrom(data_value)
+    part.metadata.CopyFrom(struct(metadata))
+    return part
+
+
+class QuestionResponse(BaseModel):
+    """A user's answer to one pending question."""
+
+    intervention_id: str
+    answer: str | list[str] | bool
+
+
+def parse_question_response(message: Message) -> list[QuestionResponse]:
+    """Extract ``question_response`` data parts from a user message.
+
+    Returns an empty list when the message carries no such part; raises
+    ``ValueError`` when a part is malformed (missing id / bad answer type).
+    """
+    responses: list[QuestionResponse] = []
+    for part in message.parts:
+        if part.WhichOneof("content") != "data":
+            continue
+        kind_field = part.metadata.fields.get("cw_type")
+        if kind_field is None or kind_field.string_value != "question_response":
+            continue
+        payload = MessageToDict(part.data, preserving_proto_field_name=True)
+        try:
+            responses.append(QuestionResponse.model_validate(payload))
+        except ValidationError as exc:
+            raise ValueError(f"malformed question_response: {payload!r}") from exc
+    return responses

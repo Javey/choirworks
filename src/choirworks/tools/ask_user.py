@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from choirworks.orchestration.state import NodeStatus, add_intervention
+from choirworks.orchestration.state import NodeStatus, QuestionType, add_intervention
 from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:
@@ -19,6 +19,9 @@ class AskUserArgs(BaseModel):
 
     node_id: str
     question: str
+    question_type: QuestionType = QuestionType.INPUT
+    options: list[str] = Field(default_factory=list)
+    multi: bool = False
 
 
 class AskUserData(BaseModel):
@@ -27,7 +30,11 @@ class AskUserData(BaseModel):
     intervention_id: str
     node_id: str
     agent_name: str
+    requester: str
     question: str
+    question_type: QuestionType
+    options: list[str]
+    multi: bool
 
 
 async def ask_user_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
@@ -35,13 +42,13 @@ async def ask_user_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
 
 
 async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
-    """``ask_user`` — the model requests human input to unblock a node.
+    """``ask_user`` — the orchestrator requests human input to unblock a node.
 
-    The orchestrator's outcome-interpretation layer decides an agent's reply
-    means "I need more info".  Instead of emitting an ``intervention.requested``
-    kind event, the model calls this function.  The function creates an
-    intervention record and returns an ack; the real answer arrives later as a
-    user message (B-class state transition ``intervention.resolved``).
+    Creates an intervention record and returns an ack; the real answer arrives
+    later as a user message carrying a ``question_response`` data part, keyed
+    by ``intervention_id``.  The question itself is delivered separately via
+    the aggregated input-required ``status.message`` (see
+    :func:`choirworks.orchestration.events.emit_pending_questions`).
     """
     ask_args = (
         args if isinstance(args, AskUserArgs) else AskUserArgs.model_validate(args.model_dump())
@@ -57,11 +64,20 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         node_id=node.id,
         agent=node.agent_name,
         question_len=len(ask_args.question),
+        question_type=ask_args.question_type,
     )
     node.status = NodeStatus.INPUT_REQUIRED
     node.question = ask_args.question
 
-    intervention = add_intervention(state, node.id, ask_args.question)
+    intervention = add_intervention(
+        state,
+        node.id,
+        ask_args.question,
+        question_type=ask_args.question_type,
+        options=ask_args.options,
+        multi=ask_args.multi,
+        requester=node.agent_name,
+    )
 
     return FunctionResult(
         success=True,
@@ -69,7 +85,11 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
             intervention_id=intervention.id,
             node_id=node.id,
             agent_name=node.agent_name,
+            requester=node.agent_name,
             question=intervention.question,
+            question_type=intervention.question_type,
+            options=list(intervention.options),
+            multi=intervention.multi,
         ),
     )
 
@@ -80,4 +100,5 @@ ask_user_func = AgentFunction(
     args_model=ask_user_args_model,
     execute=execute_ask_user,
     is_long_running=True,
+    emit_artifact=False,
 )

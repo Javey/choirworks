@@ -84,7 +84,6 @@ def make_ctx(
         context_id="c1",
         queue=None,
         lock=None,
-        runner_start_requested=False,
     )
     return OrchestrationContext(
         runtime=runtime,  # type: ignore[arg-type]

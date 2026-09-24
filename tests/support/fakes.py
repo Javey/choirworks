@@ -28,6 +28,16 @@ async def _noop(*args: object, **kwargs: object) -> None:
     return None
 
 
+class FakeSessions:
+    """Minimal SessionManager stand-in: records persist calls."""
+
+    def __init__(self) -> None:
+        self.persist_count = 0
+
+    async def persist(self, ctx: object) -> None:
+        self.persist_count += 1
+
+
 def make_orch_ctx(
     registry: object,
     llm: object | None = None,
@@ -41,7 +51,6 @@ def make_orch_ctx(
         context_id="c1",
         queue=None,
         lock=None,
-        runner_start_requested=False,
     )
     effects = ToolEffects(
         max_derived_nodes=max_derived_nodes,
@@ -54,7 +63,7 @@ def make_orch_ctx(
         registry=registry,  # type: ignore[arg-type]
         remote=SimpleNamespace(),  # type: ignore[arg-type]
         llm=llm if llm is not None else SimpleNamespace(),  # type: ignore[arg-type]
-        sessions=SimpleNamespace(),  # type: ignore[arg-type]
+        sessions=FakeSessions(),  # type: ignore[arg-type]
         config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
         brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
         effects=effects,

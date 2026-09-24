@@ -21,7 +21,11 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
 
-  const { view, rawEvents, error, send } = useConversation(activeId);
+  const { view, rawEvents, error, send, answerQuestion } = useConversation(activeId);
+
+  const hasPendingQuestions = Object.values(view.questions).some(
+    (question) => question.status === "pending",
+  );
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -122,7 +126,7 @@ export default function App() {
         {showDebug ? (
           <DebugEventList events={rawEvents} />
         ) : (
-          <ChatPanel view={view} />
+          <ChatPanel view={view} onAnswer={answerQuestion} />
         )}
 
         <div className="flex items-center justify-between px-6 py-1 bg-white border-t border-feishu-border flex-shrink-0">
@@ -135,14 +139,20 @@ export default function App() {
           </button>
         </div>
 
-        <RoomComposer
-          members={view.members}
-          replyTo={null}
-          interrupt={false}
-          onToggleInterrupt={() => {}}
-          onCancelReply={() => {}}
-          onSend={handleSend}
-        />
+        {hasPendingQuestions ? (
+          <div className="px-6 py-3 bg-white border-t border-feishu-border flex-shrink-0 text-center text-[12px] text-feishu-muted">
+            请先回答上方的问题卡片
+          </div>
+        ) : (
+          <RoomComposer
+            members={view.members}
+            replyTo={null}
+            interrupt={false}
+            onToggleInterrupt={() => {}}
+            onCancelReply={() => {}}
+            onSend={handleSend}
+          />
+        )}
       </div>
     </div>
   );

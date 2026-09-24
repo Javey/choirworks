@@ -115,11 +115,13 @@ describe("applyStreamEvent", () => {
         { reason: "换人", patch: { add: [], invalidate: [] } },
         {
           success: true,
-          reason: "换人",
-          added_nodes: [
-            { id: "x1", name: "designer", agent_name: "designer", deps: ["n1"], input_text: "新任务" },
-          ],
-          invalidated: ["n2"],
+          data: {
+            reason: "换人",
+            added_nodes: [
+              { id: "x1", name: "designer", agent_name: "designer", deps: ["n1"], input_text: "新任务" },
+            ],
+            invalidated: ["n2"],
+          },
         },
       ),
       1,
@@ -134,24 +136,15 @@ describe("applyStreamEvent", () => {
     expect(view.notifications.at(-1)?.text).toContain("计划已修订");
   });
 
-  it("renders ask_user function call: marks node waiting and shows question", () => {
+  it("marks a node input_required from a state delta", () => {
     const view = applyStreamEvent(
       viewWithNodes(),
-      functionCallEvent(
-        "ask_user",
-        { node_id: "n1", question: "预算口径？" },
-        {
-          success: true,
-          intervention_id: "iv1",
-          node_id: "n1",
-          question: "预算口径？",
-        },
-      ),
+      statusUpdate("state_delta", {
+        nodes: { n1: { status: "input_required", question: "预算口径？" } },
+      }),
       1,
     );
     expect(view.nodes[0].status).toBe("input_required");
-    expect(view.state).toBe(taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED));
-    expect(view.notifications.at(-1)?.text).toBe("预算口径？");
   });
 
   it("renders call_subagent assist as dispatch bubble, not agent message", () => {
@@ -992,6 +985,11 @@ describe("mergeConsecutiveJoins", () => {
       seq,
     },
   });
+
+function itemText(item: TimelineItem): string {
+  return item.type === "question" ? item.data.question : item.data.text;
+}
+
   const userMsg = (seq: number): TimelineItem => ({
     type: "message",
     seq,
@@ -1019,7 +1017,7 @@ describe("mergeConsecutiveJoins", () => {
     ]);
     expect(merged).toHaveLength(1);
     expect(merged[0].seq).toBe(1);
-    expect(merged[0].data.text).toBe(
+    expect(itemText(merged[0])).toBe(
       "product-manager、developer、code-reviewer、qa-engineer 加入了群聊",
     );
   });
@@ -1027,13 +1025,13 @@ describe("mergeConsecutiveJoins", () => {
   it("merges adjacent joins across different events", () => {
     const merged = mergeConsecutiveJoins([join("a", 1), join("b", 5)]);
     expect(merged).toHaveLength(1);
-    expect(merged[0].data.text).toBe("a、b 加入了群聊");
+    expect(itemText(merged[0])).toBe("a、b 加入了群聊");
   });
 
   it("keeps a single join notification untouched", () => {
     const merged = mergeConsecutiveJoins([join("a", 1)]);
     expect(merged).toHaveLength(1);
-    expect(merged[0].data.text).toBe("a 加入了群聊");
+    expect(itemText(merged[0])).toBe("a 加入了群聊");
   });
 
   it("splits runs interrupted by other timeline items", () => {
@@ -1045,8 +1043,136 @@ describe("mergeConsecutiveJoins", () => {
       join("d", 5),
     ]);
     expect(merged).toHaveLength(3);
-    expect(merged[0].data.text).toBe("a、b 加入了群聊");
+    expect(itemText(merged[0])).toBe("a、b 加入了群聊");
     expect(merged[1].type).toBe("message");
-    expect(merged[2].data.text).toBe("c、d 加入了群聊");
+    expect(itemText(merged[2])).toBe("c、d 加入了群聊");
+  });
+});
+
+describe("questions", () => {
+  function questionDataPart(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      content: {
+        $case: "data",
+        value: {
+          intervention_id: id,
+          node_id: "n1",
+          requester: "writer",
+          kind: "question",
+          question_type: "select",
+          options: ["A", "B"],
+          multi: false,
+          question: "选一个？",
+          ...overrides,
+        },
+      },
+      metadata: { cw_type: "question" },
+    };
+  }
+
+  function questionStatusEvent(parts: unknown[]) {
+    return {
+      payload: {
+        $case: "statusUpdate",
+        value: {
+          status: {
+            state: TaskState.TASK_STATE_INPUT_REQUIRED,
+            message: { parts },
+          },
+          metadata: { kind: "questions" },
+        },
+      },
+    };
+  }
+
+  it("creates a question from an input-required question message", () => {
+    const view = applyStreamEvent(
+      emptyConversation,
+      questionStatusEvent([
+        { content: { $case: "text", value: "选一个？" } },
+        questionDataPart("iv1"),
+      ]),
+      1,
+    );
+
+    const question = view.questions.iv1;
+    expect(question).toBeDefined();
+    expect(question.question_type).toBe("select");
+    expect(question.options).toEqual(["A", "B"]);
+    expect(question.requester).toBe("writer");
+    expect(question.status).toBe("pending");
+    expect(question.seq).toBe(1);
+    expect(view.state).toBe(taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED));
+  });
+
+  it("marks a question resolved from a state_delta answer", () => {
+    let view = applyStreamEvent(
+      emptyConversation,
+      questionStatusEvent([questionDataPart("iv1")]),
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      statusUpdate("state_delta", {
+        interventions: {
+          iv1: {
+            status: "resolved",
+            node_id: "n1",
+            kind: "question",
+            answer: "A",
+            responder: "human",
+          },
+        },
+      }),
+      2,
+    );
+
+    expect(view.questions.iv1.status).toBe("resolved");
+    expect(view.questions.iv1.answer).toBe("A");
+  });
+
+  it("marks a question rejected on intervention.rejected", () => {
+    let view = applyStreamEvent(
+      emptyConversation,
+      questionStatusEvent([questionDataPart("iv1")]),
+      1,
+    );
+    view = applyStreamEvent(
+      view,
+      statusUpdate("intervention.rejected", { intervention_id: "iv1", reason: "bad answer" }),
+      2,
+    );
+
+    expect(view.questions.iv1.status).toBe("rejected");
+    expect(view.questions.iv1.error).toBe("bad answer");
+  });
+
+  it("rebuilds questions from task history without duplicating", () => {
+    const task = {
+      payload: {
+        $case: "task",
+        value: {
+          id: "t1",
+          contextId: "c1",
+          status: { state: TaskState.TASK_STATE_INPUT_REQUIRED },
+          history: [
+            {
+              messageId: "m1",
+              role: 2,
+              parts: [
+                { content: { $case: "text", value: "选一个？" } },
+                questionDataPart("iv1"),
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    let view = applyStreamEvent(emptyConversation, task, 1);
+    view = applyStreamEvent(view, task, 2);
+
+    expect(Object.keys(view.questions)).toEqual(["iv1"]);
+    expect(view.messages.some((message) => message.id === "m1")).toBe(false);
   });
 });

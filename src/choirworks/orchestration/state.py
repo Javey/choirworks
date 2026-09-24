@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, TypedDict, cast
@@ -28,6 +29,17 @@ class InterventionStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     EXPIRED = "expired"
+
+
+class InterventionKind(StrEnum):
+    QUESTION = "question"
+    CONFIRM_CANCEL = "confirm_cancel"
+
+
+class QuestionType(StrEnum):
+    INPUT = "input"
+    SELECT = "select"
+    CONFIRM = "confirm"
 
 
 TERMINAL_NODE_STATUSES = {
@@ -153,6 +165,11 @@ class InterventionDelta(TypedDict, total=False):
     kind: str
     question: str
     responder: str
+    answer: str | list[str] | bool
+    question_type: str
+    options: list[str]
+    multi: bool
+    requester: str
 
 
 class MemberDict(TypedDict):
@@ -201,11 +218,24 @@ class InterventionDict(TypedDict):
     node_id: str
     question: str
     status: str
-    answer: str | None
+    answer: str | list[str] | bool | None
     responder: str | None
     kind: str
+    question_type: str
+    options: list[str]
+    multi: bool
+    requester: str
     target_node_id: str | None
     created_at: str
+
+
+def _answer_from_json(value: object) -> str | list[str] | bool | None:
+    """Validate a persisted answer value (str / list[str] / bool / None)."""
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return [str(item) for item in value]
+    raise ValueError(f"invalid intervention answer: {value!r}")
 
 
 @dataclass
@@ -213,10 +243,14 @@ class Intervention:
     id: str
     node_id: str
     question: str
-    status: str = InterventionStatus.PENDING
-    answer: str | None = None
+    status: InterventionStatus = InterventionStatus.PENDING
+    answer: str | list[str] | bool | None = None
     responder: str | None = None
-    kind: str = "question"
+    kind: InterventionKind = InterventionKind.QUESTION
+    question_type: QuestionType = QuestionType.INPUT
+    options: list[str] = field(default_factory=list)
+    multi: bool = False
+    requester: str = ""
     target_node_id: str | None = None
     created_at: str = field(default_factory=now_iso)
 
@@ -230,20 +264,29 @@ class Intervention:
             "answer": self.answer,
             "responder": self.responder,
             "kind": self.kind,
+            "question_type": self.question_type,
+            "options": list(self.options),
+            "multi": self.multi,
+            "requester": self.requester,
             "target_node_id": self.target_node_id,
             "created_at": self.created_at,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Intervention:
+        raw_options = data.get("options", [])
         return cls(
             id=str(data.get("id", data.get("intervention_id", ""))),
             node_id=str(data.get("node_id", "")),
             question=str(data.get("question", "")),
             status=InterventionStatus(data.get("status", "pending")),
-            answer=data.get("answer"),
+            answer=_answer_from_json(data.get("answer")),
             responder=data.get("responder"),
-            kind=str(data.get("kind", "question")),
+            kind=InterventionKind(data.get("kind", InterventionKind.QUESTION)),
+            question_type=QuestionType(data.get("question_type", QuestionType.INPUT)),
+            options=[str(item) for item in raw_options] if isinstance(raw_options, list) else [],
+            multi=bool(data.get("multi", False)),
+            requester=str(data.get("requester", "")),
             target_node_id=data.get("target_node_id"),
             created_at=str(data.get("created_at", now_iso())),
         )
@@ -307,7 +350,6 @@ class OrchestrationState:
     derived_count: int = 0
     patch_count: int = 0
     revision_count: int = 0
-    next_intervention: int = 1
     next_message: int = 1
 
 
@@ -403,13 +445,25 @@ def add_member(state: OrchestrationState, name: str, url: str, reason: str) -> b
     return True
 
 
-def add_intervention(state: OrchestrationState, node_id: str, question: str) -> Intervention:
+def add_intervention(
+    state: OrchestrationState,
+    node_id: str,
+    question: str,
+    *,
+    question_type: QuestionType = QuestionType.INPUT,
+    options: list[str] | None = None,
+    multi: bool = False,
+    requester: str = "",
+) -> Intervention:
     intervention = Intervention(
-        id=f"iv{state.next_intervention}",
+        id=uuid.uuid4().hex,
         node_id=node_id,
         question=question,
+        question_type=question_type,
+        options=list(options or []),
+        multi=multi,
+        requester=requester,
     )
-    state.next_intervention += 1
     state.interventions[intervention.id] = intervention
     return intervention
 
@@ -425,13 +479,14 @@ def add_cancel_request(
         ):
             return None
     intervention = Intervention(
-        id=f"iv{state.next_intervention}",
+        id=uuid.uuid4().hex,
         node_id=target_node_id,
         question=question,
-        kind="confirm_cancel",
+        kind=InterventionKind.CONFIRM_CANCEL,
+        question_type=QuestionType.CONFIRM,
+        requester="orchestrator",
         target_node_id=target_node_id,
     )
-    state.next_intervention += 1
     state.interventions[intervention.id] = intervention
     return intervention
 
@@ -449,18 +504,22 @@ def expire_cancel_requests(state: OrchestrationState, node_id: str) -> list[Inte
     return expired
 
 
-def normalize_cancel_requests(state: OrchestrationState) -> list[Intervention]:
-    """Expire confirmations whose target is no longer in flight."""
+def normalize_interventions(state: OrchestrationState) -> list[Intervention]:
+    """Expire pending interventions whose target is no longer waiting."""
     expired = []
     for intervention in state.interventions.values():
-        if (
-            intervention.kind != "confirm_cancel"
-            or intervention.status != InterventionStatus.PENDING
-            or intervention.target_node_id is None
-        ):
+        if intervention.status != InterventionStatus.PENDING:
             continue
-        node = state.nodes.get(intervention.target_node_id)
-        if node is None or node.status not in ACTIVE_NODE_STATUSES:
+        node = state.nodes.get(intervention.target_node_id or intervention.node_id)
+        if node is None:
+            intervention.status = InterventionStatus.EXPIRED
+            expired.append(intervention)
+            continue
+        if intervention.kind == "confirm_cancel":
+            if node.status not in ACTIVE_NODE_STATUSES:
+                intervention.status = InterventionStatus.EXPIRED
+                expired.append(intervention)
+        elif node.status != NodeStatus.INPUT_REQUIRED:
             intervention.status = InterventionStatus.EXPIRED
             expired.append(intervention)
     return expired
@@ -495,7 +554,6 @@ def start_new_plan(state: OrchestrationState, plan_id: str) -> None:
     state.derived_count = 0
     state.patch_count = 0
     state.revision_count = 0
-    state.next_intervention = 1
     state.next_message = 1
 
 
@@ -518,7 +576,6 @@ def state_to_json(state: OrchestrationState) -> str:
             "derived_count": state.derived_count,
             "patch_count": state.patch_count,
             "revision_count": state.revision_count,
-            "next_intervention": state.next_intervention,
             "next_message": state.next_message,
         },
         ensure_ascii=False,
@@ -548,7 +605,6 @@ def state_from_json(raw: str) -> OrchestrationState:
     state.derived_count = int(data.get("derived_count", 0))
     state.patch_count = int(data.get("patch_count", 0))
     state.revision_count = int(data.get("revision_count", 0))
-    state.next_intervention = int(data.get("next_intervention", 1))
     state.next_message = int(data.get("next_message", 1))
     return state
 

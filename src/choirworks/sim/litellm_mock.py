@@ -240,6 +240,9 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
                 "question": "",
                 "target_agent": None,
                 "instruction": "",
+                "question_type": "confirm",
+                "options": [],
+                "multi": False,
             }
 
         preferred = PEER_ROUTES.get(asking, ("product-manager", "developer", "qa-engineer"))
@@ -269,6 +272,9 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
         "question": "",
         "target_agent": None,
         "instruction": "",
+        "question_type": "input",
+        "options": [],
+        "multi": False,
     }
 
 

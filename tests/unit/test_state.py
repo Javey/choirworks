@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from choirworks.orchestration.state import (
+    InterventionKind,
     InterventionStatus,
     Member,
     NodeState,
     NodeStatus,
     OrchestrationState,
+    QuestionType,
     active_nodes,
     add_cancel_request,
     add_intervention,
@@ -22,7 +26,7 @@ from choirworks.orchestration.state import (
     has_pending_work,
     input_required_nodes,
     load_state,
-    normalize_cancel_requests,
+    normalize_interventions,
     pending_intervention_for,
     pending_interventions,
     ready_nodes,
@@ -83,7 +87,6 @@ def test_full_json_round_trips_everything():
     resolved.answer = "答复"
     resolved.responder = "human"
     queued = enqueue(state, "n1", "hi", sender="user", quote_id="n1")
-    state.next_intervention = 5
     state.next_message = 5
 
     loaded = state_from_json(state_to_json(state))
@@ -92,7 +95,6 @@ def test_full_json_round_trips_everything():
     assert loaded.plan_version == 3
     assert loaded.derived_count == 1
     assert loaded.revision_count == 2
-    assert loaded.next_intervention == 5
     assert loaded.next_message == 5
     node = loaded.nodes["n1"]
     assert node.status == NodeStatus.COMPLETED
@@ -115,6 +117,50 @@ def test_full_json_round_trips_everything():
 def test_state_from_json_rejects_non_object_snapshot():
     with pytest.raises(ValueError):
         state_from_json("[]")
+
+
+def test_intervention_question_fields_round_trip():
+    state = OrchestrationState()
+    select = add_intervention(
+        state,
+        "n1",
+        "选一个",
+        question_type=QuestionType.SELECT,
+        options=["A", "B"],
+        multi=True,
+        requester="agent-a",
+    )
+    select.answer = ["A", "B"]
+    confirm = add_intervention(
+        state,
+        "n2",
+        "确认？",
+        question_type=QuestionType.CONFIRM,
+        requester="orchestrator",
+    )
+    confirm.status = InterventionStatus.RESOLVED
+    confirm.answer = True
+
+    loaded = state_from_json(state_to_json(state))
+
+    loaded_select = loaded.interventions[select.id]
+    assert loaded_select.question_type == QuestionType.SELECT
+    assert loaded_select.options == ["A", "B"]
+    assert loaded_select.multi is True
+    assert loaded_select.requester == "agent-a"
+    assert loaded_select.answer == ["A", "B"]
+    loaded_confirm = loaded.interventions[confirm.id]
+    assert loaded_confirm.kind == InterventionKind.QUESTION
+    assert loaded_confirm.answer is True
+
+
+def test_state_from_json_rejects_invalid_answer():
+    state = OrchestrationState()
+    add_intervention(state, "n1", "q")
+    payload = json.loads(state_to_json(state))
+    payload["interventions"][0]["answer"] = 123
+    with pytest.raises(ValueError):
+        state_from_json(json.dumps(payload))
 
 
 def test_load_state_reads_task_metadata():
@@ -289,13 +335,13 @@ def test_cancel_requests_expire_and_deduplicate():
     assert add_cancel_request(state, "n1", "再问？") is not None
 
 
-def test_normalize_cancel_requests_expires_when_target_settled():
+def test_normalize_interventions_expires_when_target_settled():
     state = OrchestrationState()
     _node(state, "n1", status=NodeStatus.COMPLETED)
     expired = add_cancel_request(state, "n1", "打断？")
     assert expired is not None
 
-    normalized = normalize_cancel_requests(state)
+    normalized = normalize_interventions(state)
 
     assert [iv.id for iv in normalized] == [expired.id]
     assert expired.status == InterventionStatus.EXPIRED

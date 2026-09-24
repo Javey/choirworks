@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 
 from choirworks.orchestration.patch import PlanPatch
+from choirworks.orchestration.state import QuestionType
 from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:
@@ -38,7 +39,14 @@ An agent is blocked and needs help. Decide how to handle it:
 
 Set intent="need_info". When target_agent is set, instruction should describe the
 task. Return only JSON matching the schema.
-- reasoning: one short sentence explaining your decision."""
+- reasoning: one short sentence explaining your decision.
+
+When escalating to a human, shape the question interface:
+- question_type="confirm" when it is a yes/no decision
+- question_type="select" with options when the choices are enumerable; set multi=true
+  when more than one option can be chosen
+- question_type="input" otherwise (default)
+Leave question_type/options/multi at their defaults when a peer agent is chosen."""
 
 REPAIR_SYSTEM = """You are the orchestrator of a multi-agent group.
 Some tasks in the plan failed after retries. Produce an incremental repair patch:
@@ -57,6 +65,9 @@ class OutcomeDecision(BaseModel):
     instruction: str = ""
     patch: PlanPatch | None = None
     reasoning: str = ""
+    question_type: QuestionType = QuestionType.INPUT
+    options: list[str] = Field(default_factory=list)
+    multi: bool = False
 
 
 def outcome_decision_schema(

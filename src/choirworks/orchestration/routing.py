@@ -157,4 +157,3 @@ async def spawn_followup_node(
         },
     )
     await ctx.sessions.persist(ctx)
-    ctx.runtime.runner_start_requested = True

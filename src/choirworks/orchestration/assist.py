@@ -69,7 +69,6 @@ async def arbitrate_mentions(
             },
         )
         await ctx.sessions.persist(ctx)
-        ctx.runtime.runner_start_requested = True
 
 
 async def spawn_assist(

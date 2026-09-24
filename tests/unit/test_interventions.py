@@ -3,25 +3,30 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from a2a.types.a2a_pb2 import TaskStatusUpdateEvent
+from a2a.types.a2a_pb2 import TaskState, TaskStatusUpdateEvent
 from google.protobuf.json_format import MessageToDict
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.intervention import answer_intervention, settle_input
+from choirworks.orchestration.intervention import (
+    answer_intervention,
+    request_human,
+    settle_input,
+)
 from choirworks.orchestration.state import (
     InterventionStatus,
     NodeState,
     NodeStatus,
     OrchestrationState,
+    QuestionType,
     add_cancel_request,
     add_intervention,
     expire_cancel_requests,
-    normalize_cancel_requests,
+    normalize_interventions,
     pending_interventions,
     state_from_json,
     state_to_json,
 )
-from tests.support.fakes import FakeRegistry
+from tests.support.fakes import FakeRegistry, FakeSessions
 
 
 class _Queue:
@@ -40,7 +45,6 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         context_id="c1",
         queue=queue,
         lock=asyncio.Lock(),
-        runner_start_requested=False,
     )
     deps = SimpleNamespace(registry=FakeRegistry([]))
     ctx = OrchestrationContext(
@@ -48,7 +52,7 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         registry=deps.registry,
         remote=SimpleNamespace(),
         llm=SimpleNamespace(),
-        sessions=SimpleNamespace(),
+        sessions=FakeSessions(),
         config=SimpleNamespace(),
         brief_builder=SimpleNamespace(),
         effects=SimpleNamespace(),
@@ -79,9 +83,10 @@ def test_cancel_request_dedupes_per_node():
 def test_expire_cancel_requests_on_node_settle():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.WORKING)
-    add_cancel_request(state, "n1", "打断？")
+    first = add_cancel_request(state, "n1", "打断？")
     expired = expire_cancel_requests(state, "n1")
-    assert [iv.id for iv in expired] == ["iv1"]
+    assert first is not None
+    assert [iv.id for iv in expired] == [first.id]
     assert pending_interventions(state) == []
 
 
@@ -92,7 +97,7 @@ def test_normalize_expires_when_target_missing_or_settled():
     add_cancel_request(state, "n1", "打断？")
     add_cancel_request(state, "n2", "打断？")
     add_cancel_request(state, "ghost", "打断？")
-    expired = normalize_cancel_requests(state)
+    expired = normalize_interventions(state)
     assert {iv.target_node_id for iv in expired} == {"n1", "ghost"}
     pending = pending_interventions(state)
     assert [iv.target_node_id for iv in pending] == ["n2"]
@@ -146,19 +151,108 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
 async def test_answer_intervention_marks_human_responder_and_readies_node():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
-    add_intervention(state, "n1", "请确认是否采用该方案？")
+    pending = add_intervention(state, "n1", "请确认是否采用该方案？")
     ctx, queue = make_ctx(state)
 
-    await answer_intervention(ctx, "按方案二执行")
+    assert await answer_intervention(ctx, intervention_id=pending.id, answer="按方案二执行") is True
 
-    intervention = next(iter(state.interventions.values()))
+    intervention = state.interventions[pending.id]
     assert intervention.status == InterventionStatus.RESOLVED
     assert intervention.responder == "human"
     assert intervention.answer == "按方案二执行"
     assert state.nodes["n1"].status == NodeStatus.READY
     assert state.nodes["n1"].answer_text == "按方案二执行"
-    assert ctx.runtime.runner_start_requested is True
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
     assert meta["interventions"][intervention.id]["responder"] == "human"
+
+
+async def test_answer_intervention_rejects_unknown_id():
+    state = OrchestrationState()
+    ctx, queue = make_ctx(state)
+
+    assert await answer_intervention(ctx, intervention_id="missing", answer="x") is False
+
+    delta = queue.events[-1]
+    meta = MessageToDict(delta.metadata)
+    assert meta["kind"] == "intervention.rejected"
+
+
+async def test_answer_intervention_rejects_wrong_type():
+    state = OrchestrationState()
+    state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
+    pending = add_intervention(
+        state,
+        "n1",
+        "选一个",
+        question_type=QuestionType.SELECT,
+        options=["A", "B"],
+    )
+    ctx, _ = make_ctx(state)
+
+    assert await answer_intervention(ctx, intervention_id=pending.id, answer="C") is False
+    assert pending.status == InterventionStatus.PENDING
+
+
+async def test_answer_intervention_expires_stale_question():
+    state = OrchestrationState()
+    state.nodes["n1"] = node("n1", NodeStatus.CANCELED)
+    pending = add_intervention(state, "n1", "问题")
+    ctx, _ = make_ctx(state)
+
+    assert await answer_intervention(ctx, intervention_id=pending.id, answer="答复") is False
+
+    assert pending.status == InterventionStatus.EXPIRED
+    assert pending_interventions(state) == []
+
+
+async def test_answer_intervention_confirm_cancel_cancels_active_node():
+    state = OrchestrationState()
+    state.nodes["n1"] = node("n1", NodeStatus.WORKING)
+    pending = add_cancel_request(state, "n1", "打断？")
+    assert pending is not None
+    ctx, _ = make_ctx(state)
+
+    assert await answer_intervention(ctx, intervention_id=pending.id, answer=True) is True
+
+    assert state.nodes["n1"].status == NodeStatus.CANCELED
+
+
+async def test_answer_intervention_expires_stale_confirm_cancel():
+    state = OrchestrationState()
+    state.nodes["n1"] = node("n1", NodeStatus.COMPLETED)
+    pending = add_cancel_request(state, "n1", "打断？")
+    assert pending is not None
+    ctx, _ = make_ctx(state)
+
+    assert await answer_intervention(ctx, intervention_id=pending.id, answer=True) is False
+
+    assert pending.status == InterventionStatus.EXPIRED
+
+
+async def test_request_human_emits_input_required_question_message():
+    state = OrchestrationState()
+    blocked = node("writer", NodeStatus.INPUT_REQUIRED)
+    blocked.question = "请确认是否采用该方案？"
+    state.nodes["writer"] = blocked
+    ctx, queue = make_ctx(state)
+
+    await request_human(ctx, blocked)
+
+    pending = pending_interventions(state)
+    assert len(pending) == 1
+    assert pending[0].requester == "writer"
+
+    delta = queue.events[-1]
+    assert isinstance(delta, TaskStatusUpdateEvent)
+    assert delta.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+    data_parts = [
+        part for part in delta.status.message.parts if part.WhichOneof("content") == "data"
+    ]
+    assert data_parts
+    meta = MessageToDict(data_parts[0].metadata)
+    assert meta["cw_type"] == "question"
+    payload = MessageToDict(data_parts[0].data)
+    assert payload["intervention_id"] == pending[0].id
+    assert payload["question_type"] == "input"
