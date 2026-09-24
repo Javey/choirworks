@@ -11,7 +11,7 @@ from a2a.types import (
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from choirworks.orchestration.patch import PatchNode, PlanPatch
+from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
 from choirworks.sim.fake_agent import start_fake_agent
 from choirworks.tools.outcome_decision import OutcomeDecision
 from tests.support.fakes import FakeLLM

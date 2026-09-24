@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-from choirworks.orchestration.patch import PlanPatch
+from choirworks.orchestration.planning.patch import PlanPatch
 from choirworks.orchestration.state import QuestionType
 from choirworks.tools.base import AgentFunction, FunctionResult
 

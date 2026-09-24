@@ -8,10 +8,10 @@ from typing import Literal
 import structlog
 from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.orchestration import repair
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_event, emit_pending_questions
 from choirworks.orchestration.graph import DEFAULT, Edge, Flow, FlowOutcome
+from choirworks.orchestration.planning import repair
 from choirworks.orchestration.state import (
     all_completed,
     has_failures,

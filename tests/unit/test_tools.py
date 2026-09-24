@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.patch import PatchResult, PlanPatch
+from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,

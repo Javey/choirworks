@@ -174,7 +174,7 @@ async def test_send_greeting_direct_reply(tmp_path, echo_agent):
 
 
 async def test_repair_limit_stops_loop(tmp_path):
-    from choirworks.orchestration.patch import PatchNode, PlanPatch
+    from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
     from choirworks.tools.outcome_decision import OutcomeDecision
 
     flaky = await start_fake_agent("flaky_always", name="flaky")

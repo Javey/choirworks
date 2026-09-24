@@ -17,9 +17,9 @@ from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.functions import join_members
 from choirworks.orchestration.message import MessagePayload, message_flow
-from choirworks.orchestration.patch import PatchResult, PlanPatch
+from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
+from choirworks.orchestration.planning.repair import apply_patch_locked
 from choirworks.orchestration.registry import AgentRegistry
-from choirworks.orchestration.repair import apply_patch_locked
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
 from choirworks.orchestration.transitions import apply_transition

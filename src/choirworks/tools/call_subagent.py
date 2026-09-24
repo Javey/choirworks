@@ -6,7 +6,7 @@ import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.context import build_peer_fallback_input
-from choirworks.orchestration.derived import DerivedKind, spawn_derived_node
+from choirworks.orchestration.planning.derived import DerivedKind, spawn_derived_node
 from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:

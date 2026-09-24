@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel
 
-from choirworks.orchestration.patch import PlanPatch
+from choirworks.orchestration.planning.patch import PlanPatch
 from choirworks.tools.base import AgentFunction, FunctionResult
 from choirworks.tools.create_plan import PlanNodeData
 

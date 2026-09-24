@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from choirworks.orchestration.patch import PatchNode, PlanPatch, apply_patch
+from choirworks.orchestration.planning.patch import PatchNode, PlanPatch, apply_patch
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
