@@ -4,7 +4,7 @@ import structlog
 
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_intervention_rejected, emit_state_delta
-from choirworks.orchestration.remote_caller import cancel_remote_task
+from choirworks.orchestration.execution.remote_caller import cancel_remote_task
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     Intervention,

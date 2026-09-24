@@ -8,8 +8,8 @@ from a2a.types.a2a_pb2 import TaskState
 from choirworks.orchestration import settlement
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_event, emit_function_call, emit_state_delta
+from choirworks.orchestration.execution.node_executor import execute_node
 from choirworks.orchestration.graph import FlowOutcome
-from choirworks.orchestration.node_executor import execute_node
 from choirworks.orchestration.plan import plan_flow
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,

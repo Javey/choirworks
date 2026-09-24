@@ -6,7 +6,7 @@ from a2a.server.agent_execution import RequestContext
 from choirworks.a2a.tasks import RECOVER_KEY
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
-from choirworks.orchestration.runner import start_runner
+from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     NodeStatus,
