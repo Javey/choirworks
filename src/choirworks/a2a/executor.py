@@ -15,7 +15,7 @@ from choirworks.a2a.wire import status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.flows import join_members
+from choirworks.orchestration.functions import join_members
 from choirworks.orchestration.message import MessagePayload, message_flow
 from choirworks.orchestration.patch import PatchResult, PlanPatch
 from choirworks.orchestration.registry import AgentRegistry

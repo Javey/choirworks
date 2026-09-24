@@ -5,7 +5,7 @@ import structlog
 from choirworks.core.context import build_repair_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_pending_questions, emit_state_delta
-from choirworks.orchestration.flows import execute_function, join_members
+from choirworks.orchestration.functions import execute_function, join_members
 from choirworks.orchestration.patch import PatchResult, PlanPatch, apply_patch
 from choirworks.orchestration.state import (
     InterventionDelta,

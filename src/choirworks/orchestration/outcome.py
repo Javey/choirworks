@@ -2,6 +2,7 @@
 # src/google/adk/workflow/_graph.py、utils/_graph_validation.py
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,16 +11,55 @@ import structlog
 from choirworks.core.context import build_outcome_user
 from choirworks.orchestration.assist import arbitrate_mentions
 from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.derived import spawn_followup_node
 from choirworks.orchestration.graph import Edge, Flow, FlowOutcome, Route
-from choirworks.orchestration.markers import parse_marker
 from choirworks.orchestration.repair import revise_plan
-from choirworks.orchestration.routing import spawn_followup_node
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
 from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
 from choirworks.tools.outcome_decision import OutcomeDecision
 
 logger = structlog.get_logger(__name__)
+
+MarkerIntent = Literal["deliver", "need_info", "revise"]
+
+_MARKER_RE = re.compile(
+    r"^\[cw:(deliver|need_info|assist|revise)\][ \t]*(.*)$",
+    re.MULTILINE,
+)
+_INTENT_MAP: dict[str, MarkerIntent] = {
+    "deliver": "deliver",
+    "need_info": "need_info",
+    "assist": "need_info",
+    "revise": "revise",
+}
+
+
+@dataclass(frozen=True)
+class Marker:
+    intent: MarkerIntent
+    text: str = ""
+
+
+def parse_marker(output: str | None) -> Marker | None:
+    """Parse a receipt marker from the first non-empty line of an output.
+
+    Only the first non-empty line is considered so that an agent echoing the
+    dispatch text (which contains marker examples) cannot trigger a marker.
+    """
+    if not output:
+        return None
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        match = _MARKER_RE.match(line)
+        if match is None:
+            return None
+        return Marker(
+            intent=_INTENT_MAP[match.group(1)],
+            text=match.group(2).strip(),
+        )
+    return None
 
 
 @dataclass(slots=True)

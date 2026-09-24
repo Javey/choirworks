@@ -9,7 +9,7 @@ from google.protobuf.json_format import MessageToDict
 
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.flows import join_members
+from choirworks.orchestration.functions import join_members
 from choirworks.orchestration.state import OrchestrationState
 from tests.support.fakes import FakeRegistry
 
