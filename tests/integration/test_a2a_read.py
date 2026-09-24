@@ -100,7 +100,7 @@ async def test_cancel_running_task_marks_canceled(tmp_path):
             for _ in range(200):
                 task = await client.get_task(GetTaskRequest(id=task_id))
                 if task_nodes(task)["n1"]["status"] in {
-                    "dispatched",
+                    "submitted",
                     "working",
                 }:
                     break

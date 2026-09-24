@@ -133,7 +133,7 @@ async def test_send_to_running_task_queues_message(tmp_path):
             task_id = await _send_once(client, _message("开始"))
             for _ in range(200):
                 task = await client.get_task(GetTaskRequest(id=task_id))
-                if task_nodes(task)["n1"]["status"] in {"dispatched", "working"}:
+                if task_nodes(task)["n1"]["status"] in {"submitted", "working"}:
                     break
                 await asyncio.sleep(0.05)
             second_id = await _send_once(

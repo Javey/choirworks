@@ -153,7 +153,7 @@ async def emit_state_delta(
     logger.info(
         "emit_state_delta",
         task_id=ctx.task_id,
-        keys=list(delta.keys()),
+        delta=delta,
     )
     await emit_event(ctx, "state_delta", state_name, metadata=delta)
 
@@ -237,6 +237,7 @@ async def emit_function_call(
         task_id=ctx.task_id,
         function=func.name,
         success=result.success,
+        args=args.model_dump(),
     )
     part = function_call_part(func.name, args.model_dump(), result.model_dump())
     artifact = Artifact(

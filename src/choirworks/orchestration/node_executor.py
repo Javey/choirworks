@@ -62,7 +62,7 @@ async def execute_node(
         await emit_state_delta(
             ctx,
             nodes={
-                node.id: {"status": NodeStatus.DISPATCHED, "input_text": node.input_text},
+                node.id: {"status": NodeStatus.SUBMITTED, "input_text": node.input_text},
             },
         )
     elif mode == "recover":

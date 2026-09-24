@@ -51,7 +51,7 @@ async def test_recover_inflight_task_after_restart(tmp_path):
             task_id = task.id
             for _ in range(200):
                 snapshot = await app.state.task_store.get(task_id, ServerCallContext())
-                if task_nodes(snapshot)["n1"]["status"] in {"dispatched", "working"}:
+                if task_nodes(snapshot)["n1"]["status"] in {"submitted", "working"}:
                     break
                 await asyncio.sleep(0.05)
 

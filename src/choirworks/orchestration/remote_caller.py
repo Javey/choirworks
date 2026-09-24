@@ -22,7 +22,7 @@ logger = structlog.get_logger(__name__)
 
 
 _REMOTE_STATE_MAP: dict[int, NodeStatus] = {
-    TaskState.TASK_STATE_SUBMITTED: NodeStatus.DISPATCHED,
+    TaskState.TASK_STATE_SUBMITTED: NodeStatus.SUBMITTED,
     TaskState.TASK_STATE_WORKING: NodeStatus.WORKING,
     TaskState.TASK_STATE_INPUT_REQUIRED: NodeStatus.INPUT_REQUIRED,
     TaskState.TASK_STATE_AUTH_REQUIRED: NodeStatus.INPUT_REQUIRED,
@@ -148,11 +148,11 @@ async def consume_chunks(
                     }
                     for artifact in task.artifacts
                 ]
-            node.status = NodeStatus.DISPATCHED if current == NodeStatus.DISPATCHED else node.status
+            node.status = NodeStatus.SUBMITTED if current == NodeStatus.SUBMITTED else node.status
             await emit_state_delta(
                 ctx,
                 nodes={
-                    node.id: {"status": NodeStatus.DISPATCHED, "a2a_task_id": node.a2a_task_id},
+                    node.id: {"status": NodeStatus.SUBMITTED, "a2a_task_id": node.a2a_task_id},
                 },
             )
         elif chunk.HasField("status_update"):

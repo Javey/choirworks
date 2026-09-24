@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import sys
 from pathlib import Path
 
 import structlog
@@ -24,12 +25,15 @@ from choirworks.sim.litellm_mock import sim_acompletion
 structlog.configure(
     processors=[
         structlog.processors.add_log_level,
+        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="%H:%M:%S"),
         structlog.dev.ConsoleRenderer(),
     ],
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    logger_factory=structlog.stdlib.LoggerFactory(),
     cache_logger_on_first_use=True,
 )
+logging.basicConfig(format="%(message)s", stream=sys.stderr, level=logging.INFO)
 
 SIM_AGENTS: list[tuple[str, str]] = [
     ("product-manager", "collaborate"),

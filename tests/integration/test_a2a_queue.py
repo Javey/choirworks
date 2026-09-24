@@ -42,7 +42,7 @@ async def test_interrupt_cancels_active_node_and_starts_followup(tmp_path):
             )
             for _ in range(200):
                 task = await client.get_task(GetTaskRequest(id=task_id))
-                if task_nodes(task)["n1"]["status"] in {"dispatched", "working"}:
+                if task_nodes(task)["n1"]["status"] in {"submitted", "working"}:
                     break
                 await asyncio.sleep(0.05)
 

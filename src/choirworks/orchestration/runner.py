@@ -73,7 +73,7 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                         else ("continue" if node.status == NodeStatus.READY else "dispatch")
                     )
                     if mode != "recover":
-                        node.status = NodeStatus.DISPATCHED
+                        node.status = NodeStatus.SUBMITTED
                     batch.append((node, mode))
                 if batch:
                     await _announce_dispatch(ctx, batch)

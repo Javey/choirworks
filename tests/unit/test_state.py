@@ -208,7 +208,7 @@ def test_ready_nodes_requires_all_deps_completed():
 def test_ready_nodes_ignores_non_pending_statuses_and_missing_deps():
     state = OrchestrationState()
     _node(state, "done", status=NodeStatus.COMPLETED)
-    _node(state, "active", status=NodeStatus.DISPATCHED)
+    _node(state, "active", status=NodeStatus.SUBMITTED)
     _node(state, "orphan", status=NodeStatus.PENDING, deps=["ghost"])
 
     assert ready_nodes(state) == []
@@ -228,13 +228,13 @@ def test_blocked_nodes_are_pending_with_terminal_dep():
 
 def test_active_and_input_required_and_failed_nodes():
     state = OrchestrationState()
-    _node(state, "dispatched", status=NodeStatus.DISPATCHED)
+    _node(state, "submitted", status=NodeStatus.SUBMITTED)
     _node(state, "working", status=NodeStatus.WORKING)
     _node(state, "asked", status=NodeStatus.INPUT_REQUIRED)
     _node(state, "failed", status=NodeStatus.FAILED)
     _node(state, "pending", status=NodeStatus.PENDING)
 
-    assert {n.id for n in active_nodes(state)} == {"dispatched", "working"}
+    assert {n.id for n in active_nodes(state)} == {"submitted", "working"}
     assert [n.id for n in input_required_nodes(state)] == ["asked"]
     assert [n.id for n in failed_nodes(state)] == ["failed"]
 

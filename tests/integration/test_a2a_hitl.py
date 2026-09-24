@@ -214,7 +214,7 @@ async def test_question_pushed_while_parallel_node_running(tmp_path, ask_agent):
             task_id = await _send_once(client, _message("并行任务"))
             pending = await wait_for_question_parts(client, task_id, 1)
             # 问题已推送，但并行节点仍在运行（未被排空阻塞）
-            assert task_nodes(pending)["n2"]["status"] in {"dispatched", "working"}
+            assert task_nodes(pending)["n2"]["status"] in {"submitted", "working"}
             assert pending.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
             ids = question_ids_from_status(pending)
             assert ids

@@ -16,7 +16,7 @@ STATE_JSON_KEY = "choirworks.state"
 class NodeStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
-    DISPATCHED = "dispatched"
+    SUBMITTED = "submitted"
     WORKING = "working"
     INPUT_REQUIRED = "input_required"
     COMPLETED = "completed"
@@ -48,7 +48,7 @@ TERMINAL_NODE_STATUSES = {
     NodeStatus.CANCELED,
     NodeStatus.INVALIDATED,
 }
-ACTIVE_NODE_STATUSES = {NodeStatus.DISPATCHED, NodeStatus.WORKING}
+ACTIVE_NODE_STATUSES = {NodeStatus.SUBMITTED, NodeStatus.WORKING}
 PENDING_NODE_STATUSES = {NodeStatus.PENDING, NodeStatus.READY}
 INPUT_NODE_STATUSES = {NodeStatus.INPUT_REQUIRED}
 MAX_METADATA_OUTPUT = 2000
