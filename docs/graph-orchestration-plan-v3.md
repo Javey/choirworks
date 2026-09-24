@@ -161,26 +161,33 @@ start: check_retryable ──"retry"──→ do_backoff_continue      # 终端:
       └─无条件─→ do_stalled_failed      # EXIT_FAILED
 ```
 
-**③ `message_flow`（入口路由链，`executor.py:125` 起 + `routing.py`）**——payload: 入站消息
+**③ `message_flow`（入口路由链，`executor.py` + `routing.py`）**——payload: `MessagePayload`
 
 ```
-start: classify_inbound ─┬ "recover"         → do_recover_task
-                         ├ "malformed"       → do_reject
-                         ├ "answers"         → do_answer_intervention
-                         ├ "unanswered_pending" → do_reemit_questions   # 终端
-                         ├ "active" | "pending_work" → classify_room
-                         ├ "empty"           → do_complete_task
-                         └ DEFAULT           → do_plan_and_launch
+start: prepare_inbound ─┬ "recover" → do_recover ─→ END   # 协议准备短路
+                        └ "ready"   → classify_inbound
+classify_inbound ─┬ "malformed"       → do_reject
+                  ├ "answers"         → do_answers
+                  ├ "unanswered_pending" → do_reemit_questions   # 终端
+                  ├ "room"            → classify_room
+                  ├ "empty"           → do_complete
+                  └ DEFAULT           → do_plan_and_launch
 
 classify_room ─┬ "quote_active"    → do_enqueue
                ├ "quote_completed" → do_spawn_followup
-               ├ "interrupt"       → do_cancel_active → do_spawn_followup
+               ├ "interrupt"       → do_interrupt
                ├ "target"          → do_enqueue
-               └ DEFAULT           → do_plan_and_launch
+               └ DEFAULT           → do_new_plan
 ```
 
-`executor.execute` 收敛为「协议层（建 Task / 解析 question_response / 锁 / TaskUpdater）+
-`await message_flow.run(ctx, msg)` 一行」。
+`prepare_inbound` 承担 inbound 协议准备（`get_user_input`、解析 `question_response`、
+`current_task is None` 时建初始 Task、`TaskUpdater`、`room_options`+mentions），并对 recover
+**短路**——recover 不解析 message、不判断 `current_task`、不建 updater/room，直达 `do_recover`。
+`executor.execute` 只留结构性三样：`ensure_session`（产出 runtime）、`_build_ctx`（图的 ctx）、
+`runtime.lock`（作用域），其余一行 `await message_flow.run(ctx, payload)`。
+
+recover 逻辑（协议探测 `is_recover_request` + 领域逻辑 `recover_session`）全部抽离到
+`orchestration/recover.py`，executor 不再含任何 recover 代码。
 
 **② `outcome_flow`（交付结果分支，`node_executor.py:149-193`）**——payload: `OutcomePayload`
 
@@ -192,20 +199,21 @@ start: interpret ─┬ "deliver"   → do_mark_delivered → do_arbitrate_menti
 
 `interpret` = 现有 `_interpret_outcome`（marker → LLM → 异常默认 deliver 三层，原样保留）。
 
-**④ `settlement_flow`（求助结算梯，`intervention.py:46-127`）**——payload: node_id
+**④ `settlement_flow`（求助结算梯，`settlement.py`）**——payload: `SettlementPayload`
 
 ```
-start: inspect_helpers ─┬ "already_pending"  → END(noop)
-                        ├ "helper_completed" → do_resolve_from_helper → do_resume
-                        ├ "helper_active"    → END(noop)
-                        └ DEFAULT            → decide_assistance
-decide_assistance ─┬ "spawn_assist" → do_spawn_assist ──失败──→ do_request_human
-                   └ "human"        → do_request_human
+start: inspect_helpers ─┬ "already_pending"  → already_pending(noop) ─→ END
+                        ├ "helper_active"    → helper_active(noop) ───→ END
+                        ├ "helper_completed" → resolve_from_helper ──→ EXIT_DONE
+                        └ "decide"           → decide_assistance ─"act"→ act ─→ EXIT_DONE | END
 ```
+
+`decide_assistance` 后的 `act` 在**同一把 `ctx.lock` 内**完成「spawn_assist 失败则转人工」，
+以保持与旧实现一致的锁语义（即 `spawn_assist`/`request_human` 不拆成两个持锁节点）。
 
 > 与 v1 的取舍（已确认放弃，理由见「九、明确不做」）：v1 的 `TaskWorkflow`
 > （node_executor 全量图化）与 `AnswerWorkflow`（answer 守卫链图化）不采纳；
-> 本稿 `outcome_flow` 只覆盖交付结果分支，`message_flow` 的 `do_answer_intervention`
+> 本稿 `outcome_flow` 只覆盖交付结果分支，`message_flow` 的 `do_answers`
 > 直接调用现有 `answer_intervention` 函数。
 
 ## 六、Phase 6：统一派生节点生成
@@ -231,7 +239,7 @@ async def spawn_derived_node(
 | 1 | L1 状态机：RECOVER 入枚举 + `transitions.py` + 迁移全部变更点 | `state.py`、`transitions.py`（新）+ 7 个调用方 | 全量测试全绿；非法转移抛错有单测 |
 | 2 | L2 原语：`graph.py` + `validate()` + 单测 | `graph.py`（新）、`tests/unit/test_graph.py`（新） | 校验器单测：不可达 handler、重复边、多重 DEFAULT、Literal route 缺边 |
 | 3 | ① `plan_flow`（最高优先） | `runner.py` 决策段 → `plan_flow` | test_recovery、test_a2a_recovery；退出/重启条件同表可见 |
-| 4 | ③ `message_flow` | `executor.py`、`routing.py` | test_a2a_send / queue / hitl / stream / rewind |
+| 4 | ③ `message_flow`（含 `prepare_inbound`；recover 逻辑抽到 `recover.py`） | `executor.py`、`message.py`（新）、`routing.py`、`recover.py`（新） | test_a2a_send / queue / hitl / stream / rewind、test_recovery |
 | 5 | ② `outcome_flow` + ④ `settlement_flow` | `node_executor.py`、`intervention.py` | test_interventions、test_a2a_announcements / revise / sim_flow |
 | 6 | 派生节点统一 `derived.py` | `routing.py`、`assist.py`、`call_subagent.py` | 三处行为等价（id 方案、上限、join 差异保留） |
 

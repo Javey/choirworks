@@ -1,47 +1,32 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 import structlog
-from a2a.helpers import new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks.task_store import TaskStore
-from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import (
     TaskState,
 )
 
 from choirworks.a2a.client import RemoteAgentClient
-from choirworks.a2a.room import room_options
-from choirworks.a2a.tasks import RECOVER_KEY
-from choirworks.a2a.wire import QuestionResponse, parse_question_response, status_update
+from choirworks.a2a.wire import status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.flows import join_members
 from choirworks.orchestration.message import MessagePayload, message_flow
 from choirworks.orchestration.patch import PatchResult, PlanPatch
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.repair import apply_patch_locked
-from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.session import SessionManager, SessionRuntime
-from choirworks.orchestration.state import (
-    ACTIVE_NODE_STATUSES,
-    NodeStatus,
-    normalize_interventions,
-)
+from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.store.contexts import ContextStore
 from choirworks.tools.capabilities import ToolEffects
 
 logger = structlog.get_logger(__name__)
-
-
-def _is_recover_request(context: RequestContext) -> bool:
-    return context.call_context.state.get(RECOVER_KEY) is True
 
 
 class ChoirWorksAgentExecutor(AgentExecutor):
@@ -54,9 +39,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
     ``execute()`` routes each inbound message and returns quickly; node work
     runs in background runners, so multiple agents can work and chat at once.
 
-    This class is a thin A2A protocol layer: it wires the long-lived
-    collaborators into :class:`Deps` and delegates all orchestration work to
-    module-level functions.
+    ``execute()`` is a thin A2A adapter: it boots the session, builds the
+    orchestration context and lock, then delegates the whole inbound message to
+    ``message_flow``; all recover logic lives in ``orchestration/recover.py``.
     """
 
     def __init__(
@@ -119,50 +104,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         """Route one inbound message; background runners do the actual work."""
         assert context.task_id is not None
         assert context.context_id is not None
-        task_id = context.task_id
-        context_id = context.context_id
 
-        runtime = await self._session_mgr.ensure_session(context_id, task_id, event_queue)
-        recover = _is_recover_request(context)
-        if recover:
-            logger.info("execute recover", task_id=task_id, context_id=context_id)
-
-        text = (context.get_user_input() or "").strip()
-        responses: list[QuestionResponse] = []
-        malformed: str | None = None
-        if context.message is not None:
-            try:
-                responses = parse_question_response(context.message)
-            except ValueError as exc:
-                malformed = str(exc)
-
-        if context.current_task is None:
-            initial_task = new_task(
-                task_id=task_id,
-                context_id=context_id,
-                state=TaskState.TASK_STATE_SUBMITTED,
-                history=[context.message] if context.message else None,
-            )
-            await event_queue.enqueue_event(initial_task)
-
-        updater = TaskUpdater(event_queue, task_id, context_id)
-        room = room_options(context.message)
-        mentions = list(room.get("mentions") or [])
-        for name in re.findall(r"@([A-Za-z0-9_-]+)", text):
-            if name not in mentions:
-                mentions.append(name)
-        if mentions:
-            room["mentions"] = mentions
-
-        payload = MessagePayload(
-            text=text,
-            room=room,
-            updater=updater,
-            responses=responses,
-            malformed=malformed,
-            recover=recover,
-            run_recover=lambda: self._recover(runtime),
+        runtime = await self._session_mgr.ensure_session(
+            context.context_id, context.task_id, event_queue
         )
+        payload = MessagePayload(context=context, event_queue=event_queue)
         async with runtime.lock:
             _ = await message_flow.run(self._build_ctx(runtime), payload)
 
@@ -212,49 +158,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 node_task.cancel()
         self._sessions.clear()
 
-    async def _recover(self, runtime: SessionRuntime) -> None:
-        # 计划修订（repair.py）会对活跃节点创建 confirm_cancel 干预，
-        # 等待用户确认是否打断。进程崩溃后恢复时：
-        # - 若目标节点在崩溃前已结束（不在 ACTIVE_NODE_STATUSES），
-        #   该干预已无意义，立即标记为 expired 清理掉。
-        # - 若目标节点仍为活跃状态，干预保留为 pending，由后续 runner
-        #   重新挂接远程 task 后，通过 expire_cancel_requests 正常处理。
-        expired = normalize_interventions(runtime.state)
-        if expired:
-            logger.info(
-                "recover expired interventions",
-                task_id=runtime.task_id,
-                context_id=runtime.context_id,
-                expired_interventions=len(expired),
-            )
-            ctx = self._build_ctx(runtime)
-            await emit_state_delta(
-                ctx,
-                interventions={
-                    iv.id: {
-                        "status": "expired",
-                        "node_id": iv.node_id,
-                        "kind": iv.kind,
-                    }
-                    for iv in expired
-                },
-            )
-        # 活跃节点重置为 recover（有远程 task 可重新订阅）或 pending（重新派发）。
-        for node in runtime.state.nodes.values():
-            if node.status in ACTIVE_NODE_STATUSES:
-                apply_transition(
-                    node,
-                    NodeStatus.RECOVER if node.a2a_task_id else NodeStatus.PENDING,
-                )
-        logger.info(
-            "recover nodes",
-            task_id=runtime.task_id,
-            context_id=runtime.context_id,
-            nodes={n.id: n.status for n in runtime.state.nodes.values()},
-        )
-        await self._persist(runtime)
-        self._start_runner(runtime)
-
     # ------------------------------------------------------------- context
 
     def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
@@ -275,9 +178,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             brief_builder=self._brief_builder,
             effects=effects,
         )
-
-    def _start_runner(self, runtime: SessionRuntime) -> None:
-        start_runner(self._build_ctx(runtime))
 
     # ------------------------------------------------------- effect bindings
     # ToolEffects closures bind a runtime to the module-level functions, so

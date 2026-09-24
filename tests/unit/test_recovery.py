@@ -12,9 +12,9 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.executor import _is_recover_request
 from choirworks.a2a.recovery import recover_tasks
 from choirworks.a2a.tasks import RECOVER_KEY, REWIND_KEY
+from choirworks.orchestration.recover import is_recover_request
 from choirworks.orchestration.state import OrchestrationState, state_to_json
 
 
@@ -83,14 +83,14 @@ class RecordingHandler:
 
 
 def test_is_recover_request_requires_internal_call_context():
-    assert _is_recover_request(_request_context()) is False
-    assert _is_recover_request(_request_context(state={RECOVER_KEY: True})) is True
+    assert is_recover_request(_request_context()) is False
+    assert is_recover_request(_request_context(state={RECOVER_KEY: True})) is True
 
 
 def test_is_recover_request_ignores_client_metadata():
     message = new_text_message("你好", role=Role.ROLE_USER)
     ParseDict({RECOVER_KEY: {"kind": "recover"}}, message.metadata)
-    assert _is_recover_request(_request_context(message)) is False
+    assert is_recover_request(_request_context(message)) is False
 
 
 async def test_recover_tasks_sends_internal_recover_request():

@@ -2,15 +2,19 @@
 # src/google/adk/workflow/_graph.py、utils/_graph_validation.py
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Literal
 
 import structlog
+from a2a.helpers import new_task
+from a2a.server.agent_execution import RequestContext
+from a2a.server.events import EventQueue
 from a2a.server.tasks.task_updater import TaskUpdater
+from a2a.types.a2a_pb2 import TaskState
 
-from choirworks.a2a.room import RoomOptions
-from choirworks.a2a.wire import QuestionResponse
+from choirworks.a2a.room import RoomOptions, room_options
+from choirworks.a2a.wire import QuestionResponse, parse_question_response
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_intervention_rejected,
@@ -20,6 +24,7 @@ from choirworks.orchestration.events import (
 from choirworks.orchestration.graph import Edge, Flow, FlowOutcome
 from choirworks.orchestration.intervention import answer_intervention
 from choirworks.orchestration.planning import plan_and_launch
+from choirworks.orchestration.recover import is_recover_request, recover_session
 from choirworks.orchestration.routing import spawn_followup_node
 from choirworks.orchestration.runner import start_runner
 from choirworks.orchestration.state import (
@@ -39,20 +44,55 @@ logger = structlog.get_logger(__name__)
 
 @dataclass(slots=True)
 class MessagePayload:
-    text: str
-    room: RoomOptions
-    updater: TaskUpdater
-    responses: list[QuestionResponse]
-    malformed: str | None
-    recover: bool
-    run_recover: Callable[[], Awaitable[None]]
+    context: RequestContext
+    event_queue: EventQueue
+    text: str = ""
+    room: RoomOptions = field(default_factory=RoomOptions)
+    updater: TaskUpdater | None = None
+    responses: list[QuestionResponse] = field(default_factory=list)
+    malformed: str | None = None
     needs_runner: bool = False
     quote_id: str | None = None
     target: NodeState | None = None
 
 
-async def _do_recover(_ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    await payload.run_recover()
+async def _prepare_inbound(
+    ctx: OrchestrationContext, payload: MessagePayload
+) -> Literal["recover", "ready"]:
+    if is_recover_request(payload.context):
+        logger.info("execute recover", task_id=ctx.task_id, context_id=ctx.context_id)
+        return "recover"
+    context = payload.context
+    assert context.task_id is not None
+    assert context.context_id is not None
+    payload.text = (context.get_user_input() or "").strip()
+    if context.message is not None:
+        try:
+            payload.responses = parse_question_response(context.message)
+        except ValueError as exc:
+            payload.malformed = str(exc)
+    if context.current_task is None:
+        initial_task = new_task(
+            task_id=context.task_id,
+            context_id=context.context_id,
+            state=TaskState.TASK_STATE_SUBMITTED,
+            history=[context.message] if context.message else None,
+        )
+        await payload.event_queue.enqueue_event(initial_task)
+    payload.updater = TaskUpdater(payload.event_queue, context.task_id, context.context_id)
+    room = room_options(context.message)
+    mentions = list(room.get("mentions") or [])
+    for name in re.findall(r"@([A-Za-z0-9_-]+)", payload.text):
+        if name not in mentions:
+            mentions.append(name)
+    if mentions:
+        room["mentions"] = mentions
+    payload.room = room
+    return "ready"
+
+
+async def _do_recover(ctx: OrchestrationContext, _payload: MessagePayload) -> FlowOutcome:
+    await recover_session(ctx)
     return FlowOutcome.END
 
 
@@ -98,7 +138,9 @@ async def _do_reemit_questions(ctx: OrchestrationContext, payload: MessagePayloa
 
 async def _do_complete(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
     logger.info("execute route=empty_complete", task_id=ctx.task_id, context_id=ctx.context_id)
-    await payload.updater.complete()
+    updater = payload.updater
+    assert updater is not None
+    await updater.complete()
     ctx.sessions.evict_session(ctx.context_id)
     return FlowOutcome.END
 
@@ -110,7 +152,9 @@ async def _do_plan_and_launch(ctx: OrchestrationContext, payload: MessagePayload
         context_id=ctx.context_id,
         text_len=len(payload.text),
     )
-    await payload.updater.start_work()
+    updater = payload.updater
+    assert updater is not None
+    await updater.start_work()
     await plan_and_launch(ctx, payload.text, room=payload.room)
     return FlowOutcome.END
 
@@ -181,7 +225,6 @@ async def _do_new_plan(ctx: OrchestrationContext, payload: MessagePayload) -> Fl
 async def _classify_inbound(
     ctx: OrchestrationContext, payload: MessagePayload
 ) -> Literal[
-    "recover",
     "malformed",
     "answers",
     "unanswered_pending",
@@ -189,8 +232,6 @@ async def _classify_inbound(
     "empty",
     "plan",
 ]:
-    if payload.recover:
-        return "recover"
     if payload.malformed is not None:
         return "malformed"
     if payload.responses:
@@ -254,8 +295,9 @@ async def _classify_room(ctx: OrchestrationContext, payload: MessagePayload) -> 
 
 message_flow: Flow[MessagePayload] = Flow(
     name="message_flow",
-    start="classify_inbound",
+    start="prepare_inbound",
     handlers={
+        "prepare_inbound": _prepare_inbound,
         "classify_inbound": _classify_inbound,
         "do_recover": _do_recover,
         "do_reject": _do_reject,
@@ -271,7 +313,8 @@ message_flow: Flow[MessagePayload] = Flow(
         "do_new_plan": _do_new_plan,
     },
     edges=(
-        Edge("classify_inbound", "do_recover", frozenset({"recover"})),
+        Edge("prepare_inbound", "do_recover", frozenset({"recover"})),
+        Edge("prepare_inbound", "classify_inbound", frozenset({"ready"})),
         Edge("classify_inbound", "do_reject", frozenset({"malformed"})),
         Edge("classify_inbound", "do_answers", frozenset({"answers"})),
         Edge("classify_inbound", "do_reemit_questions", frozenset({"unanswered_pending"})),

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import structlog
 
-from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.state import NodeState, NodeStatus
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
 
