@@ -11,8 +11,7 @@ from a2a.types.a2a_pb2 import (
     TaskStatusUpdateEvent,
 )
 from google.protobuf import struct_pb2, timestamp_pb2
-from google.protobuf.json_format import MessageToDict, ParseDict
-from pydantic import BaseModel, ValidationError
+from google.protobuf.json_format import ParseDict
 
 
 def strip_none(value: object) -> object:
@@ -96,31 +95,3 @@ def data_part(data: Mapping[str, object], metadata: Mapping[str, object]) -> Par
     part.data.CopyFrom(data_value)
     part.metadata.CopyFrom(struct(metadata))
     return part
-
-
-class QuestionResponse(BaseModel):
-    """A user's answer to one pending question."""
-
-    intervention_id: str
-    answer: str | list[str] | bool
-
-
-def parse_question_response(message: Message) -> list[QuestionResponse]:
-    """Extract ``question_response`` data parts from a user message.
-
-    Returns an empty list when the message carries no such part; raises
-    ``ValueError`` when a part is malformed (missing id / bad answer type).
-    """
-    responses: list[QuestionResponse] = []
-    for part in message.parts:
-        if part.WhichOneof("content") != "data":
-            continue
-        kind_field = part.metadata.fields.get("cw_type")
-        if kind_field is None or kind_field.string_value != "question_response":
-            continue
-        payload = MessageToDict(part.data, preserving_proto_field_name=True)
-        try:
-            responses.append(QuestionResponse.model_validate(payload))
-        except ValidationError as exc:
-            raise ValueError(f"malformed question_response: {payload!r}") from exc
-    return responses

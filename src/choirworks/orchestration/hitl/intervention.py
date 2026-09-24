@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-import structlog
+import uuid
 
+import structlog
+from a2a.types.a2a_pb2 import Message, Part, Role, TaskState
+from google.protobuf.json_format import MessageToDict
+from pydantic import BaseModel, ValidationError
+
+from choirworks.a2a.wire import data_part
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_intervention_rejected, emit_state_delta
+from choirworks.orchestration.events import (
+    emit_event,
+    emit_intervention_rejected,
+    emit_state_delta,
+)
 from choirworks.orchestration.execution.remote_caller import cancel_remote_task
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
@@ -14,10 +24,84 @@ from choirworks.orchestration.state import (
     NodeStatus,
     QuestionType,
     blocked_nodes,
+    pending_interventions,
 )
 from choirworks.orchestration.transitions import apply_transition
 
 logger = structlog.get_logger(__name__)
+
+QUESTION_PART = "question"
+QUESTION_RESPONSE_PART = "question_response"
+
+
+class QuestionResponse(BaseModel):
+    """A user's answer to one pending question."""
+
+    intervention_id: str
+    answer: str | list[str] | bool
+
+
+def parse_question_response(message: Message) -> list[QuestionResponse]:
+    """Extract ``question_response`` data parts from a user message.
+
+    Returns an empty list when the message carries no such part; raises
+    ``ValueError`` when a part is malformed (missing id / bad answer type).
+    """
+    responses: list[QuestionResponse] = []
+    for part in message.parts:
+        if part.WhichOneof("content") != "data":
+            continue
+        kind_field = part.metadata.fields.get("cw_type")
+        if kind_field is None or kind_field.string_value != QUESTION_RESPONSE_PART:
+            continue
+        payload = MessageToDict(part.data, preserving_proto_field_name=True)
+        try:
+            responses.append(QuestionResponse.model_validate(payload))
+        except ValidationError as exc:
+            raise ValueError(f"malformed question_response: {payload!r}") from exc
+    return responses
+
+
+def build_questions_message(ctx: OrchestrationContext, pending: list[Intervention]) -> Message:
+    """Aggregate pending questions into one agent message (text + data parts)."""
+    parts: list[Part] = []
+    for intervention in pending:
+        parts.append(Part(text=intervention.question))
+        parts.append(
+            data_part(
+                {
+                    "intervention_id": intervention.id,
+                    "node_id": intervention.node_id,
+                    "requester": intervention.requester,
+                    "kind": intervention.kind,
+                    "question_type": intervention.question_type,
+                    "options": list(intervention.options),
+                    "multi": intervention.multi,
+                    "question": intervention.question,
+                },
+                {"cw_type": QUESTION_PART},
+            )
+        )
+    return Message(
+        role=Role.ROLE_AGENT,
+        message_id=uuid.uuid4().hex,
+        task_id=ctx.task_id,
+        context_id=ctx.context_id,
+        parts=parts,
+    )
+
+
+async def emit_pending_questions(ctx: OrchestrationContext) -> None:
+    """Emit the aggregated input-required question message (set changed)."""
+    pending = pending_interventions(ctx.state)
+    if not pending:
+        return
+    await emit_event(
+        ctx,
+        "questions",
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        message=build_questions_message(ctx, pending),
+    )
 
 
 def render_answer(intervention: Intervention) -> str:

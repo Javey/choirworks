@@ -5,7 +5,7 @@ from a2a.types.a2a_pb2 import Message, Part, Role
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.wire import parse_question_response
+from choirworks.orchestration.hitl.intervention import parse_question_response
 
 
 def _answer_part(data: dict[str, object]) -> Part:

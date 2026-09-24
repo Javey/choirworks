@@ -14,16 +14,19 @@ from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.recovery import is_recover_request, recover_session
 from choirworks.a2a.room import RoomOptions, room_options
-from choirworks.a2a.wire import QuestionResponse, parse_question_response
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_intervention_rejected,
-    emit_pending_questions,
     emit_state_delta,
 )
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
-from choirworks.orchestration.hitl.intervention import answer_intervention
+from choirworks.orchestration.hitl.intervention import (
+    QuestionResponse,
+    answer_intervention,
+    emit_pending_questions,
+    parse_question_response,
+)
 from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.planner import plan_and_launch
 from choirworks.orchestration.state import (

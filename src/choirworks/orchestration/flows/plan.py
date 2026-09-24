@@ -9,8 +9,9 @@ import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_event, emit_pending_questions
+from choirworks.orchestration.events import emit_event
 from choirworks.orchestration.flows.engine import DEFAULT, Edge, Flow, FlowOutcome
+from choirworks.orchestration.hitl.intervention import emit_pending_questions
 from choirworks.orchestration.planning import repair
 from choirworks.orchestration.state import (
     all_completed,

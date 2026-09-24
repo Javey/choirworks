@@ -9,16 +9,14 @@ from a2a.types.a2a_pb2 import (
     Artifact,
     Message,
     Part,
-    Role,
     TaskArtifactUpdateEvent,
     TaskState,
 )
 from google.protobuf.json_format import ParseDict
 from pydantic import BaseModel
 
-from choirworks.a2a.wire import data_part, function_call_part, status_update, struct
+from choirworks.a2a.wire import function_call_part, status_update, struct
 from choirworks.orchestration.state import (
-    Intervention,
     InterventionDelta,
     MemberDelta,
     NodeDelta,
@@ -72,51 +70,6 @@ async def emit_event(
             metadata=metadata,
             message=message,
         )
-    )
-
-
-def build_questions_message(
-    ctx: OrchestrationContext,
-    pending: list[Intervention],
-) -> Message:
-    """Aggregate pending questions into one agent message (text + data parts)."""
-    parts: list[Part] = []
-    for intervention in pending:
-        parts.append(Part(text=intervention.question))
-        parts.append(
-            data_part(
-                {
-                    "intervention_id": intervention.id,
-                    "node_id": intervention.node_id,
-                    "requester": intervention.requester,
-                    "kind": intervention.kind,
-                    "question_type": intervention.question_type,
-                    "options": list(intervention.options),
-                    "multi": intervention.multi,
-                    "question": intervention.question,
-                },
-                {"cw_type": "question"},
-            )
-        )
-    return Message(
-        role=Role.ROLE_AGENT,
-        message_id=uuid.uuid4().hex,
-        task_id=ctx.task_id,
-        context_id=ctx.context_id,
-        parts=parts,
-    )
-
-
-async def emit_pending_questions(ctx: OrchestrationContext) -> None:
-    """Emit the aggregated input-required question message (set changed)."""
-    pending = pending_interventions(ctx.state)
-    if not pending:
-        return
-    await emit_event(
-        ctx,
-        "questions",
-        TaskState.TASK_STATE_INPUT_REQUIRED,
-        message=build_questions_message(ctx, pending),
     )
 
 
