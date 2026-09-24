@@ -26,7 +26,8 @@ from choirworks.orchestration.state import (
     pending_intervention_for,
 )
 from choirworks.orchestration.transitions import apply_transition
-from choirworks.subagents import ASSISTANCE_SUBAGENT, run_subagent
+from choirworks.subagents.assistance import ASSISTANCE_SUBAGENT
+from choirworks.subagents.base import run_subagent
 from choirworks.tools.ask_user import AskUserArgs, ask_user_func
 from choirworks.tools.outcome_decision import OutcomeDecision
 

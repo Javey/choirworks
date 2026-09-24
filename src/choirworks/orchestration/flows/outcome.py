@@ -16,7 +16,8 @@ from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.repair import revise_plan
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
-from choirworks.subagents import OUTCOME_SUBAGENT, run_subagent
+from choirworks.subagents.base import run_subagent
+from choirworks.subagents.outcome import OUTCOME_SUBAGENT
 from choirworks.tools.outcome_decision import OutcomeDecision
 
 logger = structlog.get_logger(__name__)
