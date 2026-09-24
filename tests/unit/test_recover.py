@@ -7,8 +7,8 @@ import pytest
 from a2a.types.a2a_pb2 import TaskStatusUpdateEvent
 from google.protobuf.json_format import MessageToDict
 
-from choirworks.orchestration import recover
 from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.recovery import session_recovery as recover
 from choirworks.orchestration.state import (
     InterventionStatus,
     NodeState,
