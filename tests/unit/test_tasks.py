@@ -11,7 +11,8 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf.json_format import ParseDict
 
-from choirworks.a2a.tasks import REWIND_KEY, list_all_tasks
+from choirworks.a2a.tasks import list_all_tasks
+from choirworks.orchestration.rewind import REWIND_KEY
 
 
 def _task(

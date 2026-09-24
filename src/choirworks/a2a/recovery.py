@@ -15,7 +15,7 @@ from a2a.types.a2a_pb2 import (
     TaskState,
 )
 
-from choirworks.a2a.tasks import RECOVER_KEY, iter_all_tasks
+from choirworks.a2a.tasks import iter_all_tasks
 from choirworks.orchestration.events import emit_state_delta
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.state import (
@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
 
 logger = structlog.get_logger(__name__)
+
+RECOVER_KEY = "choirworks.recover"
 
 TERMINAL_STATES = {
     TaskState.TASK_STATE_COMPLETED,

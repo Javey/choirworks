@@ -1,29 +1,14 @@
 from __future__ import annotations
 
-# Rewind filtering inside iter_all_tasks mirrors ADK's _apply_rewinds
-# (google-adk, Apache-2.0, https://github.com/google/adk-python,
-# src/google/adk/events/_rewind_events.py).  ADK stores rewind markers
-# as in-band events; ChoirWorks stores them as in-band A2A tasks with
-# metadata["choirworks.rewind"] = before_task_id.
 from collections.abc import AsyncIterator
 
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks.task_store import TaskStore
 from a2a.types.a2a_pb2 import ListTasksRequest, Task
 
+from choirworks.orchestration.rewind import extract_rewind
+
 _PAGE_SIZE = 100
-REWIND_KEY = "choirworks.rewind"
-RECOVER_KEY = "choirworks.recover"
-
-
-def extract_rewind(task: Task) -> str | None:
-    """Return the ``before_task_id`` if *task* is a rewind marker, else ``None``."""
-    if not task.metadata.fields:
-        return None
-    raw = task.metadata.fields.get(REWIND_KEY)
-    if raw is None or not raw.HasField("string_value") or not raw.string_value:
-        return None
-    return raw.string_value
 
 
 async def iter_all_tasks(
