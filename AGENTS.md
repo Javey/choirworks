@@ -18,3 +18,6 @@
 - Lint：`uv run ruff check --fix src tests` && `uv run ruff format src tests`
 - 类型检查：`uv run basedpyright`（要求 0 errors；规则配置见 `pyproject.toml` 的 `[tool.basedpyright]`）
 - 前端（`frontend/`）：`npm test`、`npm run build`、`npm run lint`
+
+**按改动范围执行**：只有 `src/` 或 `tests/` 变更时才跑上述后端三项 + 前端（涉及时）；
+纯文档改动（`docs/`、`*.md` 等）直接提交，不触发全量测试。
