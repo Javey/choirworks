@@ -131,7 +131,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                 if node.status in ACTIVE_NODE_STATUSES | {NodeStatus.READY}:
                     apply_transition(node, NodeStatus.CANCELED)
                     canceled += 1
-            await self._persist(runtime)
+            ctx = self._build_ctx(runtime)
+            await ctx.sessions.persist(ctx)
             for node in list(state.nodes.values()):
                 if node.status == NodeStatus.CANCELED and node.a2a_task_id:
                     await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
@@ -167,7 +168,3 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             config=self._config,
             brief_builder=self._brief_builder,
         )
-
-    async def _persist(self, runtime: SessionRuntime) -> None:
-        ctx = self._build_ctx(runtime)
-        await ctx.sessions.persist(ctx)
