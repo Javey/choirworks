@@ -97,15 +97,22 @@ def build_continuation_text(
     *,
     question: str,
     answer: str,
+    answer_from: str | None = None,
 ) -> list[str]:
     """Resume text after a pending question was answered.
 
     Returns the dispatch parts plus the prior question and its answer as
     additional blocks, preserving the instruction-at-index-0 contract.
+    ``answer_from`` names the peer agent that supplied the answer; when set the
+    answer is framed as peer assistance rather than a human reply.
     """
     parts = build_dispatch_text(node, state, agents)
-    parts.append(f"你上一轮的提问：\n{quote_untrusted(question)}")
-    parts.append(f"已答复：\n{quote_untrusted(answer)}")
+    if answer_from:
+        parts.append(f"你请求协助的问题：\n{quote_untrusted(question)}")
+        parts.append(f"同伴 {answer_from} 的协助结果：\n{quote_untrusted(answer)}")
+    else:
+        parts.append(f"你上一轮的提问：\n{quote_untrusted(question)}")
+        parts.append(f"已答复：\n{quote_untrusted(answer)}")
     return parts
 
 

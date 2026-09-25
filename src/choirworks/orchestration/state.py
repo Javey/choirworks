@@ -72,6 +72,7 @@ class NodeDict(TypedDict):
     derived: bool
     question: str | None
     answer_text: str | None
+    answer_from: str | None
     source_message_id: str | None
     assist_requested_by: str | None
 
@@ -92,6 +93,7 @@ class NodeState:
     derived: bool = False
     question: str | None = None
     answer_text: str | None = None
+    answer_from: str | None = None
     source_message_id: str | None = None
     assist_requested_by: str | None = None
 
@@ -111,6 +113,7 @@ class NodeState:
             "derived": self.derived,
             "question": self.question,
             "answer_text": self.answer_text,
+            "answer_from": self.answer_from,
             "source_message_id": self.source_message_id,
             "assist_requested_by": self.assist_requested_by,
         }
@@ -132,6 +135,7 @@ class NodeState:
             derived=bool(data.get("derived", False)),
             question=data.get("question"),
             answer_text=data.get("answer_text"),
+            answer_from=data.get("answer_from"),
             source_message_id=data.get("source_message_id"),
             assist_requested_by=data.get("assist_requested_by"),
         )

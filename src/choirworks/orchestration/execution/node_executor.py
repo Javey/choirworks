@@ -30,8 +30,10 @@ async def build_node_text(ctx: OrchestrationContext, node: NodeState) -> list[st
             by_name,
             question=node.question or "",
             answer=node.answer_text,
+            answer_from=node.answer_from,
         )
         node.answer_text = None
+        node.answer_from = None
         node.question = None
         return text
     return build_dispatch_text(node, ctx.state, by_name)

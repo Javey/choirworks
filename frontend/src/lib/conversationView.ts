@@ -406,19 +406,14 @@ function applyStateDelta(
           seq,
         });
       } else if (status === "resolved" && (!prev || prev.status === "pending")) {
-        // Peer-assist auto-resolution: the assist is already visible as the
-        // dispatch-time "@helper <instruction>" chat bubble, so no system line.
-        const responder = typeof changes.responder === "string" ? changes.responder : "";
-        if (!responder || responder === "human") {
-          notifications.push({
-            id: `sys-intervention-${id}-resolved`,
-            kind: "intervention.resolved",
-            text: "人工答复已回填，任务继续",
-            node_id: nodeId || prev?.node_id || undefined,
-            created_at: new Date().toISOString(),
-            seq,
-          });
-        }
+        notifications.push({
+          id: `sys-intervention-${id}-resolved`,
+          kind: "intervention.resolved",
+          text: "人工答复已回填，任务继续",
+          node_id: nodeId || prev?.node_id || undefined,
+          created_at: new Date().toISOString(),
+          seq,
+        });
       } else if (status === "expired" && (!prev || prev.status === "pending")) {
         notifications.push({
           id: `sys-intervention-${id}-expired`,

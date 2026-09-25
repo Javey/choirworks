@@ -130,17 +130,18 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     progress = await settle_input(ctx)
 
     assert progress is True
-    assert state.nodes["3"].status == NodeStatus.READY
-    intervention = next(iter(state.interventions.values()))
-    assert intervention.status == InterventionStatus.RESOLVED
-    assert intervention.responder == "3-h1"
-    assert intervention.answer == "PM 的评估结论"
+    resolved = state.nodes["3"]
+    assert resolved.status == NodeStatus.READY
+    assert resolved.answer_text == "PM 的评估结论"
+    assert resolved.answer_from == "product-manager"
+    # Peer assistance is not a human intervention: no question card is created.
+    assert state.interventions == {}
     assert len(queue.events) == 1
     delta = queue.events[0]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
     assert "cw_delta" in meta
-    assert meta["cw_delta"]["interventions"][intervention.id]["responder"] == "3-h1"
+    assert "interventions" not in meta["cw_delta"]
     assert meta["cw_delta"]["nodes"]["3"]["status"] == "ready"
 
 

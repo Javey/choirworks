@@ -168,6 +168,8 @@ async def test_llm_routes_to_peer_agent(tmp_path):
             assert helpers[0]["agent_name"] == "qa-engineer"
             assert helpers[0]["status"] == "completed"
             assert nodes["n1"]["status"] == "completed"
+            # Peer assistance must not surface as a human intervention/question.
+            assert task_state(task).get("interventions", []) == []
             members = [
                 member.get("name", member.get("agent_name"))
                 for member in task_state(task).get("members", [])

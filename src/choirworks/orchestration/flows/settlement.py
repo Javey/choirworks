@@ -17,11 +17,9 @@ from choirworks.orchestration.hitl.intervention import emit_pending_questions
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     PENDING_NODE_STATUSES,
-    InterventionStatus,
     NodeState,
     NodeStatus,
     QuestionType,
-    add_intervention,
     input_required_nodes,
     pending_intervention_for,
 )
@@ -95,27 +93,11 @@ async def _resolve_from_helper(
     if helper is None:
         return FlowOutcome.END
     async with ctx.lock:
-        intervention = pending_intervention_for(ctx.state, node.id)
-        if intervention is None:
-            intervention = add_intervention(ctx.state, node.id, node.question or "")
-        intervention.status = InterventionStatus.RESOLVED
-        intervention.answer = helper.output
-        intervention.responder = helper.id
         node.answer_text = helper.output
+        node.answer_from = helper.agent_name
         apply_transition(node, NodeStatus.READY)
         await ctx.sessions.persist(ctx)
-        await emit_state_delta(
-            ctx,
-            nodes={node.id: {"status": NodeStatus.READY}},
-            interventions={
-                intervention.id: {
-                    "status": "resolved",
-                    "node_id": node.id,
-                    "kind": intervention.kind,
-                    "responder": helper.id,
-                },
-            },
-        )
+        await emit_state_delta(ctx, nodes={node.id: {"status": NodeStatus.READY}})
     return FlowOutcome.EXIT_DONE
 
 
