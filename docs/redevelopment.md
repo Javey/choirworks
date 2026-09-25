@@ -25,7 +25,7 @@
 - 失败修复是增量计划补丁，保留已交付节点；进行中节点未经人类确认不得自动作废。
 - 隐藏式回合回退是当前明确需求，不能列为待定的旧功能；不等同于旧检查点回滚。
 - 人工介入是独立通道，可并发、须定向答复、可取消；等待不自动超时。
-- 事件沿用新基线的 function call、state_delta、UUID artifact 与统一 replay 路径，不恢复旧 kind 事件格式。
+- 事件沿用新基线的 function call、状态增量（`cw_delta`）、UUID artifact 与统一 replay 路径；status 事件不带 `kind` 判别字段，语义由载荷结构（`cw_delta`/`intervention_id`）承载。
 
 ## 功能清单与推进顺序
 

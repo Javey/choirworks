@@ -157,7 +157,6 @@ async def run_plan(ctx: OrchestrationContext) -> None:
                 await ctx.sessions.persist(ctx)
                 await emit_event(
                     ctx,
-                    "",
                     TaskState.TASK_STATE_FAILED,
                 )
             except Exception:

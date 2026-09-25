@@ -84,4 +84,4 @@ async def test_recover_session_resets_active_nodes_and_expires_stale_interventio
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert meta["interventions"][stale.id]["status"] == "expired"
+    assert meta["cw_delta"]["interventions"][stale.id]["status"] == "expired"

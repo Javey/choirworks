@@ -110,4 +110,4 @@ class SessionManager:
         if self._context_store is not None:
             await self._context_store.upsert_state(runtime.context_id, snapshot)
         metadata: dict[str, object] = {STATE_JSON_KEY: snapshot}
-        await emit_event(ctx, "state.updated", metadata=metadata)
+        await emit_event(ctx, metadata=metadata)

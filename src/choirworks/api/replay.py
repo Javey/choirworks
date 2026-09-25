@@ -77,10 +77,11 @@ def _state_delta_event(
         status=TaskStatus(state=task_state),
         metadata=_struct(
             {
-                "kind": "state_delta",
-                "nodes": nodes,
-                "members": members,
-                "interventions": interventions,
+                "cw_delta": {
+                    "nodes": nodes,
+                    "members": members,
+                    "interventions": interventions,
+                }
             }
         ),
     )

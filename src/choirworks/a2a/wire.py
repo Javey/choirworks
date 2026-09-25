@@ -41,14 +41,11 @@ def status_update(
     context_id: str,
     state: TaskState,
     *,
-    kind: str | None = None,
     metadata: Mapping[str, object] | None = None,
     message: Message | None = None,
 ) -> TaskStatusUpdateEvent:
-    """Build a TaskStatusUpdateEvent with optional kind, metadata and message."""
+    """Build a TaskStatusUpdateEvent with optional metadata and message."""
     meta: dict[str, object] = {}
-    if kind:
-        meta["kind"] = kind
     if metadata:
         meta.update(metadata)
     timestamp = timestamp_pb2.Timestamp()

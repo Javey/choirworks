@@ -260,7 +260,7 @@ function materializeBubble(
 
 function applyStateDelta(
   view: ConversationView,
-  meta: ProtoStruct,
+  delta: ProtoStruct,
   state: string,
   seq: number,
 ): ConversationView {
@@ -271,7 +271,7 @@ function applyStateDelta(
   let questions = view.questions;
 
   // --- nodes ---
-  const nodesDelta = meta.nodes as Record<string, ProtoStruct> | undefined;
+  const nodesDelta = delta.nodes as Record<string, ProtoStruct> | undefined;
   if (nodesDelta) {
     for (const [id, changes] of Object.entries(nodesDelta)) {
       const status = typeof changes.status === "string" ? changes.status : undefined;
@@ -321,7 +321,7 @@ function applyStateDelta(
   }
 
   // --- members (state sync only; join notifications come from join_members artifacts) ---
-  const membersDelta = meta.members as ProtoStruct[] | undefined;
+  const membersDelta = delta.members as ProtoStruct[] | undefined;
   if (membersDelta && membersDelta.length > 0) {
     const newMembers: RoomMemberDto[] = [];
     for (const m of membersDelta) {
@@ -344,7 +344,7 @@ function applyStateDelta(
   }
 
   // --- interventions ---
-  const interventionsDelta = meta.interventions as Record<string, ProtoStruct> | undefined;
+  const interventionsDelta = delta.interventions as Record<string, ProtoStruct> | undefined;
   if (interventionsDelta) {
     const newInterventions = { ...interventions };
     for (const [id, changes] of Object.entries(interventionsDelta)) {
@@ -574,18 +574,18 @@ function applyStreamEventInner(
   if (payload.$case === "statusUpdate") {
     const update = result;
     const meta = metaOf(update);
-    const kind = typeof meta.kind === "string" ? meta.kind : "";
     const state = stateName(
       (update.status as ProtoStruct | undefined)?.state ?? view.state,
     );
     const statusMsg = (update.status as ProtoStruct | undefined)?.message as ProtoStruct | undefined;
 
-    if (kind === "state_delta") {
-      return applyStateDelta(view, meta, state, seq);
+    const delta = meta.cw_delta as ProtoStruct | undefined;
+    if (delta) {
+      return applyStateDelta(view, delta, state, seq);
     }
 
-    if (kind === "intervention.rejected") {
-      const interventionId = typeof meta.intervention_id === "string" ? meta.intervention_id : "";
+    if (typeof meta.intervention_id === "string") {
+      const interventionId = meta.intervention_id;
       const reason = typeof meta.reason === "string" ? meta.reason : "";
       if (!interventionId || !view.questions[interventionId]) {
         return { ...view, state, lastSeq: Math.max(view.lastSeq, seq) };

@@ -16,12 +16,13 @@ function statusUpdate(
   meta: Record<string, unknown> = {},
   state: TaskState = TaskState.TASK_STATE_WORKING,
 ) {
+  const metadata = kind === "state_delta" ? { cw_delta: meta } : meta;
   return {
     payload: {
       $case: "statusUpdate",
       value: {
         status: { state },
-        metadata: { ...meta, kind },
+        metadata,
       },
     },
   };
@@ -1070,7 +1071,6 @@ describe("questions", () => {
             state: TaskState.TASK_STATE_INPUT_REQUIRED,
             message: { parts },
           },
-          metadata: { kind: "questions" },
         },
       },
     };

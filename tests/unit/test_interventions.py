@@ -139,9 +139,9 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     delta = queue.events[0]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert meta["kind"] == "state_delta"
-    assert meta["interventions"][intervention.id]["responder"] == "3-h1"
-    assert meta["nodes"]["3"]["status"] == "ready"
+    assert "cw_delta" in meta
+    assert meta["cw_delta"]["interventions"][intervention.id]["responder"] == "3-h1"
+    assert meta["cw_delta"]["nodes"]["3"]["status"] == "ready"
 
 
 async def test_answer_intervention_marks_human_responder_and_readies_node():
@@ -161,7 +161,7 @@ async def test_answer_intervention_marks_human_responder_and_readies_node():
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert meta["interventions"][intervention.id]["responder"] == "human"
+    assert meta["cw_delta"]["interventions"][intervention.id]["responder"] == "human"
 
 
 async def test_answer_intervention_rejects_unknown_id():
@@ -172,7 +172,7 @@ async def test_answer_intervention_rejects_unknown_id():
 
     delta = queue.events[-1]
     meta = MessageToDict(delta.metadata)
-    assert meta["kind"] == "intervention.rejected"
+    assert meta["intervention_id"] == "missing"
 
 
 async def test_answer_intervention_rejects_wrong_type():

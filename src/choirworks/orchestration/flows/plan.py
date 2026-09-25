@@ -51,7 +51,7 @@ async def _exit_wait(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     if pending_interventions(state):
         await emit_pending_questions(ctx)
     else:
-        await emit_event(ctx, "", TaskState.TASK_STATE_INPUT_REQUIRED)
+        await emit_event(ctx, TaskState.TASK_STATE_INPUT_REQUIRED)
     return FlowOutcome.EXIT_WAIT
 
 
@@ -65,7 +65,7 @@ async def _check_all_completed(
 
 async def _emit_completed(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info("run_plan state=completed", task_id=ctx.task_id, context_id=ctx.context_id)
-    await emit_event(ctx, "", TaskState.TASK_STATE_COMPLETED)
+    await emit_event(ctx, TaskState.TASK_STATE_COMPLETED)
     ctx.sessions.evict_session(ctx.context_id)
     return FlowOutcome.EXIT_DONE
 
@@ -94,7 +94,7 @@ async def _repair(ctx: OrchestrationContext, _payload: None) -> Literal["repair_
 
 async def _emit_failed(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info("run_plan state=failed", task_id=ctx.task_id, context_id=ctx.context_id)
-    await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
+    await emit_event(ctx, TaskState.TASK_STATE_FAILED)
     ctx.sessions.evict_session(ctx.context_id)
     return FlowOutcome.EXIT_FAILED
 
@@ -113,7 +113,7 @@ async def _stalled(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
         )
     else:
         logger.warning("Runner stalled for task", task_id=ctx.task_id, context_id=ctx.context_id)
-    await emit_event(ctx, "", TaskState.TASK_STATE_FAILED)
+    await emit_event(ctx, TaskState.TASK_STATE_FAILED)
     ctx.sessions.evict_session(ctx.context_id)
     return FlowOutcome.EXIT_FAILED
 

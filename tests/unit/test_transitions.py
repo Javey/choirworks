@@ -110,8 +110,8 @@ async def test_transition_emits_status_delta():
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert meta["kind"] == "state_delta"
-    assert meta["nodes"]["n1"]["status"] == "completed"
+    assert "cw_delta" in meta
+    assert meta["cw_delta"]["nodes"]["n1"]["status"] == "completed"
 
 
 async def test_transition_delta_override_and_interventions_share_one_event():
@@ -140,9 +140,9 @@ async def test_transition_delta_override_and_interventions_share_one_event():
     delta = queue.events[0]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert meta["nodes"]["n1"]["status"] == "ready"
-    assert meta["nodes"]["n1"]["question"] == "继续吗？"
-    assert meta["interventions"]["iv1"]["answer"] is True
+    assert meta["cw_delta"]["nodes"]["n1"]["status"] == "ready"
+    assert meta["cw_delta"]["nodes"]["n1"]["question"] == "继续吗？"
+    assert meta["cw_delta"]["interventions"]["iv1"]["answer"] is True
 
 
 async def test_transition_emit_false_skips_wire_event():

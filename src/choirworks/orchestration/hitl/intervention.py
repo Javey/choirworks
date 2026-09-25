@@ -98,7 +98,6 @@ async def emit_pending_questions(ctx: OrchestrationContext) -> None:
         return
     await emit_event(
         ctx,
-        "questions",
         TaskState.TASK_STATE_INPUT_REQUIRED,
         message=build_questions_message(ctx, pending),
     )

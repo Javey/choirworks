@@ -145,7 +145,7 @@ async def plan_and_launch(
             "plan_and_launch empty plan, completing", task=ctx.task_id, context_id=ctx.context_id
         )
         await ctx.sessions.persist(ctx)
-        await emit_event(ctx, "", TaskState.TASK_STATE_COMPLETED)
+        await emit_event(ctx, TaskState.TASK_STATE_COMPLETED)
         ctx.sessions.evict_session(ctx.context_id)
         return
 

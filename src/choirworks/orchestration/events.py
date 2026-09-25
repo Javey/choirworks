@@ -48,7 +48,6 @@ def _effective_state(ctx: OrchestrationContext, state_name: TaskState) -> TaskSt
 
 async def emit_event(
     ctx: OrchestrationContext,
-    kind: str,
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
     *,
     metadata: Mapping[str, object] | None = None,
@@ -58,15 +57,14 @@ async def emit_event(
     logger.info(
         "emit_event",
         task_id=ctx.task_id,
-        kind=kind or "(none)",
         state=TaskState.Name(effective),
+        keys=list(metadata) if metadata else None,
     )
     await ctx.queue.enqueue_event(
         status_update(
             ctx.task_id,
             ctx.context_id,
             effective,
-            kind=kind,
             metadata=metadata,
             message=message,
         )
@@ -81,7 +79,6 @@ async def emit_intervention_rejected(
     """Report an answer that could not be applied (stale / malformed)."""
     await emit_event(
         ctx,
-        "intervention.rejected",
         metadata={"intervention_id": intervention_id, "reason": reason},
     )
 
@@ -108,7 +105,7 @@ async def emit_state_delta(
         task_id=ctx.task_id,
         delta=delta,
     )
-    await emit_event(ctx, "state_delta", state_name, metadata=delta)
+    await emit_event(ctx, state_name, metadata={"cw_delta": delta})
 
 
 async def emit_thought_chunk(
@@ -206,7 +203,7 @@ async def emit_function_call(
             last_chunk=True,
         )
     )
-    await emit_event(ctx, "", state_name)
+    await emit_event(ctx, state_name)
 
 
 async def emit_function_error(
@@ -236,4 +233,4 @@ async def emit_function_error(
             last_chunk=True,
         )
     )
-    await emit_event(ctx, "", state_name)
+    await emit_event(ctx, state_name)

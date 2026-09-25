@@ -60,14 +60,8 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         status_updates = [
             r.status_update for r in responses if r.WhichOneof("payload") == "status_update"
         ]
-        kinds = [
-            su.metadata.fields["kind"].string_value
-            for su in status_updates
-            if "kind" in su.metadata.fields
-        ]
-        assert "state_delta" in kinds
-        assert "function_call" not in kinds
-        assert "plan.announced" not in kinds
+        assert any("cw_delta" in su.metadata.fields for su in status_updates)
+        assert all("kind" not in su.metadata.fields for su in status_updates)
         assert all(not su.status.HasField("message") for su in status_updates)
         artifact_updates = [
             r.artifact_update for r in responses if r.WhichOneof("payload") == "artifact_update"
@@ -122,13 +116,11 @@ async def test_subscribe_replays_snapshot_then_live(tmp_path):
         await delay.stop()
     assert events[0].WhichOneof("payload") == "task"
     assert events[0].task.id == task_id
-    live_kinds = [
-        event.status_update.metadata.fields["kind"].string_value
+    assert any(
+        "cw_delta" in event.status_update.metadata.fields
         for event in events
         if event.WhichOneof("payload") == "status_update"
-        and "kind" in event.status_update.metadata.fields
-    ]
-    assert "state_delta" in live_kinds
+    )
     node_outputs = [
         event.artifact_update
         for event in events

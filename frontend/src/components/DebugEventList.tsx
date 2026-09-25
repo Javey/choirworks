@@ -73,7 +73,11 @@ export function DebugEventList({ events }: { events: unknown[] }) {
                 | Record<string, unknown>
                 | undefined;
             const kind =
-              typeof metadata?.kind === "string" ? metadata.kind : "";
+              metadata?.cw_delta !== undefined
+                ? "cw_delta"
+                : typeof metadata?.intervention_id === "string"
+                  ? "intervention.rejected"
+                  : "";
             const isOpen = expanded.has(index);
 
             return (
