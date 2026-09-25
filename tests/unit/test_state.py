@@ -136,7 +136,7 @@ def test_intervention_question_fields_round_trip():
         "n2",
         "确认？",
         question_type=QuestionType.CONFIRM,
-        requester="orchestrator",
+        requester="assistant",
     )
     confirm.status = InterventionStatus.RESOLVED
     confirm.answer = True

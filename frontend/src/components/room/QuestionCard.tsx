@@ -13,13 +13,13 @@ function avatarColor(name: string): string {
 }
 
 function RequesterAvatar({ name }: { name: string }) {
-  const color = avatarColor(name || "系统");
+  const color = avatarColor(name || "规划大脑");
   return (
     <div
       className="flex items-center justify-center rounded-full text-white font-semibold shrink-0"
       style={{ background: color, width: 36, height: 36, fontSize: 14 }}
     >
-      {(name || "系").slice(0, 1).toUpperCase()}
+      {(name || "规").slice(0, 1).toUpperCase()}
     </div>
   );
 }
@@ -55,7 +55,7 @@ export function QuestionCard({
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const pending = question.status === "pending";
-  const requester = question.requester || "系统";
+  const requester = question.requester || "规划大脑";
 
   function toggleOption(option: string) {
     setError(null);

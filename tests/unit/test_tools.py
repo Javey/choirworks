@@ -192,19 +192,19 @@ async def test_call_subagent_falls_back_to_requester_question():
     assert "缺少接口文档" in helper.input_text
 
 
-async def test_call_subagent_rejects_orchestrator_and_unknown_agent():
+async def test_call_subagent_rejects_assistant_and_unknown_agent():
     state = OrchestrationState()
     ctx = make_ctx(state)
 
-    orchestrator = await call_subagent_func.execute(
-        ctx, CallSubagentArgs(requested_by="orchestrator", target_agent="writer")
+    dispatched = await call_subagent_func.execute(
+        ctx, CallSubagentArgs(requested_by="assistant", target_agent="writer")
     )
     unknown = await call_subagent_func.execute(
         ctx, CallSubagentArgs(requested_by="n1", target_agent="ghost")
     )
 
-    assert orchestrator.success is False
-    assert orchestrator.error == "orchestrator dispatch does not create helper nodes"
+    assert dispatched.success is False
+    assert dispatched.error == "assistant dispatch does not create helper nodes"
     assert unknown.success is False
     assert unknown.error == "unknown agent: ghost"
 

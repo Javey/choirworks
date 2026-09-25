@@ -1,7 +1,7 @@
 """End-to-end smoke test of the offline simulation flow.
 
 Exercises the deterministic sim planner plus fake agents through the real
-orchestrator: plan -> dispatch -> handoff -> completion.
+assistant: plan -> dispatch -> handoff -> completion.
 """
 
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState

@@ -10,7 +10,7 @@
 把 HITL 问题从「纯文本、无寻址、靠 runner 布尔标志唤醒」升级为：
 
 1. 问题类型化：`input` / `select`（单选、多选）/ `confirm`
-2. 每个问题携带发起人（`requester`：agent_name 或 `orchestrator`）
+2. 每个问题携带发起人（`requester`：agent_name，或规划层的内部标识 `assistant`）
 3. 前端按问题卡片独立回复（不再走聊天输入框的自然语言答复）
 4. 多个 agent 的多个问题并存、可分别回答
 5. 对外符合标准 A2A：**input-required 状态 + `status.message`** 承载问题；答复是标准 A2A 消息
@@ -75,7 +75,7 @@ TaskStatusUpdateEvent(
         # 问题 2（confirm_cancel）
         Part(text="计划修订建议打断节点 n2，是否打断？"),
         Part(data={"intervention_id":"<uuid>","node_id":"n2",
-                   "requester":"orchestrator","kind":"confirm_cancel",
+                   "requester":"assistant","kind":"confirm_cancel",
                    "question_type":"confirm","options":[],"multi":false,
                    "question":"…"},
              metadata={"cw_type":"question"}),
@@ -158,7 +158,7 @@ TaskStatusUpdateEvent(
     - 新增 `QuestionType(StrEnum)`：`INPUT` / `SELECT` / `CONFIRM`
     - `Intervention` 增加：`question_type`（默认 INPUT）、`options: list[str]`、`multi: bool`、`requester: str`、`answer: str | list[str] | bool | None`（`state_from_json` 做类型校验，禁止 Any）
     - 同步 `to_dict` / `from_dict` / `InterventionDelta`
-    - `add_cancel_request`：`question_type=CONFIRM`、`requester="orchestrator"`
+    - `add_cancel_request`：`question_type=CONFIRM`、`requester="assistant"`
 14. `tools/base.py`：`AgentFunction` 增加 `emit_artifact: bool = True`；`flows.execute_function` 按标记跳过 `emit_function_call`，但**仍发状态事件**（走 #16 的 questions 事件）
 15. `a2a/wire.py`：`status_update(..., message: Message | None = None)`；新增入站解析 `parse_question_response(message) -> list[QuestionResponse]`（模型含 `intervention_id`、`answer`；形状非法 → 解析层拒绝）
 16. `orchestration/events.py`：

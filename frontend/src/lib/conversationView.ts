@@ -152,6 +152,15 @@ type ProtoStruct = Record<string, unknown>;
 
 const ROOM_META_KEY = "https://github.com/Javey/choirworks/extensions/room/v1";
 
+// The planning layer is the only non-agent role. Its internal token is
+// "assistant" (empty means unspecified); both render as 规划大脑.
+const PLANNING_ROLE = "规划大脑";
+
+function requesterName(value: unknown): string {
+  const name = typeof value === "string" ? value : "";
+  return name && name !== "assistant" ? name : PLANNING_ROLE;
+}
+
 function stateName(state: unknown): string {
   if (typeof state === "number") return taskStateToJSON(state as TaskState);
   if (typeof state === "string") return state;
@@ -196,7 +205,7 @@ function questionPartsOf(container: ProtoStruct): QuestionInfo[] {
     found.push({
       id,
       node_id: String(data.node_id ?? ""),
-      requester: String(data.requester ?? ""),
+      requester: requesterName(data.requester),
       kind: String(data.kind ?? "question"),
       question: String(data.question ?? ""),
       question_type: questionType,
@@ -372,10 +381,11 @@ function applyStateDelta(
         [id]: {
           id,
           node_id: nodeId || prevQuestion?.node_id || "",
-          requester:
+          requester: requesterName(
             typeof changes.requester === "string"
               ? changes.requester
-              : (prevQuestion?.requester ?? ""),
+              : prevQuestion?.requester,
+          ),
           kind: ivKind || prevQuestion?.kind || "question",
           question: question || prevQuestion?.question || "",
           question_type: (["input", "select", "confirm"].includes(rawType)
@@ -753,8 +763,8 @@ function applyStreamEventInner(
           typeof funcArgs.instruction === "string" ? funcArgs.instruction : "";
         const resultData = (funcResult.data as ProtoStruct | undefined) ?? {};
 
-        // Plan dispatch: orchestrator assigns the next nodes to their agents.
-        if (requestedBy === "orchestrator") {
+        // Plan dispatch: the assistant assigns the next nodes to their agents.
+        if (requestedBy === "assistant") {
           const line = `- @${targetAgent}${instruction ? ` ${instruction}` : ""}`;
           const last = view.messages.at(-1);
           if (last?.group === "dispatch") {
@@ -790,9 +800,9 @@ function applyStreamEventInner(
           };
         }
 
-        // Assistance: orchestrator LLM routes a blocked node to a peer agent.
+        // Assistance: the assistant routes a blocked node to a peer agent.
         // Show as a dispatch bubble (same format as plan dispatch), not an
-        // agent message — the orchestrator decided the routing.
+        // agent message — the assistant decided the routing.
         if (view.messages.some((m) => m.id === artifactId)) {
           return view;
         }

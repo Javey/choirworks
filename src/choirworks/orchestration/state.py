@@ -489,7 +489,7 @@ def add_cancel_request(
         question=question,
         kind=InterventionKind.CONFIRM_CANCEL,
         question_type=QuestionType.CONFIRM,
-        requester="orchestrator",
+        requester="assistant",
         target_node_id=target_node_id,
     )
     state.interventions[intervention.id] = intervention

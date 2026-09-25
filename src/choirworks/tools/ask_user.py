@@ -43,7 +43,7 @@ async def ask_user_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
 
 
 async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
-    """``ask_user`` — the orchestrator requests human input to unblock a node.
+    """``ask_user`` — the assistant requests human input to unblock a node.
 
     Creates an intervention record and returns an ack; the real answer arrives
     later as a user message carrying a ``question_response`` data part, keyed

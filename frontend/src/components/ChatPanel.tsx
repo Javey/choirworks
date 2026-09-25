@@ -129,15 +129,18 @@ function AgentBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessa
 
 function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessage | null }) {
   return (
-    <div className="flex flex-col gap-1 items-start">
-      {thinking ? <ThinkingSection text={thinking.text} /> : null}
-      <div className="max-w-[70%] px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-primary-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMention]}
-          components={{ a: MentionAnchor }}
-        >
-          {msg.text}
-        </ReactMarkdown>
+    <div className="flex gap-2.5">
+      <Avatar name="规划大脑" />
+      <div className="flex-1 max-w-[70%]">
+        {thinking ? <ThinkingSection text={thinking.text} /> : null}
+        <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-primary-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMention]}
+            components={{ a: MentionAnchor }}
+          >
+            {msg.text}
+          </ReactMarkdown>
+        </div>
       </div>
     </div>
   );
@@ -282,8 +285,11 @@ export function ChatPanel({
   if (pendingThinking) {
     rendered.push(
       <div key="pending-thinking" className="animate-[fade-in_0.3s_ease-out]">
-        <div className="flex flex-col gap-1 items-start">
-          <ThinkingSection text={pendingThinking.text} />
+        <div className="flex gap-2.5">
+          <Avatar name="规划大脑" />
+          <div className="flex-1 max-w-[70%]">
+            <ThinkingSection text={pendingThinking.text} />
+          </div>
         </div>
       </div>,
     );

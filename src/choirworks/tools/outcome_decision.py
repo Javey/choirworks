@@ -12,7 +12,7 @@ from choirworks.tools.base import AgentFunction, FunctionResult
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
 
-OUTCOME_SYSTEM = """You are the orchestrator of a multi-agent group.
+OUTCOME_SYSTEM = """You are the assistant of a multi-agent group.
 Read an agent's final reply and decide what it means for the plan:
 - intent="deliver": the reply is the finished work (default when unsure)
 - intent="need_info": the reply asks for information, help from a member, or a human decision
@@ -25,14 +25,14 @@ Rules:
 - intent="revise": use ONLY when the agent's reply contains information that changes what work
   the plan needs (e.g., "this is a static site, no backend needed" or "we also need a design
   step"). Do NOT use revise because the output is low quality, incomplete, or doesn't match
-  instructions — that is the agent's responsibility, not the orchestrator's.
+  instructions — that is the agent's responsibility, not the assistant's.
 
 When intent="need_info", put what is needed into question and set target_agent to the
 listed candidate who can help; leave target_agent empty when a human must answer.
 When intent="deliver" or intent="revise", leave question, target_agent and instruction empty.
 Return only JSON matching the schema."""
 
-ASSISTANCE_SYSTEM = """You are the orchestrator of a multi-agent group.
+ASSISTANCE_SYSTEM = """You are the assistant of a multi-agent group.
 An agent is blocked and needs help. Decide how to handle it:
 - set target_agent to another registered agent that can help
 - leave target_agent empty to escalate to a human
@@ -48,7 +48,7 @@ When escalating to a human, shape the question interface:
 - question_type="input" otherwise (default)
 Leave question_type/options/multi at their defaults when a peer agent is chosen."""
 
-REPAIR_SYSTEM = """You are the orchestrator of a multi-agent group.
+REPAIR_SYSTEM = """You are the assistant of a multi-agent group.
 Some tasks in the plan failed after retries. Produce an incremental repair patch:
 - intent="revise" with a patch that adds replacement tasks and/or invalidates tasks
 - added tasks may only depend on existing task ids

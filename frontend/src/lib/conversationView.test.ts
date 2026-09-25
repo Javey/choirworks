@@ -170,13 +170,13 @@ describe("applyStreamEvent", () => {
     expect(msg?.text).toBe("- @writer 帮忙写");
   });
 
-  it("merges consecutive orchestrator dispatches into one bubble", () => {
+  it("merges consecutive assistant dispatches into one bubble", () => {
     let view = viewWithNodes();
     view = applyStreamEvent(
       view,
       functionCallEvent(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
         { success: true },
       ),
       1,
@@ -185,7 +185,7 @@ describe("applyStreamEvent", () => {
       view,
       functionCallEvent(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "writer", instruction: "任务乙" },
+        { requested_by: "assistant", target_agent: "writer", instruction: "任务乙" },
         { success: true },
       ),
       2,
@@ -203,7 +203,7 @@ describe("applyStreamEvent", () => {
       view,
       functionCallEvent(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
         { success: true },
       ),
       1,
@@ -230,7 +230,7 @@ describe("applyStreamEvent", () => {
       view,
       functionCallEvent(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "writer", instruction: "任务丙" },
+        { requested_by: "assistant", target_agent: "writer", instruction: "任务丙" },
         { success: true },
       ),
       3,
@@ -245,7 +245,7 @@ describe("applyStreamEvent", () => {
     let view = viewWithNodes();
     const event = functionCallEvent(
       "call_subagent",
-      { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+      { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
       { success: true },
     );
     view = applyStreamEvent(view, event, 1);
@@ -826,7 +826,7 @@ describe("applyStreamEvent", () => {
     const artifacts = [
       fcArtifact(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
         { success: true },
       ),
     ];
@@ -900,7 +900,7 @@ describe("applyStreamEvent", () => {
       ),
       fcArtifact(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
         { success: true },
       ),
     ];
@@ -915,7 +915,7 @@ describe("applyStreamEvent", () => {
     const artifacts = [
       fcArtifact(
         "call_subagent",
-        { requested_by: "orchestrator", target_agent: "echo", instruction: "任务甲" },
+        { requested_by: "assistant", target_agent: "echo", instruction: "任务甲" },
         { success: true },
       ),
       artifactInSnapshot(
@@ -1062,6 +1062,22 @@ describe("questions", () => {
     expect(question.status).toBe("pending");
     expect(question.seq).toBe(1);
     expect(view.state).toBe(taskStateToJSON(TaskState.TASK_STATE_INPUT_REQUIRED));
+  });
+
+  it("renders the planning layer as 规划大脑 for assistant/empty requesters", () => {
+    const fromAssistant = applyStreamEvent(
+      emptyConversation,
+      questionStatusEvent([questionDataPart("iv1", { requester: "assistant" })]),
+      1,
+    );
+    expect(fromAssistant.questions.iv1.requester).toBe("规划大脑");
+
+    const fromEmpty = applyStreamEvent(
+      emptyConversation,
+      questionStatusEvent([questionDataPart("iv2", { requester: "" })]),
+      2,
+    );
+    expect(fromEmpty.questions.iv2.requester).toBe("规划大脑");
   });
 
   it("marks a question resolved from a state_delta answer", () => {

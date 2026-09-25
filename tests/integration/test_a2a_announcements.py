@@ -79,8 +79,8 @@ async def test_serial_plan_announces_each_wave_in_order(tmp_path, echo_agent):
 
         calls = _subagent_calls(task)
         assert [c["function_args"]["requested_by"] for c in calls] == [
-            "orchestrator",
-            "orchestrator",
+            "assistant",
+            "assistant",
         ]
         assert [c["function_args"]["target_agent"] for c in calls] == ["echo", "echo"]
         expected = ["具体任务：第一步", "具体任务：第二步"]
@@ -173,7 +173,7 @@ async def test_llm_requested_assist_announces_requester(tmp_path):
             calls = _subagent_calls(task)
             assert len(calls) == 2
             dispatch, assist = calls
-            assert dispatch["function_args"]["requested_by"] == "orchestrator"
+            assert dispatch["function_args"]["requested_by"] == "assistant"
             assert dispatch["function_args"]["instruction"] == "具体任务：评估方案"
             assert assist["function_args"]["requested_by"] == "n1"
             assert assist["function_args"]["target_agent"] == "echo"

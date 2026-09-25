@@ -36,9 +36,9 @@ class CallSubagentData(BaseModel):
 class CallSubagentArgs(BaseModel):
     """Arguments for ``call_subagent`` — delegate a sub-task to a peer agent.
 
-    ``requested_by`` is either ``"orchestrator"`` (a plan node is being
-    dispatched) or the id of the node asking for help (a derived helper node
-    is spawned).
+    ``requested_by`` is either ``"assistant"`` (the planning layer dispatches a
+    plan node) or the id of the node asking for help (a derived helper node is
+    spawned).
     """
 
     requested_by: str
@@ -55,7 +55,7 @@ async def call_subagent_args_model(ctx: OrchestrationContext) -> type[BaseModel]
 async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
     """``call_subagent`` — spawn a derived helper node handled by a peer agent.
 
-    When the orchestrator decides a node needs assistance from another agent,
+    When the planning layer decides a node needs assistance from another agent,
     it calls this function instead of emitting an ``assist.dispatched`` kind
     event.  The function creates a derived :class:`NodeState`, joins the helper
     agent as a room member, and returns the helper node id.  Execution starts
@@ -75,10 +75,10 @@ async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> F
         instruction_len=len(call_args.instruction),
     )
 
-    if call_args.requested_by == "orchestrator":
+    if call_args.requested_by == "assistant":
         return FunctionResult(
             success=False,
-            error="orchestrator dispatch does not create helper nodes",
+            error="assistant dispatch does not create helper nodes",
         )
 
     agents = await ctx.registry.list()

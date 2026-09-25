@@ -116,7 +116,7 @@ def build_continuation_text(
     return parts
 
 
-SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI orchestrator.
+SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI assistant.
 Condense the following messages into a brief summary preserving:
 - Key decisions and their rationale
 - Completed work and outputs

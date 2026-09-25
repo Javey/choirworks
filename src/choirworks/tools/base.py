@@ -36,7 +36,7 @@ class ToolCallResult:
 
 @dataclass(frozen=True, slots=True)
 class AgentFunction:
-    """A callable capability that the orchestrator model can invoke.
+    """A callable capability that the assistant model can invoke.
 
     A data-only record composing three things:
 

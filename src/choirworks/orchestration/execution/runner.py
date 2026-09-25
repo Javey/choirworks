@@ -226,7 +226,7 @@ async def _announce_dispatch(
         if mode != "dispatch" or node.derived or node.attempt != 0:
             continue
         args = CallSubagentArgs(
-            requested_by="orchestrator",
+            requested_by="assistant",
             target_agent=node.agent_name,
             instruction=node.input_text or node.name,
         )
