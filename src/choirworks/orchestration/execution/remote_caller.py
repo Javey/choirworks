@@ -12,6 +12,7 @@ from a2a.types.a2a_pb2 import (
     TaskArtifactUpdateEvent,
     TaskState,
 )
+from google.protobuf import struct_pb2
 
 from choirworks.a2a.wire import join_text, struct
 from choirworks.orchestration.context import OrchestrationContext
@@ -20,6 +21,10 @@ from choirworks.orchestration.state import NodeState, NodeStatus
 from choirworks.orchestration.transitions import apply_transition
 
 logger = structlog.get_logger(__name__)
+
+
+def _artifact_meta(node: NodeState) -> struct_pb2.Struct:
+    return struct({"author": node.agent_name, "node_id": node.id})
 
 
 _REMOTE_STATE_MAP: dict[int, NodeStatus] = {
@@ -172,12 +177,7 @@ async def consume_chunks(
                             artifact_id=uuid.uuid4().hex,
                             name=node.name,
                             parts=[Part(text=msg_text)],
-                            metadata=struct(
-                                {
-                                    "node_id": node.id,
-                                    "agent_name": node.agent_name,
-                                }
-                            ),
+                            metadata=_artifact_meta(node),
                         )
                         await ctx.queue.enqueue_event(
                             TaskArtifactUpdateEvent(
@@ -186,12 +186,6 @@ async def consume_chunks(
                                 artifact=art,
                                 append=False,
                                 last_chunk=True,
-                                metadata=struct(
-                                    {
-                                        "node_id": node.id,
-                                        "agent_name": node.agent_name,
-                                    }
-                                ),
                             )
                         )
         elif chunk.HasField("artifact_update"):
@@ -218,12 +212,7 @@ async def consume_chunks(
                 artifact_id=update.artifact.artifact_id,
                 name=update.artifact.name or node.name,
                 parts=[Part(text=piece)],
-                metadata=struct(
-                    {
-                        "node_id": node.id,
-                        "agent_name": node.agent_name,
-                    }
-                ),
+                metadata=_artifact_meta(node),
             )
             await ctx.queue.enqueue_event(
                 TaskArtifactUpdateEvent(
@@ -232,12 +221,6 @@ async def consume_chunks(
                     artifact=art,
                     append=append,
                     last_chunk=bool(update.last_chunk),
-                    metadata=struct(
-                        {
-                            "node_id": node.id,
-                            "agent_name": node.agent_name,
-                        }
-                    ),
                 )
             )
         elif chunk.HasField("message"):
@@ -247,12 +230,7 @@ async def consume_chunks(
                 artifact_id=uuid.uuid4().hex,
                 name=node.name,
                 parts=[Part(text=msg_text)],
-                metadata=struct(
-                    {
-                        "node_id": node.id,
-                        "agent_name": node.agent_name,
-                    }
-                ),
+                metadata=_artifact_meta(node),
             )
             await ctx.queue.enqueue_event(
                 TaskArtifactUpdateEvent(
@@ -261,12 +239,6 @@ async def consume_chunks(
                     artifact=art,
                     append=False,
                     last_chunk=True,
-                    metadata=struct(
-                        {
-                            "node_id": node.id,
-                            "agent_name": node.agent_name,
-                        }
-                    ),
                 )
             )
 

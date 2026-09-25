@@ -29,7 +29,7 @@ export interface SystemNotification {
 export interface WorkingBubble {
   artifactId: string;
   nodeId: string;
-  agentName: string;
+  author: string;
   text: string;
 }
 
@@ -244,7 +244,7 @@ function materializeBubble(
   const message: ChatMessage = {
     id: bubble.artifactId,
     role: "agent",
-    sender: bubble.agentName || null,
+    sender: bubble.author || null,
     text: bubble.text,
     mentions: [],
     quote_id: null,
@@ -453,7 +453,6 @@ function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
   const firstPart = parts[0] ?? {};
   const firstPartMeta = metaOf(firstPart);
   const firstPartContent = firstPart.content as { $case?: string; value?: unknown } | undefined;
-  const artifactMeta = metaOf(artifact);
 
   const isFc = firstPartContent?.$case === "data" && firstPartMeta.cw_type === "function_call";
   const isThought = firstPartMeta.cw_thought === true;
@@ -462,7 +461,7 @@ function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
     return {
       payload: {
         $case: "artifactUpdate",
-        value: { artifact, metadata: artifactMeta, append: false, lastChunk: true },
+        value: { artifact, append: false, lastChunk: true },
       },
     };
   }
@@ -479,7 +478,7 @@ function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
   return {
     payload: {
       $case: "artifactUpdate",
-      value: { artifact: mergedArtifact, metadata: artifactMeta, append: false, lastChunk: true },
+      value: { artifact: mergedArtifact, append: false, lastChunk: true },
     },
   };
 }
@@ -654,18 +653,13 @@ function applyStreamEventInner(
   if (payload.$case === "artifactUpdate") {
     const artUpdate = result;
     const artifact = (artUpdate.artifact as ProtoStruct | undefined) ?? {};
-    const meta = metaOf(artUpdate);
-    const nodeId = typeof meta.node_id === "string" ? meta.node_id : null;
+    const artifactMeta = metaOf(artifact);
+    const nodeId = typeof artifactMeta.node_id === "string" ? artifactMeta.node_id : null;
     const text = textOfParts(artifact);
     const lastChunk = artUpdate.lastChunk === true;
     const append = artUpdate.append === true;
-    const agentName = typeof meta.agent_name === "string" ? meta.agent_name : "";
     const artifactId = String(artifact.artifactId ?? `art-${seq}`);
-    const artifactMeta = metaOf(artifact);
-    const author =
-      typeof artifactMeta.author === "string"
-        ? artifactMeta.author
-        : agentName || "assistant";
+    const author = typeof artifactMeta.author === "string" ? artifactMeta.author : "assistant";
 
     // Function call data part (Part.data with cw_type discriminator)
     const parts = (artifact.parts as ProtoStruct[] | undefined) ?? [];
@@ -940,7 +934,7 @@ function applyStreamEventInner(
       const chatMsg: ChatMessage = {
         id: artifactId,
         role: author === "assistant" ? "assistant" : "agent",
-        sender: author === "assistant" ? null : (agentName || null),
+        sender: author === "assistant" ? null : author,
         text,
         mentions: [],
         quote_id: null,
@@ -978,7 +972,7 @@ function applyStreamEventInner(
       const bubble: WorkingBubble = {
         artifactId,
         nodeId: nodeId ?? "",
-        agentName,
+        author,
         text: newText,
       };
       const workingBubbles = existing

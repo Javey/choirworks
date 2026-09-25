@@ -162,7 +162,7 @@ function NotificationItem({ notif, thinking }: { notif: SystemNotification; thin
 }
 
 function WorkingItem({ bubble, thinking }: { bubble: WorkingBubble; thinking?: ChatMessage | null }) {
-  const sender = bubble.agentName || "agent";
+  const sender = bubble.author || "agent";
   return (
     <div className="flex gap-2.5">
       <Avatar name={sender} />

@@ -97,7 +97,6 @@ def _artifact_update(
         artifact=artifact,
         append=False,
         last_chunk=True,
-        metadata=artifact.metadata,
     )
 
 

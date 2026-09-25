@@ -129,6 +129,20 @@ async def test_subscribe_replays_snapshot_then_live(tmp_path):
         and "kind" in event.status_update.metadata.fields
     ]
     assert "state_delta" in live_kinds
+    node_outputs = [
+        event.artifact_update
+        for event in events
+        if event.WhichOneof("payload") == "artifact_update"
+        and event.artifact_update.artifact.parts
+        and event.artifact_update.artifact.parts[0].text
+        and "cw_type" not in event.artifact_update.artifact.parts[0].metadata.fields
+        and "cw_thought" not in event.artifact_update.artifact.parts[0].metadata.fields
+    ]
+    assert node_outputs
+    for update in node_outputs:
+        assert update.artifact.metadata.fields["author"].string_value == "delay"
+        assert update.artifact.metadata.fields["node_id"].string_value == "n1"
+        assert not update.metadata.fields
     last = events[-1]
     if last.WhichOneof("payload") == "status_update":
         assert last.status_update.status.state in {

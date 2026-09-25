@@ -33,15 +33,16 @@ def _task_with_artifact(metadata: dict[str, object]) -> Task:
     return task
 
 
-def test_replay_artifact_keeps_node_metadata_on_event() -> None:
-    task = _task_with_artifact({"node_id": "n1", "agent_name": "product-manager"})
+def test_replay_artifact_keeps_metadata_on_artifact_only() -> None:
+    task = _task_with_artifact({"author": "product-manager", "node_id": "n1"})
 
     events = synthesize_replay_events([task], "c1", state=None)
 
     updates = [e for e in events if "artifactUpdate" in e]
     assert len(updates) == 1
     update = updates[0]["artifactUpdate"]
-    assert update["metadata"] == {"node_id": "n1", "agent_name": "product-manager"}
+    assert update.get("metadata") in (None, {})
+    assert update["artifact"]["metadata"] == {"author": "product-manager", "node_id": "n1"}
     assert update["lastChunk"] is True
 
 

@@ -470,8 +470,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }], metadata: { node_id: "n1", author: "echo" } },
             append: false,
             lastChunk: false,
           },
@@ -490,8 +489,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world" } }], metadata: { node_id: "n1", author: "echo" } },
             append: true,
             lastChunk: false,
           },
@@ -508,8 +506,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: "!" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "!" } }], metadata: { node_id: "n1", author: "echo" } },
             append: true,
             lastChunk: true,
           },
@@ -536,8 +533,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: "部分产出" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "部分产出" } }], metadata: { node_id: "n1", author: "echo" } },
             append: false,
             lastChunk: false,
           },
@@ -572,8 +568,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "Hello" } }], metadata: { node_id: "n1", author: "echo" } },
             append: false,
             lastChunk: false,
           },
@@ -594,8 +589,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world!" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: " world!" } }], metadata: { node_id: "n1", author: "echo" } },
             append: true,
             lastChunk: true,
           },
@@ -618,8 +612,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId, parts: [{ content: { $case: "text", value: "写到一半" } }] },
-            metadata: { node_id: "n2", agent_name: "writer" },
+            artifact: { artifactId, parts: [{ content: { $case: "text", value: "写到一半" } }], metadata: { node_id: "n2", author: "writer" } },
             append: false,
             lastChunk: false,
           },
@@ -651,8 +644,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId: "art-a", parts: [{ content: { $case: "text", value: "A1" } }] },
-            metadata: { node_id: "n1", agent_name: "echo" },
+            artifact: { artifactId: "art-a", parts: [{ content: { $case: "text", value: "A1" } }], metadata: { node_id: "n1", author: "echo" } },
             append: false,
             lastChunk: false,
           },
@@ -666,8 +658,7 @@ describe("applyStreamEvent", () => {
         payload: {
           $case: "artifactUpdate",
           value: {
-            artifact: { artifactId: "art-b", parts: [{ content: { $case: "text", value: "B1" } }] },
-            metadata: { node_id: "n2", agent_name: "writer" },
+            artifact: { artifactId: "art-b", parts: [{ content: { $case: "text", value: "B1" } }], metadata: { node_id: "n2", author: "writer" } },
             append: false,
             lastChunk: false,
           },
@@ -880,7 +871,7 @@ describe("applyStreamEvent", () => {
       artifactInSnapshot(
         "art-node-1",
         [{ content: { $case: "text", value: "调研完成" } }],
-        { node_id: "n1", agent_name: "echo" },
+        { node_id: "n1", author: "echo" },
       ),
     ];
     const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
@@ -913,7 +904,7 @@ describe("applyStreamEvent", () => {
           { content: { $case: "text", value: "Hello" } },
           { content: { $case: "text", value: " World" } },
         ],
-        { node_id: "n1", agent_name: "echo" },
+        { node_id: "n1", author: "echo" },
       ),
     ];
     const view = applyStreamEvent(emptyConversation, taskSnapshot(artifacts), 1);
@@ -961,7 +952,7 @@ describe("applyStreamEvent", () => {
       artifactInSnapshot(
         "art-node-1",
         [{ content: { $case: "text", value: "完成" } }],
-        { node_id: "n1", agent_name: "echo" },
+        { node_id: "n1", author: "echo" },
       ),
     ];
     const snap = taskSnapshot(artifacts);
