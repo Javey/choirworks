@@ -23,6 +23,7 @@ from choirworks.api import conversations as conversations_routes
 from choirworks.config import Settings
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.registry import AgentRegistry
+from choirworks.orchestration.session import SessionManager
 from choirworks.store.contexts import ContextStore
 from choirworks.store.db import Database
 
@@ -61,13 +62,14 @@ async def create_app(settings: Settings | None = None, llm: LiteLLMClient | None
 
         remote = RemoteAgentClient()
         registry = AgentRegistry(db, remote)
+        session_mgr = SessionManager(context_store)
 
         executor = ChoirWorksAgentExecutor(
             registry=registry,
             remote=remote,
             llm=llm_client,
             task_store=task_store,
-            context_store=context_store,
+            session_mgr=session_mgr,
             max_parallel=settings.scheduler.max_parallel_nodes,
             node_timeout=settings.scheduler.node_timeout_seconds,
             max_node_attempts=settings.scheduler.max_node_attempts,
@@ -94,7 +96,7 @@ async def create_app(settings: Settings | None = None, llm: LiteLLMClient | None
         app.state.db = db
         app.state.remote = remote
         app.state.registry = registry
-        app.state.executor = executor
+        app.state.session_mgr = session_mgr
         app.state.request_handler = request_handler
         app.state.agent_card = agent_card
 

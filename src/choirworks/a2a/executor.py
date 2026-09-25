@@ -20,7 +20,6 @@ from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
 from choirworks.orchestration.transitions import apply_transition
-from choirworks.store.contexts import ContextStore
 
 logger = structlog.get_logger(__name__)
 
@@ -46,7 +45,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         remote: RemoteAgentClient,
         llm: LiteLLMClient,
         task_store: TaskStore,
-        context_store: ContextStore,
+        session_mgr: SessionManager,
         *,
         max_parallel: int = 5,
         node_timeout: float = 600.0,
@@ -79,18 +78,12 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             compaction_retention=compaction_retention,
         )
 
-        self._session_mgr = SessionManager(context_store)
+        self._session_mgr = session_mgr
         self._registry = registry
         self._remote = remote
         self._llm = llm
 
     # ------------------------------------------------------------- lifecycle
-
-    def session_is_active(self, context_id: str) -> bool:
-        return self._session_mgr.session_is_active(context_id)
-
-    def drop_session(self, context_id: str) -> None:
-        self._session_mgr.evict_session(context_id)
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Route one inbound message; background runners do the actual work."""

@@ -74,14 +74,14 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         first_id = await _send_once(client, _message("第一个任务"))
         first = await wait_for_task(client, first_id, {TaskState.TASK_STATE_COMPLETED})
-        assert app.state.executor._session_mgr.sessions == {}
+        assert app.state.session_mgr.sessions == {}
         first_version = (await context_state(app, first.context_id))["plan_version"]
         assert first_version == 2
         second_id = await _send_once(client, _message("第二个任务", context_id=first.context_id))
         second = await wait_for_task(client, second_id, {TaskState.TASK_STATE_COMPLETED})
         assert second.id != first.id
         assert second.context_id == first.context_id
-        assert app.state.executor._session_mgr.sessions == {}
+        assert app.state.session_mgr.sessions == {}
         # The second turn reloads the canonical contexts row, so the plan
         # version continues from the first turn instead of restarting at 1.
         assert (await context_state(app, second.context_id))["plan_version"] == first_version + 1
@@ -157,7 +157,7 @@ async def test_plan_failure_persists_context_state(tmp_path, echo_agent):
         await http.post("/v1/agents", json={"name": "echo", "card_url": echo_agent.url})
         task_id = await _send_once(client, _message("无法规划"))
         task = await wait_for_task(client, task_id, {TaskState.TASK_STATE_FAILED})
-        assert app.state.executor._session_mgr.sessions == {}
+        assert app.state.session_mgr.sessions == {}
 
         state = await context_state(app, task.context_id)
         assert state["nodes"] == []

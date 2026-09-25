@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from a2a.helpers import new_task
 from a2a.server.context import ServerCallContext
@@ -14,9 +14,8 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.timestamp_pb2 import Timestamp
 from pydantic import JsonValue
 
-from choirworks.a2a.executor import ChoirWorksAgentExecutor
 from choirworks.a2a.tasks import list_all_tasks
-from choirworks.api.deps import get_context_store, get_executor, get_task_store
+from choirworks.api.deps import get_context_store, get_session_manager, get_task_store
 from choirworks.api.replay import synthesize_replay_events
 from choirworks.orchestration.rewind import (
     REWIND_KEY,
@@ -30,6 +29,9 @@ from choirworks.orchestration.state import (
     state_to_json,
 )
 from choirworks.store.contexts import ContextStore
+
+if TYPE_CHECKING:
+    from choirworks.orchestration.session import SessionManager
 
 router = APIRouter(tags=["conversations"])
 
@@ -165,12 +167,12 @@ async def rewind_conversation(
     body: dict[str, Any],
     task_store: TaskStore = Depends(get_task_store),
     context_store: ContextStore = Depends(get_context_store),
-    executor: ChoirWorksAgentExecutor = Depends(get_executor),
+    session_mgr: SessionManager = Depends(get_session_manager),
 ) -> ConversationPayload:
     task_id = str(body.get("task_id", ""))
     if not task_id:
         raise HTTPException(status_code=400, detail="task_id is required")
-    if executor.session_is_active(context_id):
+    if session_mgr.session_is_active(context_id):
         raise HTTPException(status_code=409, detail="会话正在执行中，无法回退")
     record = await context_store.get(context_id)
     if record is None:
@@ -198,5 +200,5 @@ async def rewind_conversation(
     marker.status.timestamp.CopyFrom(now)
     ParseDict({REWIND_KEY: task_id}, marker.metadata)
     await task_store.save(marker, ServerCallContext())
-    executor.drop_session(context_id)
+    session_mgr.evict_session(context_id)
     return await _conversation_payload(context_id, task_store, context_store)
