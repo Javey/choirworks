@@ -86,15 +86,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     # ------------------------------------------------------------- lifecycle
 
-    @property
-    def _sessions(self) -> dict[str, SessionRuntime]:
-        return self._session_mgr.sessions
-
     def session_is_active(self, context_id: str) -> bool:
         return self._session_mgr.session_is_active(context_id)
 
     def drop_session(self, context_id: str) -> None:
-        self._session_mgr.drop_session(context_id)
+        self._session_mgr.evict_session(context_id)
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Route one inbound message; background runners do the actual work."""
@@ -117,7 +113,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         await event_queue.enqueue_event(
             status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED)
         )
-        runtime = self._sessions.get(context_id)
+        runtime = self._session_mgr.sessions.get(context_id)
         if runtime is None:
             return
         async with runtime.lock:
@@ -140,7 +136,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         self._session_mgr.evict_session(context_id)
 
     async def shutdown(self) -> None:
-        runtimes = list(self._sessions.values())
+        runtimes = list(self._session_mgr.sessions.values())
         logger.info("shutdown", runtimes=len(runtimes))
         for runtime in runtimes:
             if runtime.runner is not None:
@@ -153,7 +149,7 @@ class ChoirWorksAgentExecutor(AgentExecutor):
                     pass
             for node_task in list(runtime.node_tasks):
                 node_task.cancel()
-        self._sessions.clear()
+        self._session_mgr.sessions.clear()
 
     # ------------------------------------------------------------- context
 

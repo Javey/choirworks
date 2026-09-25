@@ -104,9 +104,6 @@ class SessionManager:
         runtime = self._sessions.get(context_id)
         return runtime is not None and runtime.runner is not None and not runtime.runner.done()
 
-    def drop_session(self, context_id: str) -> None:
-        self.evict_session(context_id)
-
     async def persist(self, ctx: OrchestrationContext) -> None:
         runtime = ctx.runtime
         snapshot = state_to_json(runtime.state)
