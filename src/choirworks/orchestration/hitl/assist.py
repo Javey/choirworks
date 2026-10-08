@@ -60,7 +60,7 @@ async def spawn_assist(
         "spawn_assist",
         node=node.id,
         target=target,
-        instruction_len=len(instruction),
+        instruction=instruction,
     )
     args = CallSubagentArgs(
         requested_by=node.id,

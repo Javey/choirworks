@@ -72,7 +72,7 @@ async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> F
         "call_subagent",
         requested_by=call_args.requested_by,
         target=call_args.target_agent,
-        instruction_len=len(call_args.instruction),
+        instruction=call_args.instruction,
     )
 
     if call_args.requested_by == "assistant":

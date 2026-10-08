@@ -254,7 +254,7 @@ async def consume_chunks(
         "consume_chunks done",
         node_id=node.id,
         state=current,
-        output_len=len(node.output or ""),
+        output=node.output or "",
     )
     return current
 

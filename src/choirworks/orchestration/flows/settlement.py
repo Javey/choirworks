@@ -159,7 +159,7 @@ async def request_human(
         "request_human",
         node=node.id,
         agent=node.agent_name,
-        question_len=len(node.question or node.output or ""),
+        question=node.question or node.output or "",
     )
     args = AskUserArgs(
         node_id=node.id,

@@ -44,7 +44,7 @@ async def run_subagent[T](
     logger.info(
         "run_subagent",
         name=subagent.name,
-        user_len=len(user),
+        user=user,
         retries=subagent.max_retries,
     )
     last_error: Exception | None = None

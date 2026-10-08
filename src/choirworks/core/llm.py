@@ -106,8 +106,8 @@ class LiteLLMClient:
         logger.info(
             "LLM stream",
             model=self._model,
-            system_len=len(system),
-            user_len=len(user),
+            system=system,
+            user=user,
             tools=len(declarations),
         )
         response = await self._completion_fn(
@@ -162,7 +162,7 @@ class LiteLLMClient:
             "LLM stream done",
             model=self._model,
             tool_call=tool_name,
-            args_len=len(payload),
+            args=payload,
         )
         yield ToolCallResult(function=functions[tool_name], args=args)
 
@@ -170,8 +170,8 @@ class LiteLLMClient:
         logger.info(
             "LLM text",
             model=self._model,
-            system_len=len(system),
-            user_len=len(user),
+            system=system,
+            user=user,
         )
         response = await self._completion_fn(
             model=self._model,
@@ -188,7 +188,7 @@ class LiteLLMClient:
         logger.info(
             "LLM text done",
             model=self._model,
-            response_len=len(result),
+            response=result,
         )
         return result
 

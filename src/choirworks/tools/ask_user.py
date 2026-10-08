@@ -69,7 +69,7 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         "ask_user",
         node_id=node.id,
         agent=node.agent_name,
-        question_len=len(ask_args.question),
+        question=ask_args.question,
         question_type=ask_args.question_type,
     )
     apply_transition(node, NodeStatus.INPUT_REQUIRED)

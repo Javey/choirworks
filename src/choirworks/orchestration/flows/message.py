@@ -130,7 +130,7 @@ async def _do_reemit_questions(ctx: OrchestrationContext, payload: MessagePayloa
         "execute route=intervention_unanswered",
         task_id=ctx.task_id,
         context_id=ctx.context_id,
-        text_len=len(payload.text),
+        text=payload.text,
     )
     await emit_pending_questions(ctx)
     return FlowOutcome.END
@@ -150,7 +150,7 @@ async def _do_plan_and_launch(ctx: OrchestrationContext, payload: MessagePayload
         "execute route=plan_and_launch",
         task_id=ctx.task_id,
         context_id=ctx.context_id,
-        text_len=len(payload.text),
+        text=payload.text,
     )
     updater = payload.updater
     assert updater is not None

@@ -59,7 +59,7 @@ async def stream_plan(
 ) -> ToolCallResult:
     """Stream the planning LLM, emitting thought/text chunks, return the tool call."""
     logger.info(
-        "stream_plan", task=ctx.task_id, context_id=ctx.context_id, request_len=len(request)
+        "stream_plan", task=ctx.task_id, context_id=ctx.context_id, request=request
     )
     tool_call: ToolCallResult | None = None
     reasoning_parts: list[str] = []
@@ -137,8 +137,8 @@ async def stream_plan(
         "stream_plan done",
         task=ctx.task_id,
         context_id=ctx.context_id,
-        reasoning_len=len("".join(reasoning_parts)),
-        content_len=len("".join(content_parts)),
+        reasoning="".join(reasoning_parts),
+        content="".join(content_parts),
         tool=tool_call.function.name,
     )
     return tool_call

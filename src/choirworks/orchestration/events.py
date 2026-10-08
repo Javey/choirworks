@@ -143,7 +143,7 @@ async def emit_thought_chunk(
         "emit_thought_chunk",
         task_id=ctx.task_id,
         artifact_id=artifact_id,
-        length=len(text),
+        text=text,
         append=append,
         last_chunk=last_chunk,
     )
@@ -175,7 +175,7 @@ async def emit_text_chunk(
         "emit_text_chunk",
         task_id=ctx.task_id,
         artifact_id=artifact_id,
-        length=len(text),
+        text=text,
         append=append,
         last_chunk=last_chunk,
     )
