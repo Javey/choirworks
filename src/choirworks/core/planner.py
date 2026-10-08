@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
@@ -33,6 +34,13 @@ class PlanDraft(BaseModel):
 
 class PlanValidationError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRetry:
+    """A failed planning attempt. The next yields are a new LLM stream."""
+
+    error: str
 
 
 def _skill_ids(record: AgentRecord) -> set[str]:
@@ -119,13 +127,13 @@ async def plan(
     context: str | None = None,
     max_nodes: int = 20,
     max_retries: int = 2,
-) -> AsyncIterator[Delta | ToolCallResult]:
+) -> AsyncIterator[Delta | ToolCallResult | PlanRetry]:
     """Stream the planning thought process, then yield the tool call.
 
     Yields:
-        ``Delta`` objects (streaming chunks) followed by exactly one
-        ``ToolCallResult`` whose ``args`` is a :class:`PlanDraft`.
-        The caller validates and executes the tool.
+        ``Delta`` objects (streaming chunks), a :class:`PlanRetry` before each
+        retry, then exactly one ``ToolCallResult`` whose ``args`` is a
+        :class:`PlanDraft`. The caller validates and executes the tool.
     """
     agents = await ctx.registry.list()
     if not agents:
@@ -144,6 +152,7 @@ async def plan(
                 max_attempts=max_retries + 1,
                 error=last_error,
             )
+            yield PlanRetry(error=str(last_error))
 
         tool_call: ToolCallResult | None = None
         try:

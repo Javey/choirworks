@@ -6,7 +6,7 @@ import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.room import RoomOptions
-from choirworks.core.planner import PlanDraft, PlanningFailed, plan
+from choirworks.core.planner import PlanDraft, PlanningFailed, PlanRetry, plan
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
@@ -21,6 +21,34 @@ from choirworks.tools.base import ToolCallResult
 from choirworks.tools.create_plan import create_plan_func
 
 logger = structlog.get_logger(__name__)
+
+
+async def _close_attempt(
+    ctx: OrchestrationContext,
+    *,
+    thought_id: str,
+    text_id: str,
+    reasoning: str,
+    content: str,
+) -> None:
+    """Seal this attempt's artifacts so the next attempt cannot append to them."""
+    if reasoning:
+        await emit_thought_chunk(
+            ctx,
+            text=reasoning,
+            author="assistant",
+            append=False,
+            last_chunk=True,
+            artifact_id=thought_id,
+        )
+    if content:
+        await emit_text_chunk(
+            ctx,
+            text=content,
+            append=False,
+            last_chunk=True,
+            artifact_id=text_id,
+        )
 
 
 async def stream_plan(
@@ -40,66 +68,77 @@ async def stream_plan(
     first_content = True
     thought_id = uuid.uuid4().hex
     text_id = uuid.uuid4().hex
-    async for item in plan(
-        request,
-        ctx=ctx,
-        context=context_brief,
-        max_nodes=ctx.config.max_nodes,
-        max_retries=ctx.config.max_plan_retries,
-    ):
-        if isinstance(item, ToolCallResult):
-            tool_call = item
-            continue
-        reasoning = getattr(item, "reasoning_content", None)
-        content = getattr(item, "content", None)
-        if reasoning:
-            reasoning_parts.append(reasoning)
-            await emit_thought_chunk(
-                ctx,
-                text=reasoning,
-                author="assistant",
-                append=not first_reasoning,
-                last_chunk=False,
-                artifact_id=thought_id,
-            )
-            first_reasoning = False
-        if content:
-            content_parts.append(content)
-            await emit_text_chunk(
-                ctx,
-                text=content,
-                append=not first_content,
-                last_chunk=False,
-                artifact_id=text_id,
-            )
-            first_content = False
-    reasoning = "".join(reasoning_parts)
-    if reasoning:
-        await emit_thought_chunk(
+
+    async def close_current() -> None:
+        await _close_attempt(
             ctx,
-            text=reasoning,
-            author="assistant",
-            append=False,
-            last_chunk=True,
-            artifact_id=thought_id,
+            thought_id=thought_id,
+            text_id=text_id,
+            reasoning="".join(reasoning_parts),
+            content="".join(content_parts),
         )
-    content = "".join(content_parts)
-    if content:
-        await emit_text_chunk(
-            ctx,
-            text=content,
-            append=False,
-            last_chunk=True,
-            artifact_id=text_id,
-        )
+
+    try:
+        async for item in plan(
+            request,
+            ctx=ctx,
+            context=context_brief,
+            max_nodes=ctx.config.max_nodes,
+            max_retries=ctx.config.max_plan_retries,
+        ):
+            if isinstance(item, PlanRetry):
+                await close_current()
+                await emit_function_error(
+                    ctx,
+                    create_plan_func,
+                    item.error,
+                    state_name=TaskState.TASK_STATE_WORKING,
+                )
+                reasoning_parts = []
+                content_parts = []
+                first_reasoning = True
+                first_content = True
+                thought_id = uuid.uuid4().hex
+                text_id = uuid.uuid4().hex
+                continue
+            if isinstance(item, ToolCallResult):
+                tool_call = item
+                continue
+            reasoning = getattr(item, "reasoning_content", None)
+            content = getattr(item, "content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                await emit_thought_chunk(
+                    ctx,
+                    text=reasoning,
+                    author="assistant",
+                    append=not first_reasoning,
+                    last_chunk=False,
+                    artifact_id=thought_id,
+                )
+                first_reasoning = False
+            if content:
+                content_parts.append(content)
+                await emit_text_chunk(
+                    ctx,
+                    text=content,
+                    append=not first_content,
+                    last_chunk=False,
+                    artifact_id=text_id,
+                )
+                first_content = False
+        await close_current()
+    except PlanningFailed:
+        await close_current()
+        raise
     if tool_call is None:
         raise PlanningFailed("planner stream ended without a plan")
     logger.info(
         "stream_plan done",
         task=ctx.task_id,
         context_id=ctx.context_id,
-        reasoning_len=len(reasoning),
-        content_len=len(content),
+        reasoning_len=len("".join(reasoning_parts)),
+        content_len=len("".join(content_parts)),
         tool=tool_call.function.name,
     )
     return tool_call

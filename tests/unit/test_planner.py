@@ -8,6 +8,7 @@ from choirworks.core.planner import (
     PlanDraft,
     PlanningFailed,
     PlanNodeDraft,
+    PlanRetry,
     PlanValidationError,
     plan,
     validate_plan,
@@ -117,6 +118,8 @@ async def collect_plan(
     chunks: list[str] = []
     tool_call: ToolCallResult | None = None
     async for item in plan(request, ctx=ctx, **kwargs):
+        if isinstance(item, PlanRetry):
+            continue
         if isinstance(item, ToolCallResult):
             tool_call = item
         else:
@@ -153,9 +156,23 @@ async def test_planner_retries_with_feedback(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_orch_ctx(registry, llm=llm)
-        thinking, tool_call = await collect_plan("x", ctx)
+        retries: list[PlanRetry] = []
+        chunks: list[str] = []
+        tool_call: ToolCallResult | None = None
+        async for item in plan("x", ctx=ctx):
+            if isinstance(item, PlanRetry):
+                retries.append(item)
+            elif isinstance(item, ToolCallResult):
+                tool_call = item
+            else:
+                reasoning = getattr(item, "reasoning_content", None) or ""
+                if reasoning:
+                    chunks.append(reasoning)
+        assert tool_call is not None
+        assert len(retries) == 1
+        assert "unknown skill" in retries[0].error
         assert "unknown skill" in llm.stream_calls[1]["user"]
-        assert thinking == "思考：将请求拆解为 1 个节点。" * 2
+        assert "".join(chunks) == "思考：将请求拆解为 1 个节点。" * 2
     finally:
         await remote.close()
         await db.close()
