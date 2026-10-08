@@ -65,9 +65,9 @@ def room_msg(text: str, sender: str | None = None, role: int = Role.ROLE_USER):
 # ------------------------------------------------------------- builders
 
 
-def test_own_system_prompts_include_quote_preamble():
+def test_own_system_prompts_do_not_include_quote_preamble():
     for prompt in (SYSTEM_PROMPT, OUTCOME_SYSTEM, ASSISTANCE_SYSTEM, REPAIR_SYSTEM):
-        assert QUOTED_CONTENT_PREAMBLE in prompt
+        assert QUOTED_CONTENT_PREAMBLE not in prompt
 
 
 def test_build_planner_capabilities_caps_description():
@@ -86,9 +86,9 @@ def test_build_planner_user_message_fences_untrusted_blocks():
         context="- @a: done",
     )
     assert "User request:\n帮我写报告" in user
-    assert QUOTED_CONTENT_PREAMBLE not in user
-    assert user.count(QUOTED_CONTENT_BEGIN) == 3
-    assert user.count(QUOTED_CONTENT_END) == 3
+    assert QUOTED_CONTENT_PREAMBLE in user
+    assert user.count(QUOTED_CONTENT_BEGIN) == 4
+    assert user.count(QUOTED_CONTENT_END) == 4
     assert "Available agents:\n- a: agent" in user
     assert "Reason for replanning:\nnodes failed: boom" in user
     assert "Completed work so far:\n- @a: done" in user
@@ -96,7 +96,7 @@ def test_build_planner_user_message_fences_untrusted_blocks():
 
 def test_build_planner_user_message_without_reason_and_context():
     user = build_planner_user_message("hi", "- a: agent")
-    assert user.count(QUOTED_CONTENT_BEGIN) == 1
+    assert user.count(QUOTED_CONTENT_BEGIN) == 2
     assert "Reason for replanning" not in user
 
 
@@ -105,7 +105,7 @@ def test_build_assistance_decision_user():
     user = build_assistance_decision_user("c", "需要确认", candidates)
     assert "Requester: c" in user
     assert "Question / blocked work:\n需要确认" in user
-    assert QUOTED_CONTENT_PREAMBLE not in user
+    assert QUOTED_CONTENT_PREAMBLE in user
     assert "- a: a agent" in user
     assert "- b: b agent" in user
 

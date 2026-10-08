@@ -157,7 +157,11 @@ def build_planner_user_message(
     reason: str | None = None,
     context: str | None = None,
 ) -> str:
-    user = f"User request:\n{request}\n\n{quote_untrusted('Available agents:\n' + capabilities)}"
+    user = (
+        f"User request:\n{request}\n\n"
+        f"{QUOTED_CONTENT_PREAMBLE}\n"
+        f"{quote_untrusted('Available agents:\n' + capabilities)}"
+    )
     if reason:
         user += f"\n\n{quote_untrusted('Reason for replanning:\n' + reason)}"
     if context:
@@ -177,6 +181,7 @@ def build_assistance_decision_user(
     return (
         f"Requester: {requester_name}\n"
         f"Question / blocked work:\n{blocked_text}\n\n"
+        f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"{quote_untrusted('Available agents:\n' + capabilities)}"
     )
 
@@ -200,6 +205,7 @@ def build_outcome_user(
         f"Agent: {agent_name}\n"
         f"Assigned task:\n{instruction}\n\n"
         f"Agent final reply:\n{quote_untrusted(output[:MAX_PEER_CONTEXT])}\n\n"
+        f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"{available}"
     )
 
@@ -220,7 +226,11 @@ def build_repair_user(nodes: Iterable[NodeState], candidates: Sequence[AgentReco
         if capabilities
         else "Available agents: none"
     )
-    return f"{quote_untrusted('Plan state:\n' + build_plan_summary(nodes))}\n\n{available}"
+    return (
+        f"{QUOTED_CONTENT_PREAMBLE}\n"
+        f"{quote_untrusted('Plan state:\n' + build_plan_summary(nodes))}\n\n"
+        f"{available}"
+    )
 
 
 def build_replan_reason(nodes: Iterable[NodeState]) -> str:

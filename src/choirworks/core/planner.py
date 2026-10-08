@@ -9,7 +9,6 @@ from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
-from choirworks.core.fencing import QUOTED_CONTENT_PREAMBLE
 from choirworks.core.llm import ToolParseError
 from choirworks.models.domain import AgentRecord
 
@@ -24,7 +23,6 @@ class PlanNodeDraft(BaseModel):
     id: str
     name: str
     agent_name: str
-    skill_id: str | None = None
     input: dict[str, str] = Field(default_factory=dict)
     deps: list[str] = Field(default_factory=list)
 
@@ -44,21 +42,7 @@ class PlanRetry:
     error: str
 
 
-def _skill_ids(record: AgentRecord) -> set[str]:
-    raw = record.card.get("skills")
-    if not isinstance(raw, list):
-        return set()
-    ids: set[str] = set()
-    for skill in raw:
-        if not isinstance(skill, dict):
-            continue
-        skill_id = skill.get("id")
-        if isinstance(skill_id, str):
-            ids.add(skill_id)
-    return ids
-
-
-def validate_plan(draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: int = 20) -> None:
+def validate_plan(draft: PlanDraft, _agents: Sequence[AgentRecord], max_nodes: int = 20) -> None:
     if len(draft.nodes) > max_nodes:
         raise PlanValidationError(f"too many nodes: {len(draft.nodes)} > {max_nodes}")
 
@@ -66,15 +50,7 @@ def validate_plan(draft: PlanDraft, agents: Sequence[AgentRecord], max_nodes: in
     if len(set(ids)) != len(ids):
         raise PlanValidationError("duplicate node id in plan")
     id_set = set(ids)
-    agents_by_name = {agent.name: agent for agent in agents}
     for node in draft.nodes:
-        if node.skill_id is not None:
-            record = agents_by_name[node.agent_name]
-            skills = _skill_ids(record)
-            if node.skill_id not in skills:
-                raise PlanValidationError(
-                    f"unknown skill '{node.skill_id}' for agent {node.agent_name}"
-                )
         for dep in node.deps:
             if dep not in id_set:
                 raise PlanValidationError(f"unknown dependency: {dep}")
@@ -103,8 +79,7 @@ class PlanningFailed(RuntimeError):
     pass
 
 
-SYSTEM_PROMPT = (
-    """You are the planning brain of a multi-agent orchestration platform.
+SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
 
 First explain your decomposition briefly in your response text, then call the
@@ -112,17 +87,12 @@ create_plan tool with the final plan.
 
 Rules:
 - agent_name is enum-constrained to the registered agents listed in the user message.
-- skill_id, when set, must be an existing skill id of the assigned agent.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.
 - Put the exact instruction for the agent in each node's input.text.
 - If the request is a greeting, chitchat, or anything that does not need
   multi-agent decomposition, reply directly in your response text and call
-  create_plan with an empty nodes list.
-
-"""
-    + QUOTED_CONTENT_PREAMBLE
-)
+  create_plan with an empty nodes list."""
 
 
 async def plan(
