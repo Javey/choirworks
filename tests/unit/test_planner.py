@@ -40,26 +40,18 @@ def make_agent(name: str, skills: list[str]) -> AgentRecord:
 AGENTS = [make_agent("research", ["search"]), make_agent("writer", ["write"])]
 
 
-def node(node_id: str, agent: str, deps: list[str] | None = None, skill: str | None = None):
-    return PlanNodeDraft(
-        id=node_id, name=node_id, agent_name=agent, deps=deps or [], skill_id=skill
-    )
+def node(node_id: str, agent: str, deps: list[str] | None = None):
+    return PlanNodeDraft(id=node_id, name=node_id, agent_name=agent, deps=deps or [])
 
 
 def test_valid_plan_passes():
     draft = PlanDraft(
         nodes=[
-            node("n1", "research", skill="search"),
-            node("n2", "writer", deps=["n1"], skill="write"),
+            node("n1", "research"),
+            node("n2", "writer", deps=["n1"]),
         ],
     )
     validate_plan(draft, AGENTS, max_nodes=10)
-
-
-def test_unknown_skill_rejected():
-    draft = PlanDraft(nodes=[node("n1", "research", skill="nope")])
-    with pytest.raises(PlanValidationError, match="unknown skill"):
-        validate_plan(draft, AGENTS, max_nodes=10)
 
 
 def test_duplicate_node_id_rejected():
@@ -134,7 +126,18 @@ async def collect_plan(
 
 
 async def test_planner_streams_thinking(tmp_path):
-    llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
+    llm = FakeLLM(
+        structured_results=[
+            PlanDraft(
+                nodes=[
+                    node(
+                        "n1",
+                        "research",
+                    )
+                ]
+            )
+        ]
+    )
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_orch_ctx(registry, llm=llm)
@@ -150,8 +153,8 @@ async def test_planner_streams_thinking(tmp_path):
 
 
 async def test_planner_retries_with_feedback(tmp_path):
-    bad = PlanDraft(nodes=[node("n1", "research", skill="nope")])
-    good = PlanDraft(nodes=[node("n1", "research", skill="search")])
+    bad = PlanDraft(nodes=[node("n1", "research", deps=["ghost"])])
+    good = PlanDraft(nodes=[node("n1", "research")])
     llm = FakeLLM(structured_results=[bad, good])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
@@ -170,8 +173,8 @@ async def test_planner_retries_with_feedback(tmp_path):
                     chunks.append(reasoning)
         assert tool_call is not None
         assert len(retries) == 1
-        assert "unknown skill" in retries[0].error
-        assert "unknown skill" in llm.stream_calls[1]["user"]
+        assert "unknown dependency" in retries[0].error
+        assert "unknown dependency" in llm.stream_calls[1]["user"]
         assert "".join(chunks) == "思考：将请求拆解为 1 个节点。" * 2
     finally:
         await remote.close()
@@ -179,7 +182,7 @@ async def test_planner_retries_with_feedback(tmp_path):
 
 
 async def test_planner_fails_after_retries(tmp_path):
-    bad = PlanDraft(nodes=[node("n1", "research", skill="nope")])
+    bad = PlanDraft(nodes=[node("n1", "research", deps=["ghost"])])
     llm = FakeLLM(structured_results=[bad, bad, bad])
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
@@ -204,7 +207,18 @@ async def test_planner_rejects_when_no_agents(tmp_path):
 
 
 async def test_planner_passes_constrained_schema_to_tool(tmp_path):
-    llm = FakeLLM(structured_results=[PlanDraft(nodes=[node("n1", "research", skill="search")])])
+    llm = FakeLLM(
+        structured_results=[
+            PlanDraft(
+                nodes=[
+                    node(
+                        "n1",
+                        "research",
+                    )
+                ]
+            )
+        ]
+    )
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_orch_ctx(registry, llm=llm)
