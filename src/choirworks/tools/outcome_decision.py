@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, create_model
 
+from choirworks.core.fencing import QUOTED_CONTENT_PREAMBLE
 from choirworks.orchestration.planning.patch import PlanPatch
 from choirworks.orchestration.state import QuestionType
 from choirworks.tools.base import AgentFunction, FunctionResult
@@ -12,7 +13,8 @@ from choirworks.tools.base import AgentFunction, FunctionResult
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
 
-OUTCOME_SYSTEM = """You are the assistant of a multi-agent group.
+OUTCOME_SYSTEM = (
+    """You are the assistant of a multi-agent group.
 Read an agent's final reply and decide what it means for the plan:
 - intent="deliver": the reply is the finished work (default when unsure)
 - intent="need_info": the reply asks for information, help from a member, or a human decision
@@ -30,9 +32,14 @@ Rules:
 When intent="need_info", put what is needed into question and set target_agent to the
 listed candidate who can help; leave target_agent empty when a human must answer.
 When intent="deliver" or intent="revise", leave question, target_agent and instruction empty.
-Return only JSON matching the schema."""
+Return only JSON matching the schema.
 
-ASSISTANCE_SYSTEM = """You are the assistant of a multi-agent group.
+"""
+    + QUOTED_CONTENT_PREAMBLE
+)
+
+ASSISTANCE_SYSTEM = (
+    """You are the assistant of a multi-agent group.
 An agent is blocked and needs help. Decide how to handle it:
 - set target_agent to another registered agent that can help
 - leave target_agent empty to escalate to a human
@@ -46,14 +53,23 @@ When escalating to a human, shape the question interface:
 - question_type="select" with options when the choices are enumerable; set multi=true
   when more than one option can be chosen
 - question_type="input" otherwise (default)
-Leave question_type/options/multi at their defaults when a peer agent is chosen."""
+Leave question_type/options/multi at their defaults when a peer agent is chosen.
 
-REPAIR_SYSTEM = """You are the assistant of a multi-agent group.
+"""
+    + QUOTED_CONTENT_PREAMBLE
+)
+
+REPAIR_SYSTEM = (
+    """You are the assistant of a multi-agent group.
 Some tasks in the plan failed after retries. Produce an incremental repair patch:
 - intent="revise" with a patch that adds replacement tasks and/or invalidates tasks
 - added tasks may only depend on existing task ids
 - do not repeat work that is already completed; keep the plan minimal
-Return only JSON matching the schema."""
+Return only JSON matching the schema.
+
+"""
+    + QUOTED_CONTENT_PREAMBLE
+)
 
 
 class OutcomeDecision(BaseModel):

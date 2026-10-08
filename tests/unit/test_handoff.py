@@ -7,7 +7,11 @@ from choirworks.core.context import (
     RECEIPT_CONVENTION,
     build_dispatch_text,
 )
-from choirworks.core.fencing import QUOTED_CONTENT_BEGIN, QUOTED_CONTENT_END
+from choirworks.core.fencing import (
+    QUOTED_CONTENT_BEGIN,
+    QUOTED_CONTENT_END,
+    QUOTED_CONTENT_PREAMBLE,
+)
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.state import NodeState, OrchestrationState, add_member
 
@@ -55,6 +59,7 @@ def test_dispatch_text_includes_direct_dep_output():
     assert "调研结果" in text
     assert QUOTED_CONTENT_BEGIN in text
     assert QUOTED_CONTENT_END in text
+    assert QUOTED_CONTENT_PREAMBLE in text
 
 
 def test_dispatch_text_skips_indirect_deps():

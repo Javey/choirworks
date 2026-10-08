@@ -9,6 +9,7 @@ from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
 from choirworks.core.context import build_planner_capabilities, build_planner_user_message
+from choirworks.core.fencing import QUOTED_CONTENT_PREAMBLE
 from choirworks.core.llm import ToolParseError
 from choirworks.models.domain import AgentRecord
 
@@ -102,7 +103,8 @@ class PlanningFailed(RuntimeError):
     pass
 
 
-SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
+SYSTEM_PROMPT = (
+    """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
 
 First explain your decomposition briefly in your response text, then call the
@@ -116,7 +118,11 @@ Rules:
 - Put the exact instruction for the agent in each node's input.text.
 - If the request is a greeting, chitchat, or anything that does not need
   multi-agent decomposition, reply directly in your response text and call
-  create_plan with an empty nodes list."""
+  create_plan with an empty nodes list.
+
+"""
+    + QUOTED_CONTENT_PREAMBLE
+)
 
 
 async def plan(

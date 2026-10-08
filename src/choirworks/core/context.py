@@ -107,6 +107,8 @@ def build_continuation_text(
     answer is framed as peer assistance rather than a human reply.
     """
     parts = build_dispatch_text(node, state, agents)
+    if not any(QUOTED_CONTENT_PREAMBLE in part for part in parts):
+        parts.append(QUOTED_CONTENT_PREAMBLE)
     if answer_from:
         parts.append(f"你请求协助的问题：\n{quote_untrusted(question)}")
         parts.append(f"同伴 {answer_from} 的协助结果：\n{quote_untrusted(answer)}")
@@ -155,11 +157,7 @@ def build_planner_user_message(
     reason: str | None = None,
     context: str | None = None,
 ) -> str:
-    user = (
-        f"User request:\n{request}\n\n"
-        f"{QUOTED_CONTENT_PREAMBLE}\n"
-        f"{quote_untrusted('Available agents:\n' + capabilities)}"
-    )
+    user = f"User request:\n{request}\n\n{quote_untrusted('Available agents:\n' + capabilities)}"
     if reason:
         user += f"\n\n{quote_untrusted('Reason for replanning:\n' + reason)}"
     if context:
@@ -179,7 +177,6 @@ def build_assistance_decision_user(
     return (
         f"Requester: {requester_name}\n"
         f"Question / blocked work:\n{blocked_text}\n\n"
-        f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"{quote_untrusted('Available agents:\n' + capabilities)}"
     )
 
@@ -203,7 +200,6 @@ def build_outcome_user(
         f"Agent: {agent_name}\n"
         f"Assigned task:\n{instruction}\n\n"
         f"Agent final reply:\n{quote_untrusted(output[:MAX_PEER_CONTEXT])}\n\n"
-        f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"{available}"
     )
 
@@ -224,11 +220,7 @@ def build_repair_user(nodes: Iterable[NodeState], candidates: Sequence[AgentReco
         if capabilities
         else "Available agents: none"
     )
-    return (
-        f"{QUOTED_CONTENT_PREAMBLE}\n"
-        f"{quote_untrusted('Plan state:\n' + build_plan_summary(nodes))}\n\n"
-        f"{available}"
-    )
+    return f"{quote_untrusted('Plan state:\n' + build_plan_summary(nodes))}\n\n{available}"
 
 
 def build_replan_reason(nodes: Iterable[NodeState]) -> str:
@@ -247,6 +239,7 @@ def build_replan_context(nodes: Iterable[NodeState]) -> str:
 def build_assist_input(requester_name: str, output: str | None) -> str:
     return (
         f"{requester_name} 在协作中请求你的协助。\n"
+        f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"参考上下文：\n{quote_untrusted((output or '')[:MAX_PEER_CONTEXT])}\n\n"
         f"请提供你的专业协助。"
     )
