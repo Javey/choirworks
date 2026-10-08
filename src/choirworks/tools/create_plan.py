@@ -75,15 +75,11 @@ async def execute_create_plan(ctx: OrchestrationContext, args: BaseModel) -> Fun
         agents=[n.agent_name for n in draft.nodes],
     )
 
-    agents = await ctx.registry.list()
-    agent_urls = {agent.name: agent.card_url for agent in agents}
-
     for node_draft in draft.nodes:
         node = NodeState(
             id=node_draft.id,
             name=node_draft.name,
             agent_name=node_draft.agent_name,
-            agent_url=agent_urls.get(node_draft.agent_name, ""),
             deps=list(node_draft.deps),
             input_text=str(node_draft.input.get("text", "")),
         )

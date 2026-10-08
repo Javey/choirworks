@@ -50,7 +50,7 @@ async def execute_join_members(ctx: OrchestrationContext, args: BaseModel) -> Fu
         record = known.get(name)
         if record is None:
             continue
-        if not add_member(state, name, record.card_url, join_args.reason):
+        if not add_member(state, name, join_args.reason):
             continue
         joined.append(name)
 

@@ -159,7 +159,6 @@ export interface RoomMessageDto {
 export interface RoomMemberDto {
   conversation_id: string;
   agent_name: string;
-  agent_url: string;
   reason?: string | null;
   joined_at: string;
 }

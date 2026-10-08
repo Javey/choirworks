@@ -41,10 +41,8 @@ async def arbitrate_mentions(
             DerivedKind.ASSIST,
             parent_id=node.id,
             agent_name=name,
-            agent_url=known[name].card_url,
             input_text=build_assist_input(node.agent_name, node.output),
             assist_requested_by=node.id,
-            source_message_id=node.id,
         )
         if helper is None:
             return

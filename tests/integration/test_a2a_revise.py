@@ -102,7 +102,7 @@ async def test_revise_patch_invalidates_and_adds(tmp_path):
             assert nodes["n2"]["status"] == "invalidated"
             assert nodes["x1"]["status"] == "completed"
             assert nodes["x1"]["agent_name"] == "designer"
-            members = {member.get("name", member.get("agent_name")) for member in state["members"]}
+            members = {member["agent_name"] for member in state["members"]}
             assert "designer" in members
     finally:
         await writer.stop()

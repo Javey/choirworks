@@ -81,11 +81,10 @@ def test_replay_state_snapshot_becomes_state_delta() -> None:
         id="n1",
         name="调研",
         agent_name="researcher",
-        agent_url="http://agent",
         status="completed",
         output="调研结果",
     )
-    state.members["researcher"] = Member(name="researcher", url="http://agent", reason="plan")
+    state.members["researcher"] = Member(name="researcher", reason="plan")
     state.interventions["i1"] = Intervention(
         id="i1",
         node_id="n1",
@@ -103,6 +102,6 @@ def test_replay_state_snapshot_becomes_state_delta() -> None:
     assert "cw_delta" in metadata
     assert metadata["cw_delta"]["nodes"]["n1"]["status"] == "completed"
     assert metadata["cw_delta"]["nodes"]["n1"]["output"] == "调研结果"
-    assert metadata["cw_delta"]["members"][0]["name"] == "researcher"
+    assert metadata["cw_delta"]["members"][0]["agent_name"] == "researcher"
     assert metadata["cw_delta"]["interventions"]["i1"]["status"] == "resolved"
     assert metadata["cw_delta"]["interventions"]["i1"]["responder"] == "human"

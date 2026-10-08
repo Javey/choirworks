@@ -21,6 +21,7 @@ from choirworks.orchestration.events import (
 )
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
+from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
 from choirworks.orchestration.hitl.intervention import (
     QuestionResponse,
     answer_intervention,
@@ -199,7 +200,12 @@ async def _do_interrupt(ctx: OrchestrationContext, payload: MessagePayload) -> F
         "execute route=interrupt", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
     if node.a2a_task_id:
-        await ctx.remote.cancel_task(node.agent_url, node.a2a_task_id)
+        try:
+            agent_url = await agent_url_for(ctx, node.agent_name)
+        except UnknownAgentError:
+            logger.warning("interrupt: unknown agent", node=node.id, agent=node.agent_name)
+        else:
+            await ctx.remote.cancel_task(agent_url, node.a2a_task_id)
     apply_transition(node, NodeStatus.CANCELED)
     invalidated = blocked_nodes(ctx.state)
     for blocked in invalidated:

@@ -17,6 +17,7 @@ from google.protobuf import struct_pb2
 from choirworks.a2a.wire import join_text, struct
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.helpers import agent_url_for
 from choirworks.orchestration.state import NodeState, NodeStatus
 from choirworks.orchestration.transitions import apply_transition
 
@@ -47,18 +48,19 @@ async def stream_remote(
     *,
     continuation: bool,
 ) -> NodeStatus:
+    agent_url = await agent_url_for(ctx, node.agent_name)
     remote_task_id = node.a2a_task_id if continuation else None
     text_list = text if isinstance(text, list) else [text]
     logger.info(
         "stream_remote",
         context_id=ctx.context_id,
         node_id=node.id,
-        agent_url=node.agent_url,
+        agent_url=agent_url,
         parts=len(text_list),
         continuation=continuation,
     )
     chunks = ctx.remote.send_text(
-        node.agent_url,
+        agent_url,
         text,
         task_id=remote_task_id,
         context_id=ctx.context_id,
@@ -66,7 +68,7 @@ async def stream_remote(
     )
     current = await consume_chunks(ctx, node, chunks)
     logger.info("stream_remote done", context_id=ctx.context_id, node_id=node.id, state=current)
-    return await ensure_terminal(ctx, node, current)
+    return await ensure_terminal(ctx, node, current, agent_url)
 
 
 async def recover_remote(ctx: OrchestrationContext, node: NodeState) -> NodeStatus:
@@ -79,21 +81,23 @@ async def recover_remote(ctx: OrchestrationContext, node: NodeState) -> NodeStat
         node_id=node.id,
         a2a_task_id=node.a2a_task_id,
     )
+    agent_url = await agent_url_for(ctx, node.agent_name)
     current = NodeStatus.WORKING
     try:
-        chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
+        chunks = ctx.remote.subscribe_task(agent_url, node.a2a_task_id)
         current = await consume_chunks(ctx, node, chunks)
     except Exception as exc:
         logger.debug(
             "Recover subscribe failed", context_id=ctx.context_id, node_id=node.id, error=exc
         )
-    return await ensure_terminal(ctx, node, current)
+    return await ensure_terminal(ctx, node, current, agent_url)
 
 
 async def ensure_terminal(
     ctx: OrchestrationContext,
     node: NodeState,
     current: NodeStatus,
+    agent_url: str,
 ) -> NodeStatus:
     settled = {
         NodeStatus.COMPLETED,
@@ -104,7 +108,7 @@ async def ensure_terminal(
     while current not in settled:
         if not node.a2a_task_id:
             return current
-        task = await ctx.remote.get_task(node.agent_url, node.a2a_task_id)
+        task = await ctx.remote.get_task(agent_url, node.a2a_task_id)
         if task is not None:
             mapped = _REMOTE_STATE_MAP.get(task.status.state, current)
             if task.artifacts and mapped == NodeStatus.COMPLETED:
@@ -121,7 +125,7 @@ async def ensure_terminal(
             if current in settled:
                 return current
         try:
-            chunks = ctx.remote.subscribe_task(node.agent_url, node.a2a_task_id)
+            chunks = ctx.remote.subscribe_task(agent_url, node.a2a_task_id)
             current = await consume_chunks(ctx, node, chunks)
         except Exception as exc:
             logger.debug(

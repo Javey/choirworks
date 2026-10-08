@@ -6,14 +6,14 @@ import structlog
 
 from choirworks.core.context import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import emit_interventions_expired
 from choirworks.orchestration.execution.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.flows.outcome import OutcomePayload, outcome_flow
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
-    expire_cancel_requests,
+    expire_node_interventions,
 )
 from choirworks.orchestration.transitions import transition
 
@@ -104,18 +104,6 @@ async def execute_node(
             delta={"error": node.error or "unknown error"},
         )
 
-    expired = expire_cancel_requests(ctx.state, node.id)
-    if expired:
-        await emit_state_delta(
-            ctx,
-            interventions={
-                iv.id: {
-                    "status": "expired",
-                    "node_id": node.id,
-                    "kind": "confirm_cancel",
-                }
-                for iv in expired
-            },
-        )
+    await emit_interventions_expired(ctx, expire_node_interventions(ctx.state, node.id))
     await ctx.sessions.persist(ctx)
     await emit_pending_questions(ctx)

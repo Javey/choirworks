@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from choirworks.a2a.wire import function_call_part, status_update, struct
 from choirworks.orchestration.state import (
+    Intervention,
     InterventionDelta,
     MemberDelta,
     NodeDelta,
@@ -80,6 +81,25 @@ async def emit_intervention_rejected(
     await emit_event(
         ctx,
         metadata={"intervention_id": intervention_id, "reason": reason},
+    )
+
+
+async def emit_interventions_expired(
+    ctx: OrchestrationContext, expired: list[Intervention]
+) -> None:
+    """Push an expired delta so the client tears down the reply affordance."""
+    if not expired:
+        return
+    await emit_state_delta(
+        ctx,
+        interventions={
+            iv.id: {
+                "status": "expired",
+                "node_id": iv.node_id,
+                "kind": iv.kind,
+            }
+            for iv in expired
+        },
     )
 
 

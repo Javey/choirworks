@@ -7,19 +7,24 @@ from a2a.types.a2a_pb2 import TaskState, TaskStatusUpdateEvent
 from google.protobuf.json_format import MessageToDict
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.flows.settlement import request_human, settle_input
-from choirworks.orchestration.hitl.intervention import answer_intervention
+from choirworks.orchestration.flows.settlement import (
+    SettlementPayload,
+    _resolve_from_helper,
+    request_human,
+    settle_input,
+)
+from choirworks.orchestration.hitl.intervention import answer_intervention, cancel_node
 from choirworks.orchestration.state import (
+    InterventionKind,
     InterventionStatus,
     NodeState,
     NodeStatus,
     OrchestrationState,
     QuestionType,
-    add_cancel_request,
-    add_intervention,
-    expire_cancel_requests,
+    expire_node_interventions,
     normalize_interventions,
     pending_interventions,
+    request_user_input,
     state_from_json,
     state_to_json,
 )
@@ -61,26 +66,37 @@ def node(node_id: str, status: NodeStatus = NodeStatus.PENDING) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name=node_id,
-        agent_url=f"http://{node_id}",
         status=status,
+    )
+
+
+def _cancel_request(state: OrchestrationState, node_id: str, question: str = "打断？"):
+    return request_user_input(
+        state,
+        node_id,
+        question,
+        kind=InterventionKind.CONFIRM_CANCEL,
+        question_type=QuestionType.CONFIRM,
+        requester="assistant",
+        target_node_id=node_id,
     )
 
 
 def test_cancel_request_dedupes_per_node():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.WORKING)
-    first = add_cancel_request(state, "n1", "打断？")
-    again = add_cancel_request(state, "n1", "打断？")
+    first = _cancel_request(state, "n1", "打断？")
+    again = _cancel_request(state, "n1", "打断？")
     assert first is not None
     assert again is None
     assert len(state.interventions) == 1
 
 
-def test_expire_cancel_requests_on_node_settle():
+def test_expire_node_interventions_on_settle():
     state = OrchestrationState()
-    state.nodes["n1"] = node("n1", NodeStatus.WORKING)
-    first = add_cancel_request(state, "n1", "打断？")
-    expired = expire_cancel_requests(state, "n1")
+    state.nodes["n1"] = node("n1", NodeStatus.COMPLETED)
+    first = _cancel_request(state, "n1", "打断？")
+    expired = expire_node_interventions(state, "n1")
     assert first is not None
     assert [iv.id for iv in expired] == [first.id]
     assert pending_interventions(state) == []
@@ -90,9 +106,9 @@ def test_normalize_expires_when_target_missing_or_settled():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.COMPLETED)
     state.nodes["n2"] = node("n2", NodeStatus.WORKING)
-    add_cancel_request(state, "n1", "打断？")
-    add_cancel_request(state, "n2", "打断？")
-    add_cancel_request(state, "ghost", "打断？")
+    _cancel_request(state, "n1", "打断？")
+    _cancel_request(state, "n2", "打断？")
+    _cancel_request(state, "ghost", "打断？")
     expired = normalize_interventions(state)
     assert {iv.target_node_id for iv in expired} == {"n1", "ghost"}
     pending = pending_interventions(state)
@@ -102,7 +118,7 @@ def test_normalize_expires_when_target_missing_or_settled():
 def test_intervention_serialization_roundtrip():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.WORKING)
-    add_cancel_request(state, "n1", "打断？")
+    _cancel_request(state, "n1", "打断？")
     loaded = state_from_json(state_to_json(state))
     intervention = next(iter(loaded.interventions.values()))
     assert intervention.kind == "confirm_cancel"
@@ -119,7 +135,6 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
         id="3-h1",
         name="",
         agent_name="product-manager",
-        agent_url="http://pm",
         status=NodeStatus.COMPLETED,
         output="PM 的评估结论",
         derived=True,
@@ -148,7 +163,7 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
 async def test_answer_intervention_marks_human_responder_and_readies_node():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
-    pending = add_intervention(state, "n1", "请确认是否采用该方案？")
+    pending = request_user_input(state, "n1", "请确认是否采用该方案？")
     ctx, queue = make_ctx(state)
 
     assert await answer_intervention(ctx, intervention_id=pending.id, answer="按方案二执行") is True
@@ -179,7 +194,7 @@ async def test_answer_intervention_rejects_unknown_id():
 async def test_answer_intervention_rejects_wrong_type():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
-    pending = add_intervention(
+    pending = request_user_input(
         state,
         "n1",
         "选一个",
@@ -195,7 +210,7 @@ async def test_answer_intervention_rejects_wrong_type():
 async def test_answer_intervention_expires_stale_question():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.CANCELED)
-    pending = add_intervention(state, "n1", "问题")
+    pending = request_user_input(state, "n1", "问题")
     ctx, _ = make_ctx(state)
 
     assert await answer_intervention(ctx, intervention_id=pending.id, answer="答复") is False
@@ -207,7 +222,7 @@ async def test_answer_intervention_expires_stale_question():
 async def test_answer_intervention_confirm_cancel_cancels_active_node():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.WORKING)
-    pending = add_cancel_request(state, "n1", "打断？")
+    pending = _cancel_request(state, "n1", "打断？")
     assert pending is not None
     ctx, _ = make_ctx(state)
 
@@ -219,7 +234,7 @@ async def test_answer_intervention_confirm_cancel_cancels_active_node():
 async def test_answer_intervention_expires_stale_confirm_cancel():
     state = OrchestrationState()
     state.nodes["n1"] = node("n1", NodeStatus.COMPLETED)
-    pending = add_cancel_request(state, "n1", "打断？")
+    pending = _cancel_request(state, "n1", "打断？")
     assert pending is not None
     ctx, _ = make_ctx(state)
 
@@ -253,3 +268,81 @@ async def test_request_human_emits_input_required_question_message():
     payload = MessageToDict(data_parts[0].data)
     assert payload["intervention_id"] == pending[0].id
     assert payload["question_type"] == "input"
+
+
+async def test_request_human_is_idempotent():
+    state = OrchestrationState()
+    blocked = node("writer", NodeStatus.INPUT_REQUIRED)
+    blocked.question = "再问一次？"
+    state.nodes["writer"] = blocked
+    ctx, _ = make_ctx(state)
+
+    await request_human(ctx, blocked)
+    await request_human(ctx, blocked)
+
+    assert len(pending_interventions(state)) == 1
+
+
+def test_expire_node_interventions_keeps_live_question():
+    state = OrchestrationState()
+    state.nodes["n1"] = node("n1", NodeStatus.INPUT_REQUIRED)
+    pending = request_user_input(state, "n1", "还在等")
+    assert pending is not None
+
+    assert expire_node_interventions(state, "n1") == []
+    assert pending.status == InterventionStatus.PENDING
+
+    state.nodes["n1"].status = NodeStatus.READY
+    expired = expire_node_interventions(state, "n1")
+    assert expired == [pending]
+    assert pending.status == InterventionStatus.EXPIRED
+
+
+async def test_helper_resolve_expires_pending_question():
+    state = OrchestrationState()
+    blocked = node("3", NodeStatus.INPUT_REQUIRED)
+    blocked.question = "请确认？"
+    state.nodes["3"] = blocked
+    pending = request_user_input(state, "3", "请确认？")
+    assert pending is not None
+    helper = NodeState(
+        id="3-h1",
+        name="",
+        agent_name="product-manager",
+        status=NodeStatus.COMPLETED,
+        output="PM 的评估结论",
+        derived=True,
+        assist_requested_by="3",
+    )
+    ctx, queue = make_ctx(state)
+
+    await _resolve_from_helper(ctx, SettlementPayload(node=blocked, helper=helper))
+
+    assert pending.status == InterventionStatus.EXPIRED
+    assert blocked.status == NodeStatus.READY
+    deltas = [e for e in queue.events if isinstance(e, TaskStatusUpdateEvent)]
+    expired_delta = MessageToDict(deltas[-1].metadata)
+    assert expired_delta["cw_delta"]["interventions"][pending.id]["status"] == "expired"
+
+
+async def test_cancel_node_expires_pending_question():
+    state = OrchestrationState()
+    working = node("n1", NodeStatus.INPUT_REQUIRED)
+    state.nodes["n1"] = working
+    pending = request_user_input(state, "n1", "还要吗？")
+    assert pending is not None
+    ctx, queue = make_ctx(state)
+
+    await cancel_node(ctx, working)
+
+    assert pending.status == InterventionStatus.EXPIRED
+    expired = [
+        MessageToDict(event.metadata)
+        for event in queue.events
+        if isinstance(event, TaskStatusUpdateEvent)
+    ]
+    assert any(
+        item.get("cw_delta", {}).get("interventions", {}).get(pending.id, {}).get("status")
+        == "expired"
+        for item in expired
+    )

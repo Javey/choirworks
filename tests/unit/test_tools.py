@@ -69,7 +69,6 @@ def make_ctx(
 def make_node(state: OrchestrationState, node_id: str, **kwargs) -> NodeState:
     kwargs.setdefault("name", node_id)
     kwargs.setdefault("agent_name", "research")
-    kwargs.setdefault("agent_url", "http://research")
     node = NodeState(id=node_id, **kwargs)
     state.nodes[node_id] = node
     return node
@@ -93,7 +92,6 @@ async def test_create_plan_builds_nodes_and_joins_members():
 
     assert result.success is True
     assert set(state.nodes) == {"n1", "n2"}
-    assert state.nodes["n1"].agent_url == "http://research"
     assert state.nodes["n1"].input_text == "research it"
     assert state.nodes["n2"].deps == ["n1"]
     assert set(state.members) == {"research", "writer"}
@@ -112,14 +110,13 @@ async def test_join_members_adds_registered_agents_to_room():
     assert result.success is True
     assert isinstance(result.data, JoinMembersData)
     assert result.data.joined == ["writer"]
-    assert state.members["writer"].url == "http://writer"
     assert state.members["writer"].reason == "human_mention"
     assert "ghost" not in state.members
 
 
 async def test_join_members_skips_existing_member():
     state = OrchestrationState()
-    add_member(state, "writer", "http://writer", "plan")
+    add_member(state, "writer", "plan")
 
     result = await join_members_func.execute(
         make_ctx(state), JoinMembersArgs(names=["writer"], reason="plan_revision")

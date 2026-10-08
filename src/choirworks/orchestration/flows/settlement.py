@@ -9,7 +9,7 @@ import structlog
 
 from choirworks.core.context import build_assistance_decision_user
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import emit_interventions_expired, emit_state_delta
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.hitl.assist import spawn_assist
@@ -20,6 +20,7 @@ from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
     QuestionType,
+    expire_node_interventions,
     input_required_nodes,
     pending_intervention_for,
 )
@@ -96,8 +97,10 @@ async def _resolve_from_helper(
         node.answer_text = helper.output
         node.answer_from = helper.agent_name
         apply_transition(node, NodeStatus.READY)
+        expired = expire_node_interventions(ctx.state, node.id)
         await ctx.sessions.persist(ctx)
         await emit_state_delta(ctx, nodes={node.id: {"status": NodeStatus.READY}})
+        await emit_interventions_expired(ctx, expired)
     return FlowOutcome.EXIT_DONE
 
 

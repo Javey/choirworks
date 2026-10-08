@@ -13,14 +13,12 @@ from choirworks.orchestration.state import (
     OrchestrationState,
     QuestionType,
     active_nodes,
-    add_cancel_request,
-    add_intervention,
     add_member,
     all_completed,
     assist_nodes_for,
     blocked_nodes,
     enqueue,
-    expire_cancel_requests,
+    expire_node_interventions,
     failed_nodes,
     has_failures,
     has_pending_work,
@@ -30,6 +28,7 @@ from choirworks.orchestration.state import (
     pending_intervention_for,
     pending_interventions,
     ready_nodes,
+    request_user_input,
     start_new_plan,
     state_from_json,
     state_to_json,
@@ -37,13 +36,25 @@ from choirworks.orchestration.state import (
 )
 
 
+def _cancel_request(state: OrchestrationState, node_id: str):
+    return request_user_input(
+        state,
+        node_id,
+        "打断？",
+        kind=InterventionKind.CONFIRM_CANCEL,
+        question_type=QuestionType.CONFIRM,
+        requester="assistant",
+        target_node_id=node_id,
+    )
+
+
 def _state_with_session_data() -> OrchestrationState:
     state = OrchestrationState(plan_id="p1")
-    state.nodes["n1"] = NodeState(id="n1", name="n1", agent_name="a", agent_url="http://a")
-    add_intervention(state, "n1", "q")
+    state.nodes["n1"] = NodeState(id="n1", name="n1", agent_name="a")
+    request_user_input(state, "n1", "q")
     enqueue(state, "n1", "hi", sender="user")
     state.derived_count = 2
-    state.members["a"] = Member(name="a", url="http://a", reason="plan")
+    state.members["a"] = Member(name="a", reason="plan")
     return state
 
 
@@ -68,7 +79,6 @@ def test_full_json_round_trips_everything():
         id="n1",
         name="n1",
         agent_name="a",
-        agent_url="http://a",
         status=NodeStatus.COMPLETED,
         attempt=2,
         a2a_task_id="remote-1",
@@ -77,12 +87,11 @@ def test_full_json_round_trips_everything():
         input_text="问题",
         derived=True,
         question="q?",
-        source_message_id="m1",
         assist_requested_by="n9",
     )
-    state.members["a"] = Member(name="a", url="http://a", reason="plan")
-    pending = add_intervention(state, "n1", "q")
-    resolved = add_intervention(state, "n2", "q2")
+    state.members["a"] = Member(name="a", reason="plan")
+    pending = request_user_input(state, "n1", "q")
+    resolved = request_user_input(state, "n2", "q2")
     resolved.status = InterventionStatus.RESOLVED
     resolved.answer = "答复"
     resolved.responder = "human"
@@ -105,9 +114,8 @@ def test_full_json_round_trips_everything():
     assert node.input_text == "问题"
     assert node.derived is True
     assert node.question == "q?"
-    assert node.source_message_id == "m1"
     assert node.assist_requested_by == "n9"
-    assert loaded.members["a"].url == "http://a"
+    assert loaded.members["a"].name == "a"
     assert loaded.interventions[pending.id].status == InterventionStatus.PENDING
     assert loaded.interventions[resolved.id].answer == "答复"
     assert loaded.queue["n1"][0].id == queued.id
@@ -121,7 +129,7 @@ def test_state_from_json_rejects_non_object_snapshot():
 
 def test_intervention_question_fields_round_trip():
     state = OrchestrationState()
-    select = add_intervention(
+    select = request_user_input(
         state,
         "n1",
         "选一个",
@@ -131,7 +139,7 @@ def test_intervention_question_fields_round_trip():
         requester="agent-a",
     )
     select.answer = ["A", "B"]
-    confirm = add_intervention(
+    confirm = request_user_input(
         state,
         "n2",
         "确认？",
@@ -156,7 +164,7 @@ def test_intervention_question_fields_round_trip():
 
 def test_state_from_json_rejects_invalid_answer():
     state = OrchestrationState()
-    add_intervention(state, "n1", "q")
+    request_user_input(state, "n1", "q")
     payload = json.loads(state_to_json(state))
     payload["interventions"][0]["answer"] = 123
     with pytest.raises(ValueError):
@@ -184,7 +192,6 @@ def _node(state: OrchestrationState, node_id: str, **kwargs) -> NodeState:
     node = NodeState(
         id=node_id,
         name=node_id,
-        agent_url="http://a",
         **kwargs,
     )
     state.nodes[node_id] = node
@@ -295,8 +302,8 @@ def test_assist_nodes_for_filters_by_requester_and_agent():
 def test_pending_interventions_and_lookup():
     state = OrchestrationState()
     _node(state, "n1", status=NodeStatus.INPUT_REQUIRED)
-    pending = add_intervention(state, "n1", "q")
-    resolved = add_intervention(state, "n2", "q2")
+    pending = request_user_input(state, "n1", "q")
+    resolved = request_user_input(state, "n2", "q2")
     resolved.status = InterventionStatus.RESOLVED
 
     assert [iv.id for iv in pending_interventions(state)] == [pending.id]
@@ -307,8 +314,8 @@ def test_pending_interventions_and_lookup():
 def test_add_member_is_idempotent():
     state = OrchestrationState()
 
-    assert add_member(state, "a", "http://a", "plan") is True
-    assert add_member(state, "a", "http://a", "again") is False
+    assert add_member(state, "a", "plan") is True
+    assert add_member(state, "a", "again") is False
     assert state.members["a"].reason == "plan"
 
 
@@ -325,20 +332,21 @@ def test_cancel_requests_expire_and_deduplicate():
     state = OrchestrationState()
     _node(state, "n1", status=NodeStatus.WORKING)
 
-    first = add_cancel_request(state, "n1", "打断？")
+    first = _cancel_request(state, "n1")
     assert first is not None
-    assert add_cancel_request(state, "n1", "打断？") is None
+    assert _cancel_request(state, "n1") is None
 
-    expired = expire_cancel_requests(state, "n1")
+    state.nodes["n1"].status = NodeStatus.COMPLETED
+    expired = expire_node_interventions(state, "n1")
     assert [iv.id for iv in expired] == [first.id]
     assert first.status == InterventionStatus.EXPIRED
-    assert add_cancel_request(state, "n1", "再问？") is not None
+    assert _cancel_request(state, "n1") is not None
 
 
 def test_normalize_interventions_expires_when_target_settled():
     state = OrchestrationState()
     _node(state, "n1", status=NodeStatus.COMPLETED)
-    expired = add_cancel_request(state, "n1", "打断？")
+    expired = _cancel_request(state, "n1")
     assert expired is not None
 
     normalized = normalize_interventions(state)

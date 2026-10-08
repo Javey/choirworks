@@ -45,7 +45,6 @@ def node(node_id: str, **kwargs) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name=kwargs.pop("agent_name", node_id),
-        agent_url=f"http://{node_id}",
         **kwargs,
     )
 

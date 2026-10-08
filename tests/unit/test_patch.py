@@ -15,7 +15,6 @@ def node(node_id: str, **kwargs) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name=kwargs.pop("agent_name", node_id),
-        agent_url=f"http://{node_id}",
         **kwargs,
     )
 
@@ -27,10 +26,10 @@ def state_with(*nodes: NodeState) -> OrchestrationState:
     return state
 
 
-AGENTS = {"writer": "http://writer", "reviewer": "http://reviewer"}
+AGENTS = {"writer", "reviewer"}
 
 
-def test_add_node_gets_patch_id_and_agent_url():
+def test_add_node_gets_patch_id_and_agent_name():
     state = state_with(node("n1", status=NodeStatus.COMPLETED))
     patch = PlanPatch(
         add=[PatchNode(agent_name="writer", instruction="写报告", deps=["n1"])],
@@ -40,7 +39,7 @@ def test_add_node_gets_patch_id_and_agent_url():
     assert result.added == ["x1"]
     added = state.nodes["x1"]
     assert added.status == NodeStatus.PENDING
-    assert added.agent_url == "http://writer"
+    assert added.agent_name == "writer"
     assert added.input_text == "写报告"
     assert added.deps == ["n1"]
     assert state.patch_count == 1

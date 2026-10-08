@@ -58,7 +58,6 @@ def _node(node_id: str, status: NodeStatus, **kwargs: object) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name="a",
-        agent_url="http://a",
         status=status,
         **kwargs,
     )

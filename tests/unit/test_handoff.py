@@ -27,7 +27,6 @@ def node(node_id: str, **kwargs) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name=kwargs.pop("agent_name", node_id),
-        agent_url=f"http://{node_id}",
         **kwargs,
     )
 
@@ -92,8 +91,8 @@ def test_dispatch_text_truncates_long_dep_output():
 def test_dispatch_text_roster_only_known_members():
     target = node("n2", input_text="撰写报告")
     state = state_with(target)
-    add_member(state, "researcher", "http://researcher", "plan")
-    add_member(state, "ghost", "http://ghost", "plan")
+    add_member(state, "researcher", "plan")
+    add_member(state, "ghost", "plan")
     parts = build_dispatch_text(
         target,
         state,

@@ -10,11 +10,13 @@ from google.protobuf.json_format import MessageToDict
 from choirworks.a2a import recovery as recover
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.state import (
+    InterventionKind,
     InterventionStatus,
     NodeState,
     NodeStatus,
     OrchestrationState,
-    add_cancel_request,
+    QuestionType,
+    request_user_input,
 )
 from tests.support.fakes import FakeRegistry, FakeSessions
 
@@ -55,7 +57,6 @@ def _node(node_id: str, status: NodeStatus, **kwargs: object) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name="a",
-        agent_url="http://a",
         status=status,
         **kwargs,
     )
@@ -68,7 +69,15 @@ async def test_recover_session_resets_active_nodes_and_expires_stale_interventio
     state.nodes["resubscribe"] = _node("resubscribe", NodeStatus.WORKING, a2a_task_id="remote-1")
     state.nodes["redispatch"] = _node("redispatch", NodeStatus.SUBMITTED)
     state.nodes["done"] = _node("done", NodeStatus.COMPLETED)
-    stale = add_cancel_request(state, "done", "打断？")
+    stale = request_user_input(
+        state,
+        "done",
+        "打断？",
+        kind=InterventionKind.CONFIRM_CANCEL,
+        question_type=QuestionType.CONFIRM,
+        requester="assistant",
+        target_node_id="done",
+    )
     assert stale is not None
 
     started: list[OrchestrationContext] = []

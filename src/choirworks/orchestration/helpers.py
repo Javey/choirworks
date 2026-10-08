@@ -15,6 +15,18 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+class UnknownAgentError(RuntimeError):
+    """Raised when an agent name has no registry record."""
+
+
+async def agent_url_for(ctx: OrchestrationContext, agent_name: str) -> str:
+    """Resolve an agent's URL from the registry (the single source of truth)."""
+    record = await ctx.registry.get_by_name(agent_name)
+    if record is None:
+        raise UnknownAgentError(f"unknown agent: {agent_name}")
+    return record.card_url
+
+
 async def join_members(
     ctx: OrchestrationContext,
     names: list[str],
@@ -51,7 +63,6 @@ async def join_members(
     members: list[MemberDelta] = [
         {
             "agent_name": name,
-            "agent_url": ctx.state.members[name].url,
             "reason": reason,
         }
         for name in joined

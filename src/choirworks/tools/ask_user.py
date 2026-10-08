@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, Field
 
-from choirworks.orchestration.state import NodeStatus, QuestionType, add_intervention
+from choirworks.orchestration.state import (
+    NodeStatus,
+    QuestionType,
+    pending_intervention_for,
+    request_user_input,
+)
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.tools.base import AgentFunction, FunctionResult
 
@@ -70,7 +75,7 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
     apply_transition(node, NodeStatus.INPUT_REQUIRED)
     node.question = ask_args.question
 
-    intervention = add_intervention(
+    intervention = request_user_input(
         state,
         node.id,
         ask_args.question,
@@ -79,6 +84,10 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         multi=ask_args.multi,
         requester=node.agent_name,
     )
+    if intervention is None:
+        intervention = pending_intervention_for(state, node.id)
+    if intervention is None:
+        return FunctionResult(success=False, error="question already pending")
 
     return FunctionResult(
         success=True,

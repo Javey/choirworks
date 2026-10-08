@@ -14,13 +14,16 @@ from choirworks.tools.base import AgentFunction, ToolCallResult
 
 
 class FakeRegistry:
-    """Stub registry exposing only ``list()`` for tool/subagent tests."""
+    """Stub registry exposing ``list()`` / ``get_by_name()`` for tool/subagent tests."""
 
     def __init__(self, agents: Sequence[AgentRecord] | None = None):
         self._agents = list(agents or [])
 
     async def list(self) -> list[AgentRecord]:
         return list(self._agents)
+
+    async def get_by_name(self, name: str) -> AgentRecord | None:
+        return next((agent for agent in self._agents if agent.name == name), None)
 
 
 class FakeSessions:

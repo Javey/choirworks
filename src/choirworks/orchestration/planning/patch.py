@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import structlog
@@ -12,10 +11,12 @@ from choirworks.orchestration.helpers import join_members
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
 from choirworks.orchestration.state import (
     InterventionDelta,
+    InterventionKind,
     NodeState,
     NodeStatus,
     OrchestrationState,
-    add_cancel_request,
+    QuestionType,
+    request_user_input,
 )
 from choirworks.orchestration.transitions import apply_transition
 
@@ -53,13 +54,13 @@ class PatchResult:
 def apply_patch(
     state: OrchestrationState,
     patch: PlanPatch,
-    agent_urls: Mapping[str, str],
+    known_agents: set[str],
 ) -> PatchResult:
     """Apply an incremental plan patch, keeping finished work intact."""
     result = PatchResult()
 
     for draft in patch.add:
-        if draft.agent_name not in agent_urls:
+        if draft.agent_name not in known_agents:
             result.rejected.append(f"unknown agent: {draft.agent_name}")
             continue
         unknown = [dep for dep in draft.deps if dep not in state.nodes]
@@ -75,7 +76,6 @@ def apply_patch(
             id=node_id,
             name=draft.name or draft.agent_name,
             agent_name=draft.agent_name,
-            agent_url=agent_urls[draft.agent_name],
             deps=list(draft.deps),
             input_text=draft.instruction,
             derived=True,
@@ -116,9 +116,9 @@ def apply_patch(
 
 async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> PatchResult:
     agents = await ctx.registry.list()
-    agent_urls = {agent.name: agent.card_url for agent in agents}
+    known_agents = {agent.name for agent in agents}
     state = ctx.state
-    result = apply_patch(state, patch, agent_urls)
+    result = apply_patch(state, patch, known_agents)
     for rejected in result.rejected:
         logger.warning("Patch rejected", context=ctx.context_id, rejected=rejected)
     new_interventions: dict[str, InterventionDelta] = {}
@@ -131,7 +131,15 @@ async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> Pat
             f"（{patch.reason or '无说明'}）。是否打断？"
             "回复「确认」打断，回复其他内容则保留。"
         )
-        intervention = add_cancel_request(state, node_id, question)
+        intervention = request_user_input(
+            state,
+            node_id,
+            question,
+            kind=InterventionKind.CONFIRM_CANCEL,
+            question_type=QuestionType.CONFIRM,
+            requester="assistant",
+            target_node_id=node_id,
+        )
         if intervention is None:
             continue
         new_interventions[intervention.id] = {
@@ -142,7 +150,7 @@ async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> Pat
         }
     if new_interventions:
         await emit_state_delta(ctx, interventions=new_interventions)
-    added_agents = [draft.agent_name for draft in patch.add if draft.agent_name in agent_urls]
+    added_agents = [draft.agent_name for draft in patch.add if draft.agent_name in known_agents]
     await join_members(ctx, added_agents, "plan_revision")
     if result.invalidated:
         await emit_state_delta(

@@ -12,9 +12,11 @@ from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
     emit_intervention_rejected,
+    emit_interventions_expired,
     emit_state_delta,
 )
 from choirworks.orchestration.execution.remote_caller import cancel_remote_task
+from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     Intervention,
@@ -24,6 +26,7 @@ from choirworks.orchestration.state import (
     NodeStatus,
     QuestionType,
     blocked_nodes,
+    expire_node_interventions,
     pending_interventions,
 )
 from choirworks.orchestration.transitions import apply_transition
@@ -134,16 +137,7 @@ def _validate_answer(intervention: Intervention, answer: str | list[str] | bool)
 async def _expire(ctx: OrchestrationContext, intervention: Intervention) -> bool:
     intervention.status = InterventionStatus.EXPIRED
     await ctx.sessions.persist(ctx)
-    await emit_state_delta(
-        ctx,
-        interventions={
-            intervention.id: {
-                "status": "expired",
-                "node_id": intervention.node_id,
-                "kind": intervention.kind,
-            },
-        },
-    )
+    await emit_interventions_expired(ctx, [intervention])
     return False
 
 
@@ -232,13 +226,21 @@ async def cancel_node(
         invalidated=[n.id for n in blocked_nodes(ctx.state)],
     )
     state = ctx.state
-    if node.a2a_task_id and node.agent_url:
-        await cancel_remote_task(ctx, node.agent_url, node.a2a_task_id)
+    if node.a2a_task_id:
+        try:
+            agent_url = await agent_url_for(ctx, node.agent_name)
+        except UnknownAgentError:
+            logger.warning("cancel_node: unknown agent", node=node.id, agent=node.agent_name)
+        else:
+            await cancel_remote_task(ctx, agent_url, node.a2a_task_id)
     apply_transition(node, NodeStatus.CANCELED)
     node.a2a_task_id = None
     invalidated = blocked_nodes(state)
     for blocked in invalidated:
         apply_transition(blocked, NodeStatus.INVALIDATED)
+    expired = expire_node_interventions(state, node.id)
+    for blocked in invalidated:
+        expired.extend(expire_node_interventions(state, blocked.id))
     await emit_state_delta(
         ctx,
         nodes={
@@ -246,4 +248,5 @@ async def cancel_node(
             **{b.id: {"status": NodeStatus.INVALIDATED} for b in invalidated},
         },
     )
+    await emit_interventions_expired(ctx, expired)
     await ctx.sessions.persist(ctx)

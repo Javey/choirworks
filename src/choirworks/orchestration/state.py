@@ -61,7 +61,6 @@ class NodeDict(TypedDict):
     id: str
     name: str
     agent_name: str
-    agent_url: str
     status: str
     attempt: int
     a2a_task_id: str | None
@@ -73,7 +72,6 @@ class NodeDict(TypedDict):
     question: str | None
     answer_text: str | None
     answer_from: str | None
-    source_message_id: str | None
     assist_requested_by: str | None
 
 
@@ -82,7 +80,6 @@ class NodeState:
     id: str
     name: str
     agent_name: str
-    agent_url: str
     status: NodeStatus = NodeStatus.PENDING
     attempt: int = 0
     a2a_task_id: str | None = None
@@ -94,7 +91,6 @@ class NodeState:
     question: str | None = None
     answer_text: str | None = None
     answer_from: str | None = None
-    source_message_id: str | None = None
     assist_requested_by: str | None = None
 
     def to_dict(self) -> NodeDict:
@@ -102,7 +98,6 @@ class NodeState:
             "id": self.id,
             "name": self.name,
             "agent_name": self.agent_name,
-            "agent_url": self.agent_url,
             "status": self.status,
             "attempt": self.attempt,
             "a2a_task_id": self.a2a_task_id,
@@ -114,7 +109,6 @@ class NodeState:
             "question": self.question,
             "answer_text": self.answer_text,
             "answer_from": self.answer_from,
-            "source_message_id": self.source_message_id,
             "assist_requested_by": self.assist_requested_by,
         }
 
@@ -124,7 +118,6 @@ class NodeState:
             id=str(data.get("id", "")),
             name=str(data.get("name", "")),
             agent_name=str(data.get("agent_name", "")),
-            agent_url=str(data.get("agent_url", "")),
             status=NodeStatus(data.get("status", "pending")),
             attempt=int(data.get("attempt", 0)),
             a2a_task_id=data.get("a2a_task_id"),
@@ -136,7 +129,6 @@ class NodeState:
             question=data.get("question"),
             answer_text=data.get("answer_text"),
             answer_from=data.get("answer_from"),
-            source_message_id=data.get("source_message_id"),
             assist_requested_by=data.get("assist_requested_by"),
         )
 
@@ -145,7 +137,6 @@ class MemberDelta(TypedDict):
     """Wire-format delta for a room member joining event."""
 
     agent_name: str
-    agent_url: str
     reason: str
 
 
@@ -180,10 +171,7 @@ class InterventionDelta(TypedDict, total=False):
 class MemberDict(TypedDict):
     """Serialized :class:`Member`."""
 
-    name: str
     agent_name: str
-    url: str
-    agent_url: str
     reason: str
     joined_at: str
 
@@ -191,16 +179,12 @@ class MemberDict(TypedDict):
 @dataclass
 class Member:
     name: str
-    url: str
     reason: str
     joined_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> MemberDict:
         return {
-            "name": self.name,
             "agent_name": self.name,
-            "url": self.url,
-            "agent_url": self.url,
             "reason": self.reason,
             "joined_at": self.joined_at,
         }
@@ -208,8 +192,7 @@ class Member:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Member:
         return cls(
-            name=str(data.get("name", data.get("agent_name", ""))),
-            url=str(data.get("url", data.get("agent_url", ""))),
+            name=str(data.get("agent_name", "")),
             reason=str(data.get("reason", "")),
             joined_at=str(data.get("joined_at", now_iso())),
         )
@@ -219,7 +202,6 @@ class InterventionDict(TypedDict):
     """Serialized :class:`Intervention`."""
 
     id: str
-    intervention_id: str
     node_id: str
     question: str
     status: str
@@ -262,7 +244,6 @@ class Intervention:
     def to_dict(self) -> InterventionDict:
         return {
             "id": self.id,
-            "intervention_id": self.id,
             "node_id": self.node_id,
             "question": self.question,
             "status": self.status,
@@ -281,7 +262,7 @@ class Intervention:
     def from_dict(cls, data: dict[str, Any]) -> Intervention:
         raw_options = data.get("options", [])
         return cls(
-            id=str(data.get("id", data.get("intervention_id", ""))),
+            id=str(data.get("id", "")),
             node_id=str(data.get("node_id", "")),
             question=str(data.get("question", "")),
             status=InterventionStatus(data.get("status", "pending")),
@@ -443,69 +424,64 @@ def pending_intervention_for(state: OrchestrationState, node_id: str) -> Interve
 # ----------------------------------------------------------------- transitions
 
 
-def add_member(state: OrchestrationState, name: str, url: str, reason: str) -> bool:
+def add_member(state: OrchestrationState, name: str, reason: str) -> bool:
     if name in state.members:
         return False
-    state.members[name] = Member(name=name, url=url, reason=reason)
+    state.members[name] = Member(name=name, reason=reason)
     return True
 
 
-def add_intervention(
+def request_user_input(
     state: OrchestrationState,
     node_id: str,
     question: str,
     *,
+    kind: InterventionKind = InterventionKind.QUESTION,
     question_type: QuestionType = QuestionType.INPUT,
     options: list[str] | None = None,
     multi: bool = False,
     requester: str = "",
-) -> Intervention:
+    target_node_id: str | None = None,
+) -> Intervention | None:
+    """Create one pending question for a node. None when one is already pending."""
+    if pending_intervention_for(state, node_id) is not None:
+        return None
     intervention = Intervention(
         id=uuid.uuid4().hex,
         node_id=node_id,
         question=question,
+        kind=kind,
         question_type=question_type,
         options=list(options or []),
         multi=multi,
         requester=requester,
-    )
-    state.interventions[intervention.id] = intervention
-    return intervention
-
-
-def add_cancel_request(
-    state: OrchestrationState, target_node_id: str, question: str
-) -> Intervention | None:
-    for intervention in state.interventions.values():
-        if (
-            intervention.kind == "confirm_cancel"
-            and intervention.status == InterventionStatus.PENDING
-            and intervention.target_node_id == target_node_id
-        ):
-            return None
-    intervention = Intervention(
-        id=uuid.uuid4().hex,
-        node_id=target_node_id,
-        question=question,
-        kind=InterventionKind.CONFIRM_CANCEL,
-        question_type=QuestionType.CONFIRM,
-        requester="assistant",
         target_node_id=target_node_id,
     )
     state.interventions[intervention.id] = intervention
     return intervention
 
 
-def expire_cancel_requests(state: OrchestrationState, node_id: str) -> list[Intervention]:
+def _intervention_stale(intervention: Intervention, node: NodeState | None) -> bool:
+    if node is None:
+        return True
+    if intervention.kind == InterventionKind.CONFIRM_CANCEL:
+        return node.status not in ACTIVE_NODE_STATUSES
+    return node.status != NodeStatus.INPUT_REQUIRED
+
+
+def expire_node_interventions(state: OrchestrationState, node_id: str) -> list[Intervention]:
+    """Expire pending questions for one node that its status no longer justifies."""
     expired = []
     for intervention in state.interventions.values():
-        if (
-            intervention.kind == "confirm_cancel"
-            and intervention.status == InterventionStatus.PENDING
-            and intervention.target_node_id == node_id
-        ):
-            intervention.status = InterventionStatus.EXPIRED
-            expired.append(intervention)
+        if intervention.status != InterventionStatus.PENDING:
+            continue
+        if (intervention.target_node_id or intervention.node_id) != node_id:
+            continue
+        node = state.nodes.get(node_id)
+        if not _intervention_stale(intervention, node):
+            continue
+        intervention.status = InterventionStatus.EXPIRED
+        expired.append(intervention)
     return expired
 
 
@@ -515,18 +491,12 @@ def normalize_interventions(state: OrchestrationState) -> list[Intervention]:
     for intervention in state.interventions.values():
         if intervention.status != InterventionStatus.PENDING:
             continue
-        node = state.nodes.get(intervention.target_node_id or intervention.node_id)
-        if node is None:
-            intervention.status = InterventionStatus.EXPIRED
-            expired.append(intervention)
+        node_id = intervention.target_node_id or intervention.node_id
+        node = state.nodes.get(node_id)
+        if not _intervention_stale(intervention, node):
             continue
-        if intervention.kind == "confirm_cancel":
-            if node.status not in ACTIVE_NODE_STATUSES:
-                intervention.status = InterventionStatus.EXPIRED
-                expired.append(intervention)
-        elif node.status != NodeStatus.INPUT_REQUIRED:
-            intervention.status = InterventionStatus.EXPIRED
-            expired.append(intervention)
+        intervention.status = InterventionStatus.EXPIRED
+        expired.append(intervention)
     return expired
 
 

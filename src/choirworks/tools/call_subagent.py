@@ -92,7 +92,6 @@ async def execute_call_subagent(ctx: OrchestrationContext, args: BaseModel) -> F
         DerivedKind.HELPER,
         parent_id=call_args.requested_by,
         agent_name=agent.name,
-        agent_url=agent.card_url,
         input_text=call_args.instruction
         or build_peer_fallback_input((requester_node.question if requester_node else None) or ""),
         assist_requested_by=call_args.requested_by,

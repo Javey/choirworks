@@ -339,7 +339,6 @@ function applyStateDelta(
       newMembers.push({
         conversation_id: view.contextId,
         agent_name: agentName,
-        agent_url: String(m.agent_url ?? ""),
         reason: typeof m.reason === "string" ? m.reason : null,
         joined_at:
           typeof m.joined_at === "string" && m.joined_at

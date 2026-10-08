@@ -369,7 +369,6 @@ describe("applyStreamEvent", () => {
         members: [
           {
             agent_name: "writer",
-            agent_url: "http://x",
             reason: "plan",
             joined_at: "2026-01-01T00:00:00Z",
           },
@@ -409,8 +408,8 @@ describe("applyStreamEvent", () => {
           n1: { name: "task1", agent_name: "echo", status: "completed", output: "done", input_text: "任务一" },
         },
         members: [
-          { agent_name: "echo", agent_url: "http://echo", reason: "plan" },
-          { agent_name: "writer", agent_url: "http://writer", reason: "plan" },
+          { agent_name: "echo", reason: "plan" },
+          { agent_name: "writer", reason: "plan" },
         ],
         interventions: {
           iv1: { status: "pending", node_id: "n1", kind: "confirm_cancel", question: "预算口径？" },

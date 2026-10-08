@@ -16,7 +16,7 @@ from a2a.types.a2a_pb2 import (
 )
 
 from choirworks.a2a.tasks import iter_all_tasks
-from choirworks.orchestration.events import emit_state_delta
+from choirworks.orchestration.events import emit_interventions_expired
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
@@ -108,7 +108,7 @@ async def recover_session(ctx: OrchestrationContext) -> None:
     - a target node that had settled before the crash is no longer active, so
       its intervention is meaningless and is expired immediately;
     - a still-active target keeps its ``pending`` intervention, handled later
-      by ``expire_cancel_requests`` once the runner re-attaches the remote task.
+      by ``expire_node_interventions`` once the runner re-attaches the remote task.
 
     Active nodes are reset to ``recover`` (remote task can be re-subscribed) or
     ``pending`` (re-dispatched), then the runner is started.
@@ -121,17 +121,7 @@ async def recover_session(ctx: OrchestrationContext) -> None:
             context_id=ctx.context_id,
             expired_interventions=len(expired),
         )
-        await emit_state_delta(
-            ctx,
-            interventions={
-                iv.id: {
-                    "status": "expired",
-                    "node_id": iv.node_id,
-                    "kind": iv.kind,
-                }
-                for iv in expired
-            },
-        )
+        await emit_interventions_expired(ctx, expired)
     for node in ctx.state.nodes.values():
         if node.status in ACTIVE_NODE_STATUSES:
             apply_transition(

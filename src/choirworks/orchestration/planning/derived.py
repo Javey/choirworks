@@ -38,11 +38,9 @@ async def spawn_derived_node(
     *,
     parent_id: str,
     agent_name: str,
-    agent_url: str,
     input_text: str,
     deps: list[str] | None = None,
     assist_requested_by: str | None = None,
-    source_message_id: str | None = None,
     emit: bool = True,
 ) -> NodeState | None:
     """Create a derived node, join its agent, persist, and (optionally) emit.
@@ -65,12 +63,10 @@ async def spawn_derived_node(
         id=node_id,
         name="",
         agent_name=agent_name,
-        agent_url=agent_url,
         deps=list(deps or []),
         input_text=input_text,
         derived=True,
         assist_requested_by=assist_requested_by,
-        source_message_id=source_message_id,
     )
     state.nodes[node_id] = node
     logger.info("spawn_derived_node", kind=kind, node_id=node_id, agent_name=agent_name)
@@ -104,7 +100,6 @@ async def spawn_followup_node(
         DerivedKind.FOLLOWUP,
         parent_id=anchor.id,
         agent_name=anchor.agent_name,
-        agent_url=anchor.agent_url,
         input_text=text,
         deps=deps if deps is not None else [anchor.id],
     )

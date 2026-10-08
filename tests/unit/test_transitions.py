@@ -58,7 +58,6 @@ def node(node_id: str, status: NodeStatus = NodeStatus.PENDING) -> NodeState:
         id=node_id,
         name=node_id,
         agent_name=node_id,
-        agent_url=f"http://{node_id}",
         status=status,
     )
 

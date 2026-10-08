@@ -16,6 +16,7 @@ from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.flows.message import MessagePayload, message_flow
+from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
@@ -124,7 +125,14 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             await ctx.sessions.persist(ctx)
             for node in list(state.nodes.values()):
                 if node.status == NodeStatus.CANCELED and node.a2a_task_id:
-                    await self._remote.cancel_task(node.agent_url, node.a2a_task_id)
+                    try:
+                        agent_url = await agent_url_for(ctx, node.agent_name)
+                    except UnknownAgentError:
+                        logger.warning(
+                            "cancel: unknown agent", node_id=node.id, agent=node.agent_name
+                        )
+                        continue
+                    await self._remote.cancel_task(agent_url, node.a2a_task_id)
             logger.info("cancel", task_id=task_id, context_id=context_id, canceled_nodes=canceled)
         self._session_mgr.evict_session(context_id)
 
