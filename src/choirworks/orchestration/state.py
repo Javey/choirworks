@@ -212,7 +212,6 @@ class InterventionDict(TypedDict):
     options: list[str]
     multi: bool
     requester: str
-    target_node_id: str | None
     created_at: str
 
 
@@ -238,7 +237,6 @@ class Intervention:
     options: list[str] = field(default_factory=list)
     multi: bool = False
     requester: str = ""
-    target_node_id: str | None = None
     created_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> InterventionDict:
@@ -254,7 +252,6 @@ class Intervention:
             "options": list(self.options),
             "multi": self.multi,
             "requester": self.requester,
-            "target_node_id": self.target_node_id,
             "created_at": self.created_at,
         }
 
@@ -273,7 +270,6 @@ class Intervention:
             options=[str(item) for item in raw_options] if isinstance(raw_options, list) else [],
             multi=bool(data.get("multi", False)),
             requester=str(data.get("requester", "")),
-            target_node_id=data.get("target_node_id"),
             created_at=str(data.get("created_at", now_iso())),
         )
 
@@ -441,7 +437,6 @@ def request_user_input(
     options: list[str] | None = None,
     multi: bool = False,
     requester: str = "",
-    target_node_id: str | None = None,
 ) -> Intervention | None:
     """Create one pending question for a node. None when one is already pending."""
     if pending_intervention_for(state, node_id) is not None:
@@ -455,7 +450,6 @@ def request_user_input(
         options=list(options or []),
         multi=multi,
         requester=requester,
-        target_node_id=target_node_id,
     )
     state.interventions[intervention.id] = intervention
     return intervention
@@ -475,7 +469,7 @@ def expire_node_interventions(state: OrchestrationState, node_id: str) -> list[I
     for intervention in state.interventions.values():
         if intervention.status != InterventionStatus.PENDING:
             continue
-        if (intervention.target_node_id or intervention.node_id) != node_id:
+        if intervention.node_id != node_id:
             continue
         node = state.nodes.get(node_id)
         if not _intervention_stale(intervention, node):
@@ -491,7 +485,7 @@ def normalize_interventions(state: OrchestrationState) -> list[Intervention]:
     for intervention in state.interventions.values():
         if intervention.status != InterventionStatus.PENDING:
             continue
-        node_id = intervention.target_node_id or intervention.node_id
+        node_id = intervention.node_id
         node = state.nodes.get(node_id)
         if not _intervention_stale(intervention, node):
             continue

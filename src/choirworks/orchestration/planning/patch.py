@@ -138,7 +138,6 @@ async def apply_patch_locked(ctx: OrchestrationContext, patch: PlanPatch) -> Pat
             kind=InterventionKind.CONFIRM_CANCEL,
             question_type=QuestionType.CONFIRM,
             requester="assistant",
-            target_node_id=node_id,
         )
         if intervention is None:
             continue

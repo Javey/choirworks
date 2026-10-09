@@ -76,7 +76,6 @@ async def test_recover_session_resets_active_nodes_and_expires_stale_interventio
         kind=InterventionKind.CONFIRM_CANCEL,
         question_type=QuestionType.CONFIRM,
         requester="assistant",
-        target_node_id="done",
     )
     assert stale is not None
 

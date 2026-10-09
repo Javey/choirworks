@@ -169,7 +169,7 @@ async def answer_intervention(
         question_type=intervention.question_type,
     )
     if intervention.kind == InterventionKind.CONFIRM_CANCEL:
-        target = state.nodes.get(intervention.target_node_id or "")
+        target = state.nodes.get(intervention.node_id)
         if target is None or target.status not in ACTIVE_NODE_STATUSES:
             return await _expire(ctx, intervention)
         intervention.status = InterventionStatus.RESOLVED

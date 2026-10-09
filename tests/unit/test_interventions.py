@@ -78,7 +78,6 @@ def _cancel_request(state: OrchestrationState, node_id: str, question: str = "�
         kind=InterventionKind.CONFIRM_CANCEL,
         question_type=QuestionType.CONFIRM,
         requester="assistant",
-        target_node_id=node_id,
     )
 
 
@@ -110,9 +109,9 @@ def test_normalize_expires_when_target_missing_or_settled():
     _cancel_request(state, "n2", "打断？")
     _cancel_request(state, "ghost", "打断？")
     expired = normalize_interventions(state)
-    assert {iv.target_node_id for iv in expired} == {"n1", "ghost"}
+    assert {iv.node_id for iv in expired} == {"n1", "ghost"}
     pending = pending_interventions(state)
-    assert [iv.target_node_id for iv in pending] == ["n2"]
+    assert [iv.node_id for iv in pending] == ["n2"]
 
 
 def test_intervention_serialization_roundtrip():
@@ -122,7 +121,7 @@ def test_intervention_serialization_roundtrip():
     loaded = state_from_json(state_to_json(state))
     intervention = next(iter(loaded.interventions.values()))
     assert intervention.kind == "confirm_cancel"
-    assert intervention.target_node_id == "n1"
+    assert intervention.node_id == "n1"
     assert pending_interventions(loaded)[0].kind == "confirm_cancel"
 
 

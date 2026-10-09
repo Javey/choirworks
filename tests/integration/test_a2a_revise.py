@@ -157,7 +157,7 @@ async def test_revise_in_flight_requires_confirmation(tmp_path):
             await http.post("/v1/agents", json={"name": "slow", "card_url": slow.url})
             task_id = await _send_once(client, _message("开始"))
             pending, confirm = await _wait_for_cancel_request(client, task_id)
-            assert confirm["target_node_id"] == "n2"
+            assert confirm["node_id"] == "n2"
             await _send_once(
                 client,
                 answer_message(

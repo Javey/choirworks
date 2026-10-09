@@ -44,7 +44,6 @@ def _cancel_request(state: OrchestrationState, node_id: str):
         kind=InterventionKind.CONFIRM_CANCEL,
         question_type=QuestionType.CONFIRM,
         requester="assistant",
-        target_node_id=node_id,
     )
 
 
