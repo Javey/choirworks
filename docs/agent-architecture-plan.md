@@ -27,11 +27,11 @@
 |---|------|
 | 1 | **session 持久化保持快照**（`OrchestrationState` + `SessionManager` + `ContextStore`），不搬 ADK 的事件重放 / rehydration |
 | 2 | **不引入内部 Event 对象、不做 Event→A2A 转换**：产品本身就是 A2A agent，事件词汇表 = A2A 标准事件（`TaskStatusUpdateEvent` / `TaskArtifactUpdateEvent` / `Message`），agent 经回合上下文的 queue 直推 |
-| 3 | **wire 协议自由重设计**：自定义内容统一为 `cw_type` data part 约定，agent card 注册 AgentExtension（`room` extension 先例）；状态增量从 status metadata 挪进 data part |
+| 3 | **wire 协议自由重设计**：自定义内容按 3.3 定稿的载体规则重整（`cw_type` part metadata / `cw_delta` 事件 metadata / 问答卡独占 status.message）；agent card 注册 AgentExtension |
 | 4 | **core/ 只放与 ADK 同构、业务无关的框架件**；业务编排留在 `orchestration/`；`a2a/` 是纯壳桥 |
-| 5 | **契约分家**：BaseAgent 只管身份 + 树；根家族 `run_async(ctx)`，LlmAgent 家族 `decide(ctx, user) -> T`（流式推事件）——见 3.4 的理由 |
+| 5 | **契约统一为 `run_async`**（ADK 形状，挂 BaseAgent）：`run_async(ctx, user, **tool_kwargs) -> object`——根返回 `None`、LlmAgent 返回 `T`；返回 `object` 是决策 2（砍内部 Event）的代价，替代 ADK 的 `AsyncGenerator[Event]` |
 | 6 | `Subagent` / `run_subagent` 退役：outcome / assistance / repair 迁为 LlmAgent 实例；planner 的 `plan()` 循环迁为 PlannerAgent；`emit_*` 体系退役为 core 事件构造器 + 单点 `emit` |
-| 7 | **分期提交，每期测试全绿**（pytest / ruff / basedpyright 0 errors） |
+| 7 | **地基与接线分离**：地基件纯新增（或只动地基自己的文件），接线/迁移动现有代码、**每项单独等指令再动**；每步测试全绿 |
 
 ## 三、目标架构
 
@@ -95,32 +95,34 @@ model_config 体系、ADK 的 agentic 工具循环（AutoFlow——本仓 LLM �
 `core/events.py`（`status_event` / `chunk_event` / `function_call_event` /
 `state_delta_event`），`emit(ctx, ev)` 单点推队列。
 
-### 3.4 契约（为什么分家）
+### 3.4 契约（统一 run_async，ADK 形状）
 
 ```
 A2A 桥 (a2a/executor.py)
   (RequestContext, EventQueue)          ← 只有桥层见得到这两个
-      │  Runner: ensure session → 装配
+      │  Runner: ensure session → 装配 TurnContext（业务子类，含入站解析）
       ▼
-  TurnContext                           ← queue 已在 ctx 里（共享层）
-      ├─ 根家族 OrchestratorAgent.run_async(ctx)      ← 回合驱动，事件经 ctx.queue 推
-      └─ LlmAgent 家族 decide(ctx, user, **kw) -> T   ← 单次结构化 LLM 决策
+  TurnContext（core 基座 ← 业务子类）   ← queue 已在 ctx 里（共享层）
+      ├─ OrchestratorAgent.run_async(ctx, user) -> None      ← 回合驱动
+      └─ LlmAgent.run_async(ctx, user, **kw) -> T            ← 单次结构化 LLM 决策
 ```
 
-- `RequestContext`（A2A 原始入站消息：room 元数据、`question_response` data
-  part、quote/interrupt）只在桥层存在，内部 agent 收到的是拼好的提示词——
-  统一签名的唯一途径是 ADK 的内部 Event 管线，而它已被决策 2 排除。
-- 共享层是 `TurnContext`（含 queue），两个家族经它推 A2A 标准事件；BaseAgent
-  只管身份 + 树，run 契约归各家族声明，避免不合身的强契约。
-
 ```python
-# core/agents/base.py（已建）：身份 + 树，不声明 run 契约
+# core/agents/base.py：身份 + 树 + run_async（ADK 形状，非泛型 → 树无 Any 问题）
+@dataclass(slots=True)
+class BaseAgent(abc.ABC):
+    name: str
+    description: str = ""
+    sub_agents: list[BaseAgent] = field(default_factory=list)
+    parent_agent: BaseAgent | None = field(default=None, init=False, repr=False, compare=False)
 
-# 根家族（orchestration/orchestrator.py）
-class OrchestratorAgent(BaseAgent):
-    async def run_async(self, ctx: TurnContext) -> None: ...
+    @abc.abstractmethod
+    async def run_async(
+        self, ctx: TurnContext, user: str, **tool_kwargs: object
+    ) -> object:
+        """跑一次调用：吃一条用户消息，产出输出；事件经 ctx 推出。"""
 
-# LlmAgent 家族（core/agents/llm_agent.py）
+# core/agents/llm_agent.py：LlmAgent[T](BaseAgent)
 class LlmAgent[T](BaseAgent):
     system_prompt: str
     tool_name: str
@@ -128,30 +130,58 @@ class LlmAgent[T](BaseAgent):
     process: Callable[[ToolCallResult | None], T]
     max_retries: int = 2
 
-    async def decide(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> T:
-        # 思考/正文 chunk 事件边跑边推（ctx.queue）；无调用/解析失败 → 追加反馈重试；
+    @override
+    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> T:
+        # 思考/正文 chunk 事件边跑边推（core/events）；无调用/解析失败 → 追加反馈重试；
         # 耗尽 → process(None) 兜底；成功 → process(tool_call)
 ```
 
-### 3.5 TurnContext
+- 返回 `object`：ADK 靠 `AsyncGenerator[Event]` 统一输出，本仓砍了内部 Event
+  （决策 2），根返回 `None`、LlmAgent 返回 `T`，协变合法、不破禁 Any。
+- 根的 `user` = 入站消息文本；LlmAgent 的 `user` = 编排层拼好的提示词。
 
-现 `OrchestrationContext` 吸收 `MessagePayload`（入站消息解析结果：text /
-room / responses / updater）而成；`emit_*` 的构造逻辑归并进
-`core/events.py`，调用点经 `emit(ctx, ev)` 单点推队列。
+### 3.5 TurnContext（基座 + 业务子类）
 
-## 四、分期计划
+- `core/agents/context.py`：`TurnContext` = 回合上下文基座（ADK
+  InvocationContext 对应物）——`task_id` / `context_id` / `queue` / `lock` /
+  `llm`。非泛型具体类，天然满足 `core/events.EventSink`。
+- 业务子类（接线期由现 `OrchestrationContext` 演化）扩展 `registry` /
+  `state` / `sessions` / 入站解析（吸收现 `MessagePayload`）；LlmAgent 收
+  `TurnContext` 即同时收得下业务子类。
 
-每期独立提交、全量验证（`uv run pytest tests -q` 全绿 + ruff +
-basedpyright 0 errors）。测试随期迁移，不留旧断言。
+## 四、推进方式（地基与接线分离）
 
-| 期 | 内容 | 主要动到 |
+每步独立提交、全量验证（`uv run pytest tests -q` 全绿 + ruff +
+basedpyright 0 errors）。
+
+### 已完成
+
+| 步 | 内容 |
+|---|---|
+| ✓ | `core/agents/base.py`：BaseAgent（身份 + 树） |
+| ✓ | `core/events.py` 事件词汇表 + extension 注册 + 全仓 `emit_*` 调用点迁移（`orchestration/events.py` 收缩为业务组合层） |
+| ✓ | `tests/unit/test_core_events.py`、方案文档重组（本步） |
+
+### 地基队列（纯新增 / 只动地基自己的文件，按序推进）
+
+| # | 件 | 内容 |
 |---|---|---|
-| 1 | `core/events.py` 事件词汇表 + extension 注册；全仓 `emit_*` 调用点迁移；`orchestration/events.py` 收缩为业务组合层（全部经 core 构造器 + `emit`，第 4 期随根 agent 重组） | events / wire / card + 全部调用点 + 测试 |
-| 2 | TurnContext + Runner；`a2a/executor.py` 瘦身纯壳；`core/flows/` 就位；`core/context.py` 业务内容迁出 | context / session / executor + 测试 |
-| 3 | `LlmAgent`（`decide` 流式推思考/结果事件）；outcome / assistance / repair 迁为实例；`Subagent` / `run_subagent` 退役 | `subagents/` + settlement / outcome / repair 调用点 |
-| 4 | `OrchestratorAgent` 根：message_flow、DAG 调度、settlement、HITL 移植为根 impl | `orchestration/flows/` `execution/` `hitl/` |
-| 5 | PlannerAgent：`core/planner.py` 的 `plan()` 循环迁为 LlmAgent 特化（只迁现状，不夹带新功能） | `core/planner.py` + `orchestration/planning/` |
-| 6 | RemoteAgent：`remote_caller` 收编，节点执行走 agent | `execution/remote_caller.py` + `node_executor.py` |
+| 1 | `base.py` 挂抽象 `run_async`（3.4 统一契约）+ `core/agents/context.py`（TurnContext 基座） | 地基自身修订 + 新增；`test_agents.py` 同步 |
+| 2 | `core/agents/llm_agent.py`：`LlmAgent[T]`，`run_async` = `run_subagent` 循环 + 思考/正文 chunk 流式推事件；配 `test_llm_agent.py` | 新增；`Subagent` / `run_subagent` / 四件套一行不动 |
+| 3 | `core/runner.py`（Runner） | 设计到步再议（与根 agent 驱动关系） |
+
+### 接线 / 迁移待办（动现有代码，**每项单独等指令**）
+
+| 项 | 内容 |
+|---|---|
+| events 收敛 | 问答卡（`build_questions_message` / `emit_pending_questions` / `QUESTION_PART`）在 `hitl/intervention.py`；`a2a/executor.py` cancel 直推；`remote_caller.py` 三处远端转发直推——收敛为「core 造词、orchestration 组句」两层 |
+| Subagent 迁移 | outcome / assistance / repair 迁为 `LlmAgent` 实例；`Subagent` / `run_subagent` 退役；`build_tools` 的 ctx 类型随业务回合子类 |
+| TurnContext 业务子类 | 现 `OrchestrationContext` 演化（吸收 `MessagePayload`，扩展 registry/state/sessions） |
+| 编排器根 | `OrchestratorAgent`（message_flow / DAG 调度 / settlement / HITL 移植为根 impl） |
+| PlannerAgent | `core/planner.py` 的 `plan()` 循环迁为 LlmAgent 特化（只迁现状） |
+| RemoteAgent | `remote_caller` 收编，节点执行走 agent |
+| core/context.py 业务迁出 | prompt 构造 / 围栏 / brief builder 迁业务层 |
+| `core/flows/` | `orchestration/flows/engine.py` 挪入 |
 
 ## 五、约束
 
