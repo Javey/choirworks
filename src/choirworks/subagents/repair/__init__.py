@@ -11,13 +11,10 @@ from typing import override
 
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
+from choirworks.core.tool import FunctionTool, StructuredOutputTool, ToolCallResult
 from choirworks.core.util import as_model
-from choirworks.tools.base import AgentFunction, ToolCallResult
-from choirworks.tools.outcome_decision import (
-    REPAIR_SYSTEM,
-    RepairResult,
-    decision_tool,
-)
+from choirworks.subagents.repair.model import RepairResult
+from choirworks.subagents.repair.prompt import REPAIR_SYSTEM
 
 _REPAIR_TOOL_DESCRIPTION = "Produce an incremental repair patch for a failed plan."
 
@@ -29,8 +26,14 @@ class RepairAgent(LlmAgent[RepairResult | None]):
     max_retries = 0
 
     @override
-    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
-        return [decision_tool("RepairDecision", _REPAIR_TOOL_DESCRIPTION, RepairResult)]
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
+        return [
+            StructuredOutputTool(
+                name="RepairDecision",
+                description=_REPAIR_TOOL_DESCRIPTION,
+                schema=RepairResult,
+            )
+        ]
 
     @override
     def process(self, tool_call: ToolCallResult | None) -> RepairResult | None:

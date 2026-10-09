@@ -10,13 +10,10 @@ from typing import override
 
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
+from choirworks.core.tool import FunctionTool, StructuredOutputTool, ToolCallResult
 from choirworks.core.util import as_model
-from choirworks.tools.base import AgentFunction, ToolCallResult
-from choirworks.tools.outcome_decision import (
-    OUTCOME_SYSTEM,
-    OutcomeResult,
-    decision_tool,
-)
+from choirworks.subagents.outcome.model import OutcomeResult
+from choirworks.subagents.outcome.prompt import OUTCOME_SYSTEM
 
 _OUTCOME_TOOL_DESCRIPTION = "Decide what an agent's final reply means for the plan."
 
@@ -27,8 +24,14 @@ class OutcomeAgent(LlmAgent[OutcomeResult]):
     final_tool = "OutcomeDecision"
 
     @override
-    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
-        return [decision_tool("OutcomeDecision", _OUTCOME_TOOL_DESCRIPTION, OutcomeResult)]
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
+        return [
+            StructuredOutputTool(
+                name="OutcomeDecision",
+                description=_OUTCOME_TOOL_DESCRIPTION,
+                schema=OutcomeResult,
+            )
+        ]
 
     @override
     def process(self, tool_call: ToolCallResult | None) -> OutcomeResult:

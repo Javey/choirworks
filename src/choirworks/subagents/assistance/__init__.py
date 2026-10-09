@@ -12,15 +12,11 @@ from typing import override
 
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
+from choirworks.core.tool import FunctionTool, StructuredOutputTool, ToolCallResult
 from choirworks.core.util import as_model
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.tools.base import AgentFunction, ToolCallResult
-from choirworks.tools.outcome_decision import (
-    ASSISTANCE_SYSTEM,
-    AssistanceResult,
-    assistance_schema,
-    decision_tool,
-)
+from choirworks.subagents.assistance.model import AssistanceResult, assistance_schema
+from choirworks.subagents.assistance.prompt import ASSISTANCE_SYSTEM
 
 _ASSISTANCE_TOOL_DESCRIPTION = "Decide how to handle a blocked agent."
 
@@ -31,13 +27,19 @@ class AssistanceAgent(LlmAgent[AssistanceResult]):
     final_tool = "AssistanceDecision"
 
     @override
-    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
         assert isinstance(ctx, OrchestrationContext)
         exclude_agent = str(kwargs.get("exclude_agent", ""))
         agents = await ctx.registry.list()
         candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents
         schema = assistance_schema([a.name for a in candidates])
-        return [decision_tool("AssistanceDecision", _ASSISTANCE_TOOL_DESCRIPTION, schema)]
+        return [
+            StructuredOutputTool(
+                name="AssistanceDecision",
+                description=_ASSISTANCE_TOOL_DESCRIPTION,
+                schema=schema,
+            )
+        ]
 
     @override
     def process(self, tool_call: ToolCallResult | None) -> AssistanceResult:

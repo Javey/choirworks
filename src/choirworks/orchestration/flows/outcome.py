@@ -8,7 +8,7 @@ from typing import Literal
 
 import structlog
 
-from choirworks.core.context import build_outcome_user
+from choirworks.core.prompts import build_outcome_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome, Route
 from choirworks.orchestration.hitl.assist import arbitrate_mentions
@@ -17,7 +17,7 @@ from choirworks.orchestration.planning.repair import revise_plan
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
 from choirworks.subagents.outcome import outcome_agent
-from choirworks.tools.outcome_decision import OutcomeResult
+from choirworks.subagents.outcome.model import OutcomeResult
 
 logger = structlog.get_logger(__name__)
 

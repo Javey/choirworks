@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from a2a.server.tasks.task_updater import TaskUpdater
 
     from choirworks.a2a.client import RemoteAgentClient
-    from choirworks.core.context import ContextBriefBuilder
     from choirworks.core.llm import LiteLLMClient
+    from choirworks.core.prompts import ContextBriefBuilder
     from choirworks.orchestration.hitl.intervention import QuestionResponse
     from choirworks.orchestration.registry import AgentRegistry
 

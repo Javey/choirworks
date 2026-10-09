@@ -7,7 +7,7 @@ from typing import Literal
 
 import structlog
 
-from choirworks.core.context import build_assistance_decision_user
+from choirworks.core.prompts import build_assistance_decision_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_interventions_expired, emit_state_delta
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
@@ -26,8 +26,8 @@ from choirworks.orchestration.state import (
 )
 from choirworks.orchestration.transitions import apply_transition
 from choirworks.subagents.assistance import assistance_agent
+from choirworks.subagents.assistance.model import AssistanceResult
 from choirworks.tools.ask_user import AskUserArgs, ask_user_func
-from choirworks.tools.outcome_decision import AssistanceResult
 
 logger = structlog.get_logger(__name__)
 

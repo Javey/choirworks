@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, override
 
 import structlog
 from pydantic import BaseModel, create_model
 
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
+from choirworks.core.tool import FunctionResult, FunctionTool
 from choirworks.orchestration.helpers import join_members
 from choirworks.orchestration.state import NodeState
-from choirworks.tools.base import AgentFunction, FunctionResult
 
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
@@ -52,68 +52,59 @@ def constrained_plan_schema(agent_names: Sequence[str]) -> type[PlanDraft]:
     )
 
 
-async def create_plan_args_model(ctx: OrchestrationContext) -> type[BaseModel]:
-    agents = await ctx.registry.list()
-    return constrained_plan_schema([agent.name for agent in agents])
+class CreatePlanTool(FunctionTool):
+    name = "create_plan"
+    description = "Create an execution plan: a DAG of tasks assigned to registered agents."
 
+    @override
+    async def _get_declaration(self, ctx: OrchestrationContext) -> type[BaseModel]:
+        agents = await ctx.registry.list()
+        return constrained_plan_schema([agent.name for agent in agents])
 
-async def execute_create_plan(ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
-    """``create_plan`` — turn the model's plan draft into live orchestration state.
+    @override
+    async def run_async(self, ctx: OrchestrationContext, args: BaseModel) -> FunctionResult:
+        draft = args if isinstance(args, PlanDraft) else PlanDraft.model_validate(args.model_dump())
+        state = ctx.state
 
-    The model calls this function (via :meth:`LiteLLMClient.stream` with a
-    forced tool choice) with a DAG of nodes.  The function creates
-    :class:`NodeState` entries, joins the plan agents as room members, and
-    returns an ack.  Execution of the nodes starts asynchronously — the model
-    is **not** kept waiting.
-    """
-    draft = args if isinstance(args, PlanDraft) else PlanDraft.model_validate(args.model_dump())
-    state = ctx.state
-
-    logger.info(
-        "create_plan",
-        nodes=len(draft.nodes),
-        agents=[n.agent_name for n in draft.nodes],
-    )
-
-    for node_draft in draft.nodes:
-        node = NodeState(
-            id=node_draft.id,
-            name=node_draft.name,
-            agent_name=node_draft.agent_name,
-            deps=list(node_draft.deps),
-            input_text=str(node_draft.input.get("text", "")),
+        logger.info(
+            "create_plan",
+            nodes=len(draft.nodes),
+            agents=[n.agent_name for n in draft.nodes],
         )
-        state.nodes[node.id] = node
 
-    await join_members(
-        ctx,
-        [n.agent_name for n in state.nodes.values() if n.agent_name],
-        "plan",
-    )
+        for node_draft in draft.nodes:
+            node = NodeState(
+                id=node_draft.id,
+                name=node_draft.name,
+                agent_name=node_draft.agent_name,
+                deps=list(node_draft.deps),
+                input_text=str(node_draft.input.get("text", "")),
+            )
+            state.nodes[node.id] = node
 
-    return FunctionResult(
-        success=True,
-        data=CreatePlanData(
-            plan_id=state.plan_id,
-            plan_version=state.plan_version,
-            nodes=[
-                PlanNodeData(
-                    id=n.id,
-                    name=n.name,
-                    agent_name=n.agent_name,
-                    deps=n.deps,
-                    input_text=n.input_text,
-                )
-                for n in state.nodes.values()
-            ],
-        ),
-    )
+        await join_members(
+            ctx,
+            [n.agent_name for n in state.nodes.values() if n.agent_name],
+            "plan",
+        )
+
+        return FunctionResult(
+            success=True,
+            data=CreatePlanData(
+                plan_id=state.plan_id,
+                plan_version=state.plan_version,
+                nodes=[
+                    PlanNodeData(
+                        id=n.id,
+                        name=n.name,
+                        agent_name=n.agent_name,
+                        deps=n.deps,
+                        input_text=n.input_text,
+                    )
+                    for n in state.nodes.values()
+                ],
+            ),
+        )
 
 
-create_plan_func = AgentFunction(
-    name="create_plan",
-    description="Create an execution plan: a DAG of tasks assigned to registered agents.",
-    args_model=create_plan_args_model,
-    execute=execute_create_plan,
-    is_long_running=True,
-)
+create_plan_func = CreatePlanTool()

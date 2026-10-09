@@ -6,7 +6,13 @@ from a2a.types.a2a_pb2 import Role
 from google.protobuf.json_format import ParseDict
 
 from choirworks.a2a.room import A2A_ROOM_URI
-from choirworks.core.context import (
+from choirworks.core.fencing import (
+    QUOTED_CONTENT_BEGIN,
+    QUOTED_CONTENT_END,
+    QUOTED_CONTENT_PREAMBLE,
+)
+from choirworks.core.planner import SYSTEM_PROMPT
+from choirworks.core.prompts import (
     ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
@@ -16,19 +22,11 @@ from choirworks.core.context import (
     build_replan_context,
     build_replan_reason,
 )
-from choirworks.core.fencing import (
-    QUOTED_CONTENT_BEGIN,
-    QUOTED_CONTENT_END,
-    QUOTED_CONTENT_PREAMBLE,
-)
-from choirworks.core.planner import SYSTEM_PROMPT
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.state import NodeState
-from choirworks.tools.outcome_decision import (
-    ASSISTANCE_SYSTEM,
-    OUTCOME_SYSTEM,
-    REPAIR_SYSTEM,
-)
+from choirworks.subagents.assistance.prompt import ASSISTANCE_SYSTEM
+from choirworks.subagents.outcome.prompt import OUTCOME_SYSTEM
+from choirworks.subagents.repair.prompt import REPAIR_SYSTEM
 from tests.support.fakes import FakeLLM
 
 

@@ -8,13 +8,13 @@ import structlog
 from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
-from choirworks.core.context import build_planner_capabilities, build_planner_user_message
 from choirworks.core.llm import ToolParseError
+from choirworks.core.prompts import build_planner_capabilities, build_planner_user_message
 from choirworks.models.domain import AgentRecord
 
 if TYPE_CHECKING:
+    from choirworks.core.tool import ToolCallResult
     from choirworks.orchestration.context import OrchestrationContext
-    from choirworks.tools.base import ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -118,7 +118,7 @@ async def plan(
     user = build_planner_user_message(request, capabilities, reason=reason, context=context)
 
     last_error: Exception | None = None
-    from choirworks.tools.base import ToolCallResult  # runtime: avoid circular import
+    from choirworks.core.tool import ToolCallResult  # runtime: avoid circular import
 
     for attempt in range(max_retries + 1):
         if attempt > 0:

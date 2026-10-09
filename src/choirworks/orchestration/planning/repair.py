@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import structlog
 
-from choirworks.core.context import build_repair_user
+from choirworks.core.prompts import build_repair_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch

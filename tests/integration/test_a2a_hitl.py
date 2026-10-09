@@ -3,7 +3,8 @@ from a2a.types import GetTaskRequest, Message, Part, Role, SendMessageRequest, T
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
-from choirworks.tools.outcome_decision import AssistanceResult, OutcomeResult
+from choirworks.subagents.assistance.model import AssistanceResult
+from choirworks.subagents.outcome.model import OutcomeResult
 from tests.support.sdk import (
     answer_message,
     pending_intervention_id,

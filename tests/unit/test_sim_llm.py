@@ -1,20 +1,15 @@
-from dataclasses import replace
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
 from choirworks.core.llm import LiteLLMClient
 from choirworks.core.planner import PlanDraft, validate_plan
+from choirworks.core.tool import StructuredOutputTool, ToolCallResult
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.sim.litellm_mock import sim_acompletion
-from choirworks.tools.base import ToolCallResult
+from choirworks.subagents.assistance.model import AssistanceResult, assistance_schema
 from choirworks.tools.create_plan import create_plan_func
-from choirworks.tools.outcome_decision import (
-    AssistanceResult,
-    assistance_schema,
-    decision_tool,
-)
 from tests.support.fakes import FakeRegistry, make_orch_ctx
 
 
@@ -142,7 +137,11 @@ async def test_assistance_decision_routes_to_pm_for_developer():
     )
     client = make_client()
     schema = assistance_schema([a.name for a in AGENTS if a.name != "developer"])
-    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
+    tool = StructuredOutputTool(
+        name="AssistanceDecision",
+        description="Decide how to handle a blocked agent.",
+        schema=schema,
+    )
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -166,7 +165,11 @@ async def test_assistance_decision_routes_to_qa_for_pm():
     )
     client = make_client()
     schema = assistance_schema([a.name for a in AGENTS if a.name != "product-manager"])
-    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
+    tool = StructuredOutputTool(
+        name="AssistanceDecision",
+        description="Decide how to handle a blocked agent.",
+        schema=schema,
+    )
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -187,7 +190,11 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
     )
     client = make_client()
     schema = assistance_schema([a.name for a in AGENTS if a.name != "code-reviewer"])
-    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
+    tool = StructuredOutputTool(
+        name="AssistanceDecision",
+        description="Decide how to handle a blocked agent.",
+        schema=schema,
+    )
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -258,7 +265,7 @@ async def test_stream_no_tool_call_yields_no_result():
         value: str
 
     client = make_client()
-    tool = replace(decision_tool("Answer", "answer", Answer), name="Answer")  # type: ignore[arg-type]
+    tool = StructuredOutputTool(name="Answer", description="answer", schema=Answer)
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     items = [
         item

@@ -88,7 +88,7 @@ async def test_create_plan_builds_nodes_and_joins_members():
         ]
     )
 
-    result = await create_plan_func.execute(make_ctx(state), draft)
+    result = await create_plan_func.run_async(make_ctx(state), draft)
 
     assert result.success is True
     assert set(state.nodes) == {"n1", "n2"}
@@ -102,7 +102,7 @@ async def test_create_plan_builds_nodes_and_joins_members():
 async def test_join_members_adds_registered_agents_to_room():
     state = OrchestrationState()
 
-    result = await join_members_func.execute(
+    result = await join_members_func.run_async(
         make_ctx(state),
         JoinMembersArgs(names=["writer", "writer", "ghost"], reason="human_mention"),
     )
@@ -118,7 +118,7 @@ async def test_join_members_skips_existing_member():
     state = OrchestrationState()
     add_member(state, "writer", "plan")
 
-    result = await join_members_func.execute(
+    result = await join_members_func.run_async(
         make_ctx(state), JoinMembersArgs(names=["writer"], reason="plan_revision")
     )
 
@@ -132,7 +132,7 @@ async def test_ask_user_marks_node_input_required():
     state = OrchestrationState()
     make_node(state, "n1", status=NodeStatus.WORKING, a2a_task_id="remote-1")
 
-    result = await ask_user_func.execute(
+    result = await ask_user_func.run_async(
         make_ctx(state), AskUserArgs(node_id="n1", question="请问？")
     )
 
@@ -152,8 +152,8 @@ async def test_ask_user_fails_when_question_already_pending():
     make_node(state, "n1", status=NodeStatus.WORKING)
 
     ctx = make_ctx(state)
-    first = await ask_user_func.execute(ctx, AskUserArgs(node_id="n1", question="第一问"))
-    second = await ask_user_func.execute(ctx, AskUserArgs(node_id="n1", question="第二问"))
+    first = await ask_user_func.run_async(ctx, AskUserArgs(node_id="n1", question="第一问"))
+    second = await ask_user_func.run_async(ctx, AskUserArgs(node_id="n1", question="第二问"))
 
     assert first.success is True
     assert second.success is False
@@ -164,7 +164,7 @@ async def test_ask_user_fails_when_question_already_pending():
 
 
 async def test_ask_user_rejects_unknown_node():
-    result = await ask_user_func.execute(
+    result = await ask_user_func.run_async(
         make_ctx(OrchestrationState()), AskUserArgs(node_id="ghost", question="?")
     )
 
@@ -176,7 +176,7 @@ async def test_call_subagent_spawns_derived_helper():
     state = OrchestrationState()
     make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="需要数据")
 
-    result = await call_subagent_func.execute(
+    result = await call_subagent_func.run_async(
         make_ctx(state),
         CallSubagentArgs(requested_by="n1", target_agent="writer", instruction="帮忙写"),
     )
@@ -195,7 +195,7 @@ async def test_call_subagent_falls_back_to_requester_question():
     state = OrchestrationState()
     make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="缺少接口文档")
 
-    result = await call_subagent_func.execute(
+    result = await call_subagent_func.run_async(
         make_ctx(state), CallSubagentArgs(requested_by="n1", target_agent="writer")
     )
 
@@ -209,10 +209,10 @@ async def test_call_subagent_rejects_assistant_and_unknown_agent():
     state = OrchestrationState()
     ctx = make_ctx(state)
 
-    dispatched = await call_subagent_func.execute(
+    dispatched = await call_subagent_func.run_async(
         ctx, CallSubagentArgs(requested_by="assistant", target_agent="writer")
     )
-    unknown = await call_subagent_func.execute(
+    unknown = await call_subagent_func.run_async(
         ctx, CallSubagentArgs(requested_by="n1", target_agent="ghost")
     )
 
@@ -225,7 +225,7 @@ async def test_call_subagent_rejects_assistant_and_unknown_agent():
 async def test_call_subagent_enforces_derived_limit():
     state = OrchestrationState(derived_count=5)
 
-    result = await call_subagent_func.execute(
+    result = await call_subagent_func.run_async(
         make_ctx(state, max_derived_nodes=5),
         CallSubagentArgs(requested_by="n1", target_agent="writer"),
     )
@@ -243,7 +243,7 @@ async def test_revise_plan_applies_patch_and_reports_effect():
         reason="需要补充",
     )
 
-    result = await revise_plan_func.execute(make_ctx(state), RevisePlanArgs(patch=patch))
+    result = await revise_plan_func.run_async(make_ctx(state), RevisePlanArgs(patch=patch))
 
     assert result.success is True
     assert isinstance(result.data, RevisePlanData)

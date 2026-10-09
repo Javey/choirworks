@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from choirworks.core.context import (
-    HANDOFF_MAX_CHARS,
-    RECEIPT_CONVENTION,
-    build_dispatch_text,
-)
 from choirworks.core.fencing import (
     QUOTED_CONTENT_BEGIN,
     QUOTED_CONTENT_END,
     QUOTED_CONTENT_PREAMBLE,
+)
+from choirworks.core.prompts import (
+    HANDOFF_MAX_CHARS,
+    RECEIPT_CONVENTION,
+    build_dispatch_text,
 )
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.state import NodeState, OrchestrationState, add_member
@@ -116,7 +116,7 @@ def test_dispatch_text_contains_convention():
 
 
 def test_continuation_text_appends_answer():
-    from choirworks.core.context import build_continuation_text
+    from choirworks.core.prompts import build_continuation_text
 
     dep = node("n1", agent_name="researcher", status="completed", output="调研结果")
     target = node("n2", input_text="撰写报告", deps=["n1"])

@@ -7,6 +7,7 @@ from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.room import RoomOptions
 from choirworks.core.planner import PlanDraft, PlanningFailed, PlanRetry, plan
+from choirworks.core.tool import ToolCallResult
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
@@ -17,7 +18,6 @@ from choirworks.orchestration.events import (
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.helpers import execute_function, join_members
 from choirworks.orchestration.state import start_new_plan
-from choirworks.tools.base import ToolCallResult
 from choirworks.tools.create_plan import create_plan_func
 
 logger = structlog.get_logger(__name__)

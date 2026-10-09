@@ -10,8 +10,8 @@ from litellm.types.utils import ChatCompletionDeltaToolCall, Delta, ModelRespons
 from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
+    from choirworks.core.tool import FunctionTool, ToolCallResult
     from choirworks.orchestration.context import OrchestrationContext
-    from choirworks.tools.base import AgentFunction, ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -67,14 +67,14 @@ class LiteLLMClient:
         *,
         system: str,
         user: str,
-        tools: list[AgentFunction] | None = None,
+        tools: list[FunctionTool] | None = None,
         ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
     ) -> AsyncIterator[Delta | ToolCallResult]:
         """Stream ``Delta`` chunks, then yield a ``ToolCallResult`` if the
         model invokes a tool.
 
-        When *tools* and *ctx* are provided, each tool's ``args_model(ctx)``
+        When *tools* and *ctx* are provided, each tool's ``_get_declaration(ctx)``
         is awaited to build the function-tool declarations sent to the model.
         Tool-call argument fragments are accumulated across chunks and
         validated with the tool's schema once the stream ends.
@@ -82,14 +82,14 @@ class LiteLLMClient:
         The client does NOT execute the tool — it yields a
         :class:`ToolCallResult` for the caller to act on.
         """
-        from choirworks.tools.base import ToolCallResult  # runtime import
+        from choirworks.core.tool import ToolCallResult  # runtime import
 
         declarations: list[dict[str, object]] = []
         schemas: dict[str, type[BaseModel]] = {}
-        functions: dict[str, AgentFunction] = {}
+        functions: dict[str, FunctionTool] = {}
         if tools and ctx:
             for tool in tools:
-                schema = await tool.args_model(ctx)
+                schema = await tool._get_declaration(ctx)
                 schemas[tool.name] = schema
                 functions[tool.name] = tool
                 declarations.append(

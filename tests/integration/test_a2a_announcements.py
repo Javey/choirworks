@@ -3,7 +3,8 @@ from google.protobuf.json_format import MessageToDict
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from choirworks.tools.outcome_decision import AssistanceResult, OutcomeResult
+from choirworks.subagents.assistance.model import AssistanceResult
+from choirworks.subagents.outcome.model import OutcomeResult
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import sdk_hub, wait_for_task
 

@@ -4,7 +4,7 @@ import re
 
 import structlog
 
-from choirworks.core.context import build_assist_input
+from choirworks.core.prompts import build_assist_input
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.derived import DerivedKind, spawn_derived_node

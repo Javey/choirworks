@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from a2a.server.events import EventQueue
 
-from choirworks.core.agents import BaseAgent
+from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
 
 

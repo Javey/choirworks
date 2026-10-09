@@ -7,10 +7,10 @@ from typing import Any
 from litellm.types.utils import Delta
 
 from choirworks.core.planner import PlanDraft
+from choirworks.core.tool import FunctionTool, ToolCallResult
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.state import OrchestrationState
-from choirworks.tools.base import AgentFunction, ToolCallResult
 
 
 class FakeRegistry:
@@ -88,7 +88,7 @@ class FakeLLM:
         *,
         system: str,
         user: str,
-        tools: list[AgentFunction] | None = None,
+        tools: list[FunctionTool] | None = None,
         ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
     ) -> AsyncIterator[Delta | ToolCallResult]:

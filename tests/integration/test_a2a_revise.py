@@ -13,7 +13,8 @@ from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
 from choirworks.sim.fake_agent import start_fake_agent
-from choirworks.tools.outcome_decision import OutcomeResult, RepairResult
+from choirworks.subagents.outcome.model import OutcomeResult
+from choirworks.subagents.repair.model import RepairResult
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import answer_message, sdk_hub, task_nodes, task_state, wait_for_task
 

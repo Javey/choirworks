@@ -8,9 +8,9 @@ from a2a.types.a2a_pb2 import TaskState
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from choirworks.core.tool import FunctionResult, FunctionTool
     from choirworks.orchestration.context import OrchestrationContext
     from choirworks.orchestration.state import MemberDelta
-    from choirworks.tools.base import AgentFunction, FunctionResult
 
 logger = structlog.get_logger(__name__)
 
@@ -72,14 +72,14 @@ async def join_members(
 
 async def execute_function(
     ctx: OrchestrationContext,
-    func: AgentFunction,
+    func: FunctionTool,
     args: BaseModel,
     *,
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> FunctionResult:
-    """Execute an AgentFunction and emit the function-call event.
+    """Execute a FunctionTool and emit the function-call event.
 
-    Calls execute with the orchestration context and emits the result artifact
+    Calls run_async with the orchestration context and emits the result artifact
     when ``func.emit_artifact`` is True.  Functions that deliver their outcome
     through their own state events (``emit_artifact=False``, e.g. ``ask_user``)
     emit nothing here — the caller owns the state event.
@@ -90,7 +90,7 @@ async def execute_function(
         "execute_function",
         function=func.name,
     )
-    result = await func.execute(ctx, args)
+    result = await func.run_async(ctx, args)
     logger.info(
         "execute_function done",
         function=func.name,

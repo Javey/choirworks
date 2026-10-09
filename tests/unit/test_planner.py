@@ -13,11 +13,11 @@ from choirworks.core.planner import (
     plan,
     validate_plan,
 )
+from choirworks.core.tool import ToolCallResult
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.store.db import Database
-from choirworks.tools.base import ToolCallResult
 from tests.support.fakes import FakeLLM, make_orch_ctx
 
 

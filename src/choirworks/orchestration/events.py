@@ -29,8 +29,8 @@ from choirworks.orchestration.state import (
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from choirworks.core.tool import FunctionResult, FunctionTool
     from choirworks.orchestration.context import OrchestrationContext
-    from choirworks.tools.base import AgentFunction, FunctionResult
 
 logger = structlog.get_logger(__name__)
 
@@ -200,7 +200,7 @@ async def emit_text_chunk(
 
 async def emit_function_call(
     ctx: OrchestrationContext,
-    func: AgentFunction,
+    func: FunctionTool,
     args: BaseModel,
     result: FunctionResult,
     *,
@@ -228,7 +228,7 @@ async def emit_function_call(
 
 async def emit_function_error(
     ctx: OrchestrationContext,
-    func: AgentFunction,
+    func: FunctionTool,
     error: str,
     *,
     state_name: TaskState = TaskState.TASK_STATE_FAILED,

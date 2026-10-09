@@ -10,27 +10,27 @@ from pydantic import BaseModel
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.events import TEXT, THOUGHT
-from choirworks.tools.base import AgentFunction, FunctionResult, ToolCallResult
+from choirworks.core.tool import FunctionResult, FunctionTool, ToolCallResult
 
 
 class _DecisionArgs(BaseModel):
     answer: str
 
 
-async def _args_model(ctx: object) -> type[BaseModel]:
-    return _DecisionArgs
+class _DecisionTool(FunctionTool):
+    name = "decide"
+    description = "decide something"
+
+    @override
+    async def _get_declaration(self, ctx: TurnContext) -> type[BaseModel]:
+        return _DecisionArgs
+
+    @override
+    async def run_async(self, ctx: TurnContext, args: BaseModel) -> FunctionResult:
+        return FunctionResult(success=True)
 
 
-async def _execute(ctx: object, args: BaseModel) -> FunctionResult:
-    return FunctionResult(success=True)
-
-
-_DECISION_TOOL = AgentFunction(
-    name="decide",
-    description="decide something",
-    args_model=_args_model,
-    execute=_execute,
-)
+_DECISION_TOOL = _DecisionTool()
 
 
 class _DecisionAgent(LlmAgent[str]):
@@ -40,7 +40,7 @@ class _DecisionAgent(LlmAgent[str]):
     max_retries = 2
 
     @override
-    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
         return [_DECISION_TOOL]
 
     @override
@@ -61,7 +61,7 @@ class _FakeLLM:
         *,
         system: str,
         user: str,
-        tools: list[AgentFunction] | None = None,
+        tools: list[FunctionTool] | None = None,
         ctx: object = None,
         tool_choice: str | dict[str, object] = "auto",
     ):

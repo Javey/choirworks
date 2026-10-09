@@ -14,7 +14,7 @@ from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.events import TEXT, THOUGHT, chunk_event, emit
 from choirworks.core.llm import ToolParseError
-from choirworks.tools.base import AgentFunction, ToolCallResult
+from choirworks.core.tool import FunctionTool, ToolCallResult
 
 logger = structlog.get_logger(__name__)
 
@@ -58,7 +58,7 @@ class LlmAgent[T](BaseAgent):
         if max_retries is not None:
             self.max_retries = max_retries
 
-    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
         """决策态子类覆写：构建可供模型调用的工具列表。"""
         return []
 
