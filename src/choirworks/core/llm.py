@@ -108,7 +108,7 @@ class LiteLLMClient:
             model=self._model,
             system=system,
             user=user,
-            tools=len(declarations),
+            tools=[t.name for t in tools] if tools else None,
         )
         response = await self._completion_fn(
             model=self._model,
