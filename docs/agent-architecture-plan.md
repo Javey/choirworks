@@ -160,15 +160,12 @@ basedpyright 0 errors）。
 |---|---|
 | ✓ | `core/agents/base.py`：BaseAgent（身份 + 树） |
 | ✓ | `core/events.py` 事件词汇表 + extension 注册 + 全仓 `emit_*` 调用点迁移（`orchestration/events.py` 收缩为业务组合层） |
-| ✓ | `tests/unit/test_core_events.py`、方案文档重组（本步） |
+| ✓ | `tests/unit/test_core_events.py`、方案文档重组 |
+| ✓ | `BaseAgent` 挂统一 `run_async`（ADK 形状）+ `core/agents/context.py`（TurnContext 基座） |
+| ✓ | `core/agents/llm_agent.py`：`LlmAgent[T]`（SingleFlow 循环 + 流式推事件）+ `test_llm_agent.py` |
+| ✓ | `core/runner.py`：`Runner(root, prepare)` 持锁驱动根 agent + `test_runner.py` |
 
-### 地基队列（纯新增 / 只动地基自己的文件，按序推进）
-
-| # | 件 | 内容 |
-|---|---|---|
-| 1 | `base.py` 挂抽象 `run_async`（3.4 统一契约）+ `core/agents/context.py`（TurnContext 基座） | 地基自身修订 + 新增；`test_agents.py` 同步 |
-| 2 | `core/agents/llm_agent.py`：`LlmAgent[T]`，`run_async` = `run_subagent` 循环 + 思考/正文 chunk 流式推事件；配 `test_llm_agent.py` | 新增；`Subagent` / `run_subagent` / 四件套一行不动 |
-| 3 | `core/runner.py`（Runner） | 设计到步再议（与根 agent 驱动关系） |
+**地基已完成**（core/：agents/base、agents/context、agents/llm_agent、events、runner）。
 
 ### 接线 / 迁移待办（动现有代码，**每项单独等指令**）
 
