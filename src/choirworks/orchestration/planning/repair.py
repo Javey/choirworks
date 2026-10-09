@@ -27,7 +27,7 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
         return False
     user = build_repair_user(state.nodes.values(), agents)
     try:
-        decision = await repair_agent.run_async(ctx, user)  # pyright: ignore[reportArgumentType]
+        decision = await repair_agent.run_async(ctx, user)
     except Exception:
         logger.exception("plan repair failed", context=ctx.context_id)
         return False

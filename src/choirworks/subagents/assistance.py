@@ -13,6 +13,7 @@ from typing import override
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.util import as_model
+from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (
     ASSISTANCE_SYSTEM,
@@ -31,10 +32,11 @@ class AssistanceAgent(LlmAgent[AssistanceResult]):
 
     @override
     async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        assert isinstance(ctx, OrchestrationContext)
         exclude_agent = str(kwargs.get("exclude_agent", ""))
-        agents = await ctx.registry.list()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents  # pyright: ignore[reportUnknownVariableType]
-        schema = assistance_schema([a.name for a in candidates])  # pyright: ignore[reportUnknownArgumentType]
+        agents = await ctx.registry.list()
+        candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents
+        schema = assistance_schema([a.name for a in candidates])
         return [decision_tool("AssistanceDecision", _ASSISTANCE_TOOL_DESCRIPTION, schema)]
 
     @override

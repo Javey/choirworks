@@ -147,7 +147,7 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
     user = build_outcome_user(node.agent_name, node.input_text, node.output, candidates)
     try:
         return await outcome_agent.run_async(
-            ctx,  # pyright: ignore[reportArgumentType]
+            ctx,
             user,
             exclude_agent=node.agent_name,
         )

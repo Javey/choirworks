@@ -139,7 +139,7 @@ async def _decide_assistance_impl(
     )
     try:
         return await assistance_agent.run_async(
-            ctx,  # pyright: ignore[reportArgumentType]
+            ctx,
             user,
             exclude_agent=node.agent_name,
         )
