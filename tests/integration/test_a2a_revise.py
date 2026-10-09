@@ -13,7 +13,7 @@ from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
 from choirworks.sim.fake_agent import start_fake_agent
-from choirworks.tools.outcome_decision import OutcomeDecision
+from choirworks.tools.outcome_decision import OutcomeResult, RepairResult
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import answer_message, sdk_hub, task_nodes, task_state, wait_for_task
 
@@ -69,7 +69,7 @@ async def test_revise_patch_invalidates_and_adds(tmp_path):
                         ),
                     ],
                 ),
-                OutcomeDecision(
+                OutcomeResult(
                     intent="revise",
                     question="不再需要润色，改由 designer 出原型",
                     patch=PlanPatch(
@@ -84,7 +84,7 @@ async def test_revise_patch_invalidates_and_adds(tmp_path):
                         reason="方向调整",
                     ),
                 ),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(
@@ -143,7 +143,7 @@ async def test_revise_in_flight_requires_confirmation(tmp_path):
                         ),
                     ],
                 ),
-                OutcomeDecision(
+                OutcomeResult(
                     intent="revise",
                     question="建议作废慢任务",
                     patch=PlanPatch(invalidate=["n2"], reason="不再需要慢任务"),
@@ -200,12 +200,12 @@ async def test_confirm_cancel_expires_when_target_finishes(tmp_path):
                         ),
                     ],
                 ),
-                OutcomeDecision(
+                OutcomeResult(
                     intent="revise",
                     question="建议作废短任务",
                     patch=PlanPatch(invalidate=["n2"], reason="不再需要"),
                 ),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(
@@ -244,15 +244,13 @@ async def test_failed_node_repaired_by_patch(tmp_path):
                         )
                     ],
                 ),
-                OutcomeDecision(
-                    intent="revise",
-                    question="替换失败节点",
+                RepairResult(
                     patch=PlanPatch(
                         add=[PatchNode(agent_name="writer", instruction="接替完成")],
                         reason="节点失败",
                     ),
                 ),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(
@@ -292,7 +290,7 @@ async def test_revise_limit_stops_loop(tmp_path):
                         ),
                     ],
                 ),
-                *[OutcomeDecision(intent="revise", patch=revise_patch) for _ in range(4)],
+                *[OutcomeResult(intent="revise", patch=revise_patch) for _ in range(4)],
             ],
         )
         settings = _settings(tmp_path / "revise.db")

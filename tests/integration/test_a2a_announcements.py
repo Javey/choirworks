@@ -3,7 +3,7 @@ from google.protobuf.json_format import MessageToDict
 
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
-from choirworks.tools.outcome_decision import OutcomeDecision
+from choirworks.tools.outcome_decision import AssistanceResult, OutcomeResult
 from tests.support.fakes import FakeLLM
 from tests.support.sdk import sdk_hub, wait_for_task
 
@@ -65,8 +65,8 @@ async def test_serial_plan_announces_each_wave_in_order(tmp_path, echo_agent):
     llm = FakeLLM(
         structured_results=[
             PlanDraft(nodes=[_node("n1", "第一步", "echo"), _node("n2", "第二步", "echo", ["n1"])]),
-            OutcomeDecision(intent="deliver"),
-            OutcomeDecision(intent="deliver"),
+            OutcomeResult(intent="deliver"),
+            OutcomeResult(intent="deliver"),
         ]
     )
     async with sdk_hub(tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm) as (
@@ -102,8 +102,8 @@ async def test_parallel_plan_announces_one_wave(tmp_path, echo_agent):
     llm = FakeLLM(
         structured_results=[
             PlanDraft(nodes=[_node("n1", "并行甲", "echo"), _node("n2", "并行乙", "echo")]),
-            OutcomeDecision(intent="deliver"),
-            OutcomeDecision(intent="deliver"),
+            OutcomeResult(intent="deliver"),
+            OutcomeResult(intent="deliver"),
         ]
     )
     async with sdk_hub(tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm) as (
@@ -127,7 +127,7 @@ async def test_retry_does_not_reannounce(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 PlanDraft(nodes=[_node("n1", "重试任务", "flaky")]),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ]
         )
         async with sdk_hub(tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm) as (
@@ -154,11 +154,9 @@ async def test_llm_requested_assist_announces_requester(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 PlanDraft(nodes=[_node("n1", "评估方案", "ask")]),
-                OutcomeDecision(
-                    intent="need_info", target_agent="echo", instruction="评估技术方案"
-                ),
-                OutcomeDecision(intent="deliver"),
-                OutcomeDecision(intent="deliver"),
+                AssistanceResult(target_agent="echo", instruction="评估技术方案"),
+                OutcomeResult(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ]
         )
         async with sdk_hub(tmp_path, "announce.db", settings=_settings(tmp_path), llm=llm) as (

@@ -11,9 +11,9 @@ from choirworks.sim.litellm_mock import sim_acompletion
 from choirworks.tools.base import ToolCallResult
 from choirworks.tools.create_plan import create_plan_func
 from choirworks.tools.outcome_decision import (
-    OutcomeDecision,
-    outcome_decision_schema,
-    outcome_decision_tool,
+    AssistanceResult,
+    assistance_schema,
+    decision_tool,
 )
 from tests.support.fakes import FakeRegistry, make_orch_ctx
 
@@ -141,8 +141,8 @@ async def test_assistance_decision_routes_to_pm_for_developer():
         + "缺少关键信息：请 product-manager 提供需求文档。"
     )
     client = make_client()
-    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "developer"])
-    tool = outcome_decision_tool(schema)
+    schema = assistance_schema([a.name for a in AGENTS if a.name != "developer"])
+    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -151,8 +151,7 @@ async def test_assistance_decision_routes_to_pm_for_developer():
         tool=tool,
         ctx=ctx,
     )
-    decision = _as(tc, OutcomeDecision)
-    assert decision.intent == "need_info"
+    decision = _as(tc, AssistanceResult)
     assert decision.target_agent == "product-manager"
     assert "请补充信息" in decision.instruction
     assert "缺少关键信息" in decision.instruction
@@ -166,8 +165,8 @@ async def test_assistance_decision_routes_to_qa_for_pm():
         + "需要 qa-engineer 协助确认技术细节。"
     )
     client = make_client()
-    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "product-manager"])
-    tool = outcome_decision_tool(schema)
+    schema = assistance_schema([a.name for a in AGENTS if a.name != "product-manager"])
+    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -176,8 +175,7 @@ async def test_assistance_decision_routes_to_qa_for_pm():
         tool=tool,
         ctx=ctx,
     )
-    decision = _as(tc, OutcomeDecision)
-    assert decision.intent == "need_info"
+    decision = _as(tc, AssistanceResult)
     assert decision.target_agent == "qa-engineer"
     assert "需要 qa-engineer" in decision.instruction
 
@@ -188,8 +186,8 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         + "\n\nRequester: code-reviewer\nQuestion / blocked work:\n需要人工确认评审标准。"
     )
     client = make_client()
-    schema = outcome_decision_schema([a.name for a in AGENTS if a.name != "code-reviewer"])
-    tool = outcome_decision_tool(schema)
+    schema = assistance_schema([a.name for a in AGENTS if a.name != "code-reviewer"])
+    tool = decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     tc = await tool_result(
         client,
@@ -198,8 +196,7 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         tool=tool,
         ctx=ctx,
     )
-    decision = _as(tc, OutcomeDecision)
-    assert decision.intent == "need_info"
+    decision = _as(tc, AssistanceResult)
     assert decision.target_agent is None
 
 
@@ -261,7 +258,7 @@ async def test_stream_no_tool_call_yields_no_result():
         value: str
 
     client = make_client()
-    tool = replace(outcome_decision_tool(Answer), name="Answer")  # type: ignore[arg-type]
+    tool = replace(decision_tool("Answer", "answer", Answer), name="Answer")  # type: ignore[arg-type]
     ctx = make_orch_ctx(FakeRegistry(AGENTS))
     items = [
         item

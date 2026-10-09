@@ -25,10 +25,9 @@ from choirworks.orchestration.state import (
     pending_intervention_for,
 )
 from choirworks.orchestration.transitions import apply_transition
-from choirworks.subagents.assistance import ASSISTANCE_SUBAGENT
-from choirworks.subagents.base import run_subagent
+from choirworks.subagents.assistance import ASSISTANCE_AGENT
 from choirworks.tools.ask_user import AskUserArgs, ask_user_func
-from choirworks.tools.outcome_decision import OutcomeDecision
+from choirworks.tools.outcome_decision import AssistanceResult
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +35,7 @@ logger = structlog.get_logger(__name__)
 @dataclass(slots=True)
 class SettlementPayload:
     node: NodeState
-    decision: OutcomeDecision | None = None
+    decision: AssistanceResult | None = None
     helper: NodeState | None = None
 
 
@@ -126,34 +125,33 @@ async def _act(ctx: OrchestrationContext, payload: SettlementPayload) -> FlowOut
 
 async def _decide_assistance_impl(
     ctx: OrchestrationContext, node: NodeState
-) -> OutcomeDecision | None:
+) -> AssistanceResult | None:
     if node.question is None:
         return None
     agents = await ctx.registry.list()
     candidates = [agent for agent in agents if agent.name != node.agent_name]
     if not candidates:
-        return OutcomeDecision(intent="need_info")
+        return AssistanceResult()
     user = build_assistance_decision_user(
         node.agent_name,
         node.question or node.input_text,
         candidates,
     )
     try:
-        return await run_subagent(
-            ASSISTANCE_SUBAGENT,
-            ctx,
+        return await ASSISTANCE_AGENT.run_async(
+            ctx,  # pyright: ignore[reportArgumentType]
             user,
             exclude_agent=node.agent_name,
         )
     except Exception:
         logger.exception("assistance decision failed", node=node.id)
-        return OutcomeDecision(intent="need_info")
+        return AssistanceResult()
 
 
 async def request_human(
     ctx: OrchestrationContext,
     node: NodeState,
-    decision: OutcomeDecision | None = None,
+    decision: AssistanceResult | None = None,
 ) -> None:
     logger.info(
         "request_human",

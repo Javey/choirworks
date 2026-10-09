@@ -3,7 +3,7 @@ from a2a.types import GetTaskRequest, Message, Part, Role, SendMessageRequest, T
 from choirworks.config import Settings
 from choirworks.core.planner import PlanDraft, PlanNodeDraft
 from choirworks.sim.fake_agent import start_fake_agent
-from choirworks.tools.outcome_decision import OutcomeDecision
+from choirworks.tools.outcome_decision import AssistanceResult, OutcomeResult
 from tests.support.sdk import (
     answer_message,
     pending_intervention_id,
@@ -58,7 +58,7 @@ async def test_llm_routes_to_human(tmp_path, ask_agent):
     llm = FakeLLM(
         structured_results=[
             _plan("ask"),
-            OutcomeDecision(intent="deliver"),
+            OutcomeResult(intent="deliver"),
         ],
     )
     async with sdk_hub(tmp_path, "hitl.db", settings=settings, llm=llm) as (
@@ -97,7 +97,7 @@ async def test_text_marker_needs_info_routes_to_human(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 _plan("writer", "写一份报告"),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(tmp_path, "hitl.db", settings=settings, llm=llm) as (
@@ -142,13 +142,12 @@ async def test_llm_routes_to_peer_agent(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 _plan("product-manager", "请协调协作"),
-                OutcomeDecision(
-                    intent="need_info",
+                AssistanceResult(
                     target_agent="qa-engineer",
                     instruction="请协助确认技术细节",
                 ),
-                OutcomeDecision(intent="deliver"),
-                OutcomeDecision(intent="deliver"),
+                OutcomeResult(intent="deliver"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(tmp_path, "hitl.db", settings=settings, llm=llm) as (
@@ -199,8 +198,8 @@ async def test_question_pushed_while_parallel_node_running(tmp_path, ask_agent):
                         ),
                     ],
                 ),
-                OutcomeDecision(intent="need_info", question_type="confirm"),
-                OutcomeDecision(intent="deliver"),
+                AssistanceResult(question_type="confirm"),
+                OutcomeResult(intent="deliver"),
             ],
         )
         async with sdk_hub(tmp_path, "parallel.db", settings=settings, llm=llm) as (
@@ -250,8 +249,8 @@ async def test_multiple_questions_aggregate_and_answer_separately(tmp_path, ask_
                     PlanNodeDraft(id="n2", name="ask", agent_name="ask", input={"text": "第二问"}),
                 ],
             ),
-            OutcomeDecision(intent="deliver"),
-            OutcomeDecision(intent="deliver"),
+            OutcomeResult(intent="deliver"),
+            OutcomeResult(intent="deliver"),
         ],
     )
     async with sdk_hub(tmp_path, "multi.db", settings=settings, llm=llm) as (_app, http, client):

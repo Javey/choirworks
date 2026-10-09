@@ -16,9 +16,8 @@ from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.repair import revise_plan
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
-from choirworks.subagents.base import run_subagent
-from choirworks.subagents.outcome import OUTCOME_SUBAGENT
-from choirworks.tools.outcome_decision import OutcomeDecision
+from choirworks.subagents.outcome import OUTCOME_AGENT
+from choirworks.tools.outcome_decision import OutcomeResult
 
 logger = structlog.get_logger(__name__)
 
@@ -66,7 +65,7 @@ def parse_marker(output: str | None) -> Marker | None:
 @dataclass(slots=True)
 class OutcomePayload:
     node: NodeState
-    decision: OutcomeDecision | None = None
+    decision: OutcomeResult | None = None
 
 
 async def _interpret(
@@ -137,22 +136,26 @@ async def _deliver_queued(ctx: OrchestrationContext, payload: OutcomePayload) ->
     return FlowOutcome.END
 
 
-async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> OutcomeDecision:
+async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> OutcomeResult:
     marker = parse_marker(node.output)
     if marker is not None:
-        return OutcomeDecision(intent=marker.intent, question=marker.text)
+        return OutcomeResult(intent=marker.intent, question=marker.text)
     if not node.output:
-        return OutcomeDecision(intent="deliver")
+        return OutcomeResult(intent="deliver")
     agents = await ctx.registry.list()
     candidates = [agent for agent in agents if agent.name != node.agent_name]
     user = build_outcome_user(node.agent_name, node.input_text, node.output, candidates)
     try:
-        return await run_subagent(OUTCOME_SUBAGENT, ctx, user, exclude_agent=node.agent_name)
+        return await OUTCOME_AGENT.run_async(
+            ctx,  # pyright: ignore[reportArgumentType]
+            user,
+            exclude_agent=node.agent_name,
+        )
     except Exception:
         logger.exception(
             "outcome interpretation failed", context_id=ctx.context_id, node_id=node.id
         )
-        return OutcomeDecision(intent="deliver")
+        return OutcomeResult(intent="deliver")
 
 
 outcome_flow: Flow[OutcomePayload] = Flow(

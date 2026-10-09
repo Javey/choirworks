@@ -225,7 +225,7 @@ def _make_plan(user: str) -> tuple[str, PlanDraft]:
 
 
 def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
-    """Return (reasoning_text, OutcomeDecision dict) based on pattern matching."""
+    """Return (reasoning_text, AssistanceResult dict) based on pattern matching."""
     match = WORKER_PATTERN.search(user)
     agents = _registered(user)
 
@@ -236,8 +236,6 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
         if asking in HUMAN_AGENTS:
             reasoning = f"Agent {asking} 的求助需要人工介入。"
             return reasoning, {
-                "intent": "need_info",
-                "question": "",
                 "target_agent": None,
                 "instruction": "",
                 "question_type": "confirm",
@@ -250,8 +248,6 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
             if name in agents and name != asking:
                 reasoning = f"Agent {asking} 提出了问题，最适合回答的是 @{name}。"
                 return reasoning, {
-                    "intent": "need_info",
-                    "question": "",
                     "target_agent": name,
                     "instruction": f"请补充信息：{question}",
                 }
@@ -260,16 +256,12 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
             name = available[0]
             reasoning = f"Agent {asking} 提出了问题，安排 @{name} 回答。"
             return reasoning, {
-                "intent": "need_info",
-                "question": "",
                 "target_agent": name,
                 "instruction": f"请补充信息：{question}",
             }
 
     reasoning = "无可用 peer agent，转人工处理。"
     return reasoning, {
-        "intent": "need_info",
-        "question": "",
         "target_agent": None,
         "instruction": "",
         "question_type": "input",
@@ -283,8 +275,6 @@ def _make_outcome_decision() -> tuple[str, dict[str, Any]]:
     return "产出为交付内容。", {
         "intent": "deliver",
         "question": "",
-        "target_agent": None,
-        "instruction": "",
     }
 
 
@@ -309,10 +299,10 @@ async def sim_acompletion(
         if tool_name == "create_plan":
             reasoning, draft = _make_plan(user_content)
             arguments = draft.model_dump_json()
-        elif tool_name == "OutcomeDecision" and "Agent final reply:" in user_content:
+        elif tool_name == "OutcomeDecision":
             reasoning, decision = _make_outcome_decision()
             arguments = json.dumps(decision, ensure_ascii=False)
-        elif tool_name == "OutcomeDecision":
+        elif tool_name == "AssistanceDecision":
             reasoning, decision = _make_assistance_decision(user_content)
             arguments = json.dumps(decision, ensure_ascii=False)
         else:

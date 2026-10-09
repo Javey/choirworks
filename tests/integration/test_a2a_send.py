@@ -88,7 +88,7 @@ async def test_send_with_context_creates_followup_task(tmp_path, echo_agent):
 
 
 async def test_send_answers_pending_intervention(tmp_path, ask_agent):
-    from choirworks.tools.outcome_decision import OutcomeDecision
+    from choirworks.tools.outcome_decision import OutcomeResult
 
     settings = Settings(
         store={"db_path": tmp_path / "send.db"},
@@ -99,7 +99,7 @@ async def test_send_answers_pending_intervention(tmp_path, ask_agent):
         tmp_path,
         "send.db",
         settings=settings,
-        plans=[_plan("ask", "请评估"), OutcomeDecision(intent="deliver")],
+        plans=[_plan("ask", "请评估"), OutcomeResult(intent="deliver")],
     ) as (_app, http, client):
         await http.post("/v1/agents", json={"name": "ask", "card_url": ask_agent.url})
         task_id = await _send_once(client, _message("请评估"))
@@ -175,7 +175,7 @@ async def test_send_greeting_direct_reply(tmp_path, echo_agent):
 
 async def test_repair_limit_stops_loop(tmp_path):
     from choirworks.orchestration.planning.patch import PatchNode, PlanPatch
-    from choirworks.tools.outcome_decision import OutcomeDecision
+    from choirworks.tools.outcome_decision import RepairResult
 
     flaky = await start_fake_agent("flaky_always", name="flaky")
     try:
@@ -186,7 +186,7 @@ async def test_repair_limit_stops_loop(tmp_path):
         llm = FakeLLM(
             structured_results=[
                 _plan("flaky"),
-                *[OutcomeDecision(intent="revise", patch=repair_patch) for _ in range(3)],
+                *[RepairResult(patch=repair_patch) for _ in range(3)],
             ],
         )
         settings = Settings(
