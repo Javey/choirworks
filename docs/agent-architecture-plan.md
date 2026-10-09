@@ -181,7 +181,7 @@ basedpyright 0 errors）。
 | 编排器根 | `OrchestratorAgent`（message_flow / DAG 调度 / settlement / HITL 移植为根 impl） |
 | PlannerAgent | `core/planner.py` 的 `plan()` 循环迁为 LlmAgent 特化（只迁现状） |
 | RemoteAgent | `remote_caller` 收编，节点执行走 agent |
-| core/context.py 业务迁出 | prompt 构造 / 围栏 / brief builder 迁业务层 |
+| core/context.py 业务迁出 | prompt 构造 / 围栏 / brief builder 迁业务层；落点 `orchestration/prompts.py`，`ContextBriefBuilder` 分流 |
 | `core/flows/` | `orchestration/flows/engine.py` 挪入 |
 
 ## 五、约束
