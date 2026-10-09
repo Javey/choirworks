@@ -20,12 +20,12 @@ class _LeafAgent(BaseAgent):
 
 
 def _make_ctx(queue: EventQueue) -> TurnContext:
-    return TurnContext(
+    return SimpleNamespace(  # type: ignore[return-value]
         task_id="t1",
         context_id="c1",
         queue=queue,
         lock=asyncio.Lock(),
-        llm=None,  # type: ignore[arg-type]
+        llm=None,
     )
 
 

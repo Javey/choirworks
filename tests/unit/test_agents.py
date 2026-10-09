@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from a2a.server.events import EventQueue
@@ -10,12 +11,12 @@ from choirworks.core.agents.context import TurnContext
 
 
 def make_ctx() -> TurnContext:
-    return TurnContext(
+    return SimpleNamespace(  # type: ignore[return-value]
         task_id="t1",
         context_id="c1",
         queue=EventQueue(),
         lock=asyncio.Lock(),
-        llm=None,  # type: ignore[arg-type]
+        llm=None,
     )
 
 
