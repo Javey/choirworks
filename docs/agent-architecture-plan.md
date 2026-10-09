@@ -168,6 +168,8 @@ basedpyright 0 errors）。
 | ✓ | `core/agents/llm_agent.py`：`LlmAgent[T]`（SingleFlow 循环 + 流式推事件）+ `test_llm_agent.py` |
 | ✓ | `core/runner.py`：`Runner(root, prepare)` 持锁驱动根 agent + `test_runner.py` |
 | ✓ | `LlmAgent` 双态：`build_tools` / `final_tool`（原 `tool_name`）/ `process` 可选化，无终态工具 = 文字态（返回拼接文本） |
+| ✓ | `BaseAgent` / `LlmAgent` 去 dataclass 改普通类——类属性缺省 + 覆写 `build_tools` / `process`（ADK 风格） |
+| ✓ | **接线 2**：Subagent 迁移——outcome / assistance / repair 迁为 `LlmAgent` 子类实例；`Subagent` / `run_subagent` 退役；`OutcomeDecision` 拆为 `OutcomeResult` / `AssistanceResult` / `RepairResult` |
 
 **地基已完成**（core/：agents/base、agents/context、agents/llm_agent、events、runner）。
 
@@ -176,8 +178,7 @@ basedpyright 0 errors）。
 | 项 | 内容 |
 |---|---|
 | events 收敛 | 问答卡（`build_questions_message` / `emit_pending_questions` / `QUESTION_PART`）在 `hitl/intervention.py`；`a2a/executor.py` cancel 直推；`remote_caller.py` 三处远端转发直推——收敛为「core 造词、orchestration 组句」两层 |
-| Subagent 迁移 | outcome / assistance / repair 迁为 `LlmAgent` 实例；`Subagent` / `run_subagent` 退役；`build_tools` 的 ctx 类型随业务回合子类 |
-| TurnContext 业务子类 | 现 `OrchestrationContext` 演化（吸收 `MessagePayload`，扩展 registry/state/sessions） |
+| TurnContext 业务子类 | 现 `OrchestrationContext` 演化（吸收 `MessagePayload`，扩展 registry/state/sessions）；顺带清 Subagent 覆写里的 `reportAttributeAccessIssue` ignore |
 | 编排器根 | `OrchestratorAgent`（message_flow / DAG 调度 / settlement / HITL 移植为根 impl） |
 | PlannerAgent | `core/planner.py` 的 `plan()` 循环迁为 LlmAgent 特化（只迁现状） |
 | RemoteAgent | `remote_caller` 收编，节点执行走 agent |
