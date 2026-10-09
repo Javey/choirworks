@@ -61,29 +61,6 @@ def status_update(
     )
 
 
-def function_call_part(
-    func_name: str,
-    args: Mapping[str, object],
-    result: Mapping[str, object],
-) -> Part:
-    """Build a protobuf Part carrying a function_call data payload."""
-    data_value = struct_pb2.Value()
-    ParseDict(
-        {
-            "function_name": func_name,
-            "function_args": args,
-            "function_result": result,
-        },
-        data_value,
-    )
-    part_meta = struct_pb2.Struct()
-    part_meta.update({"cw_type": "function_call"})
-    part = Part()
-    part.data.CopyFrom(data_value)
-    part.metadata.CopyFrom(part_meta)
-    return part
-
-
 def data_part(data: Mapping[str, object], metadata: Mapping[str, object]) -> Part:
     """Build a protobuf Part carrying a data payload plus part metadata."""
     data_value = struct_pb2.Value()

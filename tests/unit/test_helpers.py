@@ -77,7 +77,6 @@ async def test_join_members_emits_function_call_artifact_and_delta() -> None:
     delta_event = queue.events[2]
     assert isinstance(delta_event, TaskStatusUpdateEvent)
     metadata = MessageToDict(delta_event.metadata)
-    assert "cw_delta" in metadata
     assert metadata["cw_delta"]["members"][0]["agent_name"] == "writer"
 
 

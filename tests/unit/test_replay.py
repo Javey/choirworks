@@ -99,7 +99,6 @@ def test_replay_state_snapshot_becomes_state_delta() -> None:
     updates = [e for e in events if "statusUpdate" in e]
     assert len(updates) == 1
     metadata = updates[0]["statusUpdate"]["metadata"]
-    assert "cw_delta" in metadata
     assert metadata["cw_delta"]["nodes"]["n1"]["status"] == "completed"
     assert metadata["cw_delta"]["nodes"]["n1"]["output"] == "调研结果"
     assert metadata["cw_delta"]["members"][0]["agent_name"] == "researcher"

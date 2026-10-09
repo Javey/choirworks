@@ -9,8 +9,14 @@ from a2a.types import (
 )
 
 from choirworks.a2a.room import A2A_ROOM_URI
+from choirworks.core.events import A2A_CW_EVENTS_URI
 
 _ROOM_DESCRIPTION = "Group-chat fields (mentions, quote, interrupt) in message metadata"
+_EVENTS_DESCRIPTION = (
+    "Custom content kinds in part metadata "
+    "(cw_type: thought | text | function_call | question); "
+    "plan state deltas ride on status event metadata (cw_delta)"
+)
 
 
 def build_agent_card(public_url: str) -> AgentCard:
@@ -26,7 +32,12 @@ def build_agent_card(public_url: str) -> AgentCard:
                     uri=A2A_ROOM_URI,
                     description=_ROOM_DESCRIPTION,
                     required=False,
-                )
+                ),
+                AgentExtension(
+                    uri=A2A_CW_EVENTS_URI,
+                    description=_EVENTS_DESCRIPTION,
+                    required=False,
+                ),
             ],
         ),
         default_input_modes=["text/plain"],

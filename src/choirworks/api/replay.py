@@ -7,12 +7,15 @@ from a2a.types.a2a_pb2 import (
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
-    TaskStatus,
     TaskStatusUpdateEvent,
 )
-from google.protobuf import struct_pb2
-from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.json_format import MessageToDict
 
+from choirworks.core.events import (
+    FUNCTION_CALL,
+    THOUGHT,
+    state_delta_event,
+)
 from choirworks.orchestration.state import (
     Intervention,
     InterventionDelta,
@@ -20,12 +23,6 @@ from choirworks.orchestration.state import (
     NodeDelta,
     OrchestrationState,
 )
-
-
-def _struct(d: dict[str, object]) -> struct_pb2.Struct:
-    s = struct_pb2.Struct()
-    ParseDict(d, s)
-    return s
 
 
 def _intervention_delta(intervention: Intervention) -> InterventionDelta:
@@ -71,19 +68,15 @@ def _state_delta_event(
         if intervention.id
     }
 
-    return TaskStatusUpdateEvent(
-        task_id=task_id,
-        context_id=context_id,
-        status=TaskStatus(state=task_state),
-        metadata=_struct(
-            {
-                "cw_delta": {
-                    "nodes": nodes,
-                    "members": members,
-                    "interventions": interventions,
-                }
-            }
-        ),
+    return state_delta_event(
+        task_id,
+        context_id,
+        {
+            "nodes": nodes,
+            "members": members,
+            "interventions": interventions,
+        },
+        state=task_state,
     )
 
 
@@ -121,13 +114,11 @@ def synthesize_replay_events(
             parts = list(art.parts)
             if not parts:
                 continue
-            p_meta = parts[0].metadata
-            has_thought = "cw_thought" in p_meta.fields
-            has_fc = "cw_type" in p_meta.fields
-            is_thought = has_thought and p_meta.fields["cw_thought"].bool_value is True
-            is_fc = has_fc and p_meta.fields["cw_type"].string_value == "function_call"
+            kind_field = parts[0].metadata.fields.get("cw_type")
+            kind = kind_field.string_value if kind_field is not None else ""
+            is_verbatim = kind in {THOUGHT, FUNCTION_CALL}
 
-            if is_thought or is_fc:
+            if is_verbatim:
                 events.append(
                     StreamResponse(
                         artifact_update=_artifact_update(

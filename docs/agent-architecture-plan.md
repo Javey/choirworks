@@ -73,20 +73,27 @@ identifier 校验（本仓 agent 名带连字符，如 `qa-engineer`）、pydant
 model_config 体系、ADK 的 agentic 工具循环（AutoFlow——本仓 LLM 件是单次
 结构化决策）。
 
-### 3.3 事件词汇表（cw 扩展）
+### 3.3 事件词汇表（cw 扩展，第 1 期定稿）
 
-自定义内容统一为 data part 的 `cw_type` 字段约定，载体只用 A2A 标准事件：
+自定义内容的载体规则（第 1 期实测定稿）：
 
-| cw_type | 事件载体 | 替代的现状 |
+- **status.message 是问答卡（question data part）的独占槽位**——状态事件的
+  message 会顶掉任务快照里的问题卡，非问答内容一律走事件 metadata 或
+  artifact，不碰 message。
+- part 级自定义内容：discriminator 在 part metadata（`cw_type`）；
+- 事件级自定义内容：挂在事件 metadata（`cw_delta` / `intervention_id`）。
+
+| 内容 | 载体 | 相对现状 |
 |---|---|---|
-| `thought` | `TaskArtifactUpdateEvent`（append/last_chunk 分块） | part metadata `cw_thought` + artifact metadata author |
-| `text` | 同上 | `emit_text_chunk` 的隐式 author |
-| `function_call` | `TaskArtifactUpdateEvent` | `a2a/wire.py` 的 `function_call_part` |
-| `state_delta` | `TaskStatusUpdateEvent` 的 message data part | status metadata `cw_delta` |
-| `question` | `TaskStatusUpdateEvent` 的 message data part | 现 QUESTION_PART（沿用） |
+| `thought` / `text` 分块 | `TaskArtifactUpdateEvent`，part metadata `{cw_type, author}` | 替代 part metadata `cw_thought` + artifact metadata author（author 收进 part metadata） |
+| `function_call` | `TaskArtifactUpdateEvent`，data payload + part metadata `cw_type` | `wire.function_call_part` 原样，实现迁 `core/events.py` |
+| `question` | `TaskStatusUpdateEvent` 的 status.message data part | 沿用 QUESTION_PART |
+| 状态增量 | `TaskStatusUpdateEvent` 事件 metadata `cw_delta` | **沿用**（第 1 期曾试挂 message，实测会顶掉问答卡，回退） |
+| 答题拒绝 | `TaskStatusUpdateEvent` 事件 metadata `{intervention_id, reason}` | 沿用 |
 
-`a2a/card.py` 注册对应 AgentExtension。字段级细节随第 1 期实现定稿，但
-「一种自定义内容一个 `cw_type`、载体只用标准三件套」是硬约束。
+`a2a/card.py` 注册 AgentExtension 描述以上约定；构造器全部在
+`core/events.py`（`status_event` / `chunk_event` / `function_call_event` /
+`state_delta_event`），`emit(ctx, ev)` 单点推队列。
 
 ### 3.4 契约（为什么分家）
 
@@ -139,7 +146,7 @@ basedpyright 0 errors）。测试随期迁移，不留旧断言。
 
 | 期 | 内容 | 主要动到 |
 |---|---|---|
-| 1 | `core/events.py` 事件词汇表（`cw_type` data part + extension 注册）；全仓 `emit_*` 调用点迁移；`orchestration/events.py` 退役 | events / wire / card + 全部调用点 + 测试 |
+| 1 | `core/events.py` 事件词汇表 + extension 注册；全仓 `emit_*` 调用点迁移；`orchestration/events.py` 收缩为业务组合层（全部经 core 构造器 + `emit`，第 4 期随根 agent 重组） | events / wire / card + 全部调用点 + 测试 |
 | 2 | TurnContext + Runner；`a2a/executor.py` 瘦身纯壳；`core/flows/` 就位；`core/context.py` 业务内容迁出 | context / session / executor + 测试 |
 | 3 | `LlmAgent`（`decide` 流式推思考/结果事件）；outcome / assistance / repair 迁为实例；`Subagent` / `run_subagent` 退役 | `subagents/` + settlement / outcome / repair 调用点 |
 | 4 | `OrchestratorAgent` 根：message_flow、DAG 调度、settlement、HITL 移植为根 impl | `orchestration/flows/` `execution/` `hitl/` |

@@ -154,7 +154,6 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     delta = queue.events[0]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert "cw_delta" in meta
     assert "interventions" not in meta["cw_delta"]
     assert meta["cw_delta"]["nodes"]["3"]["status"] == "ready"
 

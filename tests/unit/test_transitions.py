@@ -109,7 +109,6 @@ async def test_transition_emits_status_delta():
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
-    assert "cw_delta" in meta
     assert meta["cw_delta"]["nodes"]["n1"]["status"] == "completed"
 
 

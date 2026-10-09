@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import structlog
 from a2a.types.a2a_pb2 import (
-    Artifact,
     Message,
-    Part,
-    TaskArtifactUpdateEvent,
     TaskState,
 )
-from google.protobuf.json_format import ParseDict
-from pydantic import BaseModel
 
-from choirworks.a2a.wire import function_call_part, status_update, struct
+from choirworks.core.events import (
+    TEXT,
+    THOUGHT,
+    chunk_event,
+    emit,
+    function_call_event,
+    state_delta_event,
+    status_event,
+)
 from choirworks.orchestration.state import (
     Intervention,
     InterventionDelta,
@@ -25,6 +27,8 @@ from choirworks.orchestration.state import (
 )
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from choirworks.orchestration.context import OrchestrationContext
     from choirworks.tools.base import AgentFunction, FunctionResult
 
@@ -61,14 +65,9 @@ async def emit_event(
         state=TaskState.Name(effective),
         keys=list(metadata) if metadata else None,
     )
-    await ctx.queue.enqueue_event(
-        status_update(
-            ctx.task_id,
-            ctx.context_id,
-            effective,
-            metadata=metadata,
-            message=message,
-        )
+    await emit(
+        ctx,
+        status_event(ctx.task_id, ctx.context_id, effective, metadata=metadata, message=message),
     )
 
 
@@ -125,7 +124,15 @@ async def emit_state_delta(
         task_id=ctx.task_id,
         delta=delta,
     )
-    await emit_event(ctx, state_name, metadata={"cw_delta": delta})
+    await emit(
+        ctx,
+        state_delta_event(
+            ctx.task_id,
+            ctx.context_id,
+            delta,
+            state=_effective_state(ctx, state_name),
+        ),
+    )
 
 
 async def emit_thought_chunk(
@@ -137,8 +144,6 @@ async def emit_thought_chunk(
     last_chunk: bool,
     artifact_id: str,
 ) -> None:
-    part = Part(text=text)
-    ParseDict({"cw_thought": True}, part.metadata)
     logger.info(
         "emit_thought_chunk",
         task_id=ctx.task_id,
@@ -147,18 +152,18 @@ async def emit_thought_chunk(
         append=append,
         last_chunk=last_chunk,
     )
-    await ctx.queue.enqueue_event(
-        TaskArtifactUpdateEvent(
-            task_id=ctx.task_id,
-            context_id=ctx.context_id,
-            artifact=Artifact(
-                artifact_id=artifact_id,
-                parts=[part],
-                metadata=struct({"author": author}),
-            ),
+    await emit(
+        ctx,
+        chunk_event(
+            ctx.task_id,
+            ctx.context_id,
+            text=text,
+            kind=THOUGHT,
+            author=author,
+            artifact_id=artifact_id,
             append=append,
             last_chunk=last_chunk,
-        )
+        ),
     )
 
 
@@ -170,7 +175,6 @@ async def emit_text_chunk(
     last_chunk: bool,
     artifact_id: str,
 ) -> None:
-    part = Part(text=text)
     logger.info(
         "emit_text_chunk",
         task_id=ctx.task_id,
@@ -179,18 +183,18 @@ async def emit_text_chunk(
         append=append,
         last_chunk=last_chunk,
     )
-    await ctx.queue.enqueue_event(
-        TaskArtifactUpdateEvent(
-            task_id=ctx.task_id,
-            context_id=ctx.context_id,
-            artifact=Artifact(
-                artifact_id=artifact_id,
-                parts=[part],
-                metadata=struct({"author": "assistant"}),
-            ),
+    await emit(
+        ctx,
+        chunk_event(
+            ctx.task_id,
+            ctx.context_id,
+            text=text,
+            kind=TEXT,
+            author="assistant",
+            artifact_id=artifact_id,
             append=append,
             last_chunk=last_chunk,
-        )
+        ),
     )
 
 
@@ -209,19 +213,15 @@ async def emit_function_call(
         success=result.success,
         args=args.model_dump(),
     )
-    part = function_call_part(func.name, args.model_dump(), result.model_dump())
-    artifact = Artifact(
-        artifact_id=uuid.uuid4().hex,
-        parts=[part],
-    )
-    await ctx.queue.enqueue_event(
-        TaskArtifactUpdateEvent(
-            task_id=ctx.task_id,
-            context_id=ctx.context_id,
-            artifact=artifact,
-            append=False,
-            last_chunk=True,
-        )
+    await emit(
+        ctx,
+        function_call_event(
+            ctx.task_id,
+            ctx.context_id,
+            function_name=func.name,
+            args=args.model_dump(),
+            result=result.model_dump(),
+        ),
     )
     await emit_event(ctx, state_name)
 
@@ -239,18 +239,14 @@ async def emit_function_error(
         function=func.name,
         error=error,
     )
-    part = function_call_part(func.name, {}, {"success": False, "error": error})
-    artifact = Artifact(
-        artifact_id=uuid.uuid4().hex,
-        parts=[part],
-    )
-    await ctx.queue.enqueue_event(
-        TaskArtifactUpdateEvent(
-            task_id=ctx.task_id,
-            context_id=ctx.context_id,
-            artifact=artifact,
-            append=False,
-            last_chunk=True,
-        )
+    await emit(
+        ctx,
+        function_call_event(
+            ctx.task_id,
+            ctx.context_id,
+            function_name=func.name,
+            args={},
+            result={"success": False, "error": error},
+        ),
     )
     await emit_event(ctx, state_name)

@@ -17,6 +17,11 @@ from choirworks.sim.fake_agent import start_fake_agent
 from tests.support.sdk import sdk_hub, wait_for_task
 
 
+def _part_kind(part) -> str:
+    kind = part.metadata.fields.get("cw_type")
+    return kind.string_value if kind is not None else ""
+
+
 def _settings(port: int, db: str) -> Settings:
     return Settings(
         store={"db_path": db},
@@ -88,10 +93,12 @@ async def test_streaming_send_emits_plan(tmp_path, echo_agent):
         thought_updates = [
             u
             for u in artifact_updates
-            if u.artifact.parts and "cw_thought" in u.artifact.parts[0].metadata.fields
+            if u.artifact.parts and _part_kind(u.artifact.parts[0]) == "thought"
         ]
         thought_chunks = [u.artifact.parts[0].text for u in thought_updates]
-        authors = {u.artifact.metadata.fields["author"].string_value for u in thought_updates}
+        authors = {
+            u.artifact.parts[0].metadata.fields["author"].string_value for u in thought_updates
+        }
         assert authors == {"assistant"}
         assert len(thought_chunks) > 1
         assert thought_chunks[-1] == "思考：将请求拆解为 1 个节点。"
@@ -128,7 +135,6 @@ async def test_subscribe_replays_snapshot_then_live(tmp_path):
         and event.artifact_update.artifact.parts
         and event.artifact_update.artifact.parts[0].text
         and "cw_type" not in event.artifact_update.artifact.parts[0].metadata.fields
-        and "cw_thought" not in event.artifact_update.artifact.parts[0].metadata.fields
     ]
     assert node_outputs
     for update in node_outputs:

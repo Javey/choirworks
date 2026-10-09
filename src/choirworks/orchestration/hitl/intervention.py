@@ -8,6 +8,7 @@ from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, ValidationError
 
 from choirworks.a2a.wire import data_part
+from choirworks.core.events import QUESTION
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_event,
@@ -33,7 +34,7 @@ from choirworks.orchestration.transitions import apply_transition
 
 logger = structlog.get_logger(__name__)
 
-QUESTION_PART = "question"
+QUESTION_PART = QUESTION
 QUESTION_RESPONSE_PART = "question_response"
 
 
