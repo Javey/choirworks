@@ -25,7 +25,7 @@ from choirworks.orchestration.state import (
     pending_intervention_for,
 )
 from choirworks.orchestration.transitions import apply_transition
-from choirworks.subagents.assistance import ASSISTANCE_AGENT
+from choirworks.subagents.assistance import assistance_agent
 from choirworks.tools.ask_user import AskUserArgs, ask_user_func
 from choirworks.tools.outcome_decision import AssistanceResult
 
@@ -138,7 +138,7 @@ async def _decide_assistance_impl(
         candidates,
     )
     try:
-        return await ASSISTANCE_AGENT.run_async(
+        return await assistance_agent.run_async(
             ctx,  # pyright: ignore[reportArgumentType]
             user,
             exclude_agent=node.agent_name,

@@ -16,7 +16,7 @@ from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.repair import revise_plan
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
-from choirworks.subagents.outcome import OUTCOME_AGENT
+from choirworks.subagents.outcome import outcome_agent
 from choirworks.tools.outcome_decision import OutcomeResult
 
 logger = structlog.get_logger(__name__)
@@ -146,7 +146,7 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
     candidates = [agent for agent in agents if agent.name != node.agent_name]
     user = build_outcome_user(node.agent_name, node.input_text, node.output, candidates)
     try:
-        return await OUTCOME_AGENT.run_async(
+        return await outcome_agent.run_async(
             ctx,  # pyright: ignore[reportArgumentType]
             user,
             exclude_agent=node.agent_name,

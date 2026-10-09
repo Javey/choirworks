@@ -5,8 +5,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import cast, override
 
 import structlog
@@ -21,49 +19,58 @@ from choirworks.tools.base import AgentFunction, ToolCallResult
 logger = structlog.get_logger(__name__)
 
 
-@dataclass(slots=True)
 class LlmAgent[T](BaseAgent):
     """LLM 子 agent（双态，ADK LlmAgent 形状）。
 
-    **决策态**：``build_tools`` / ``final_tool`` / ``process`` 三字段同现——
-    强制调用终态工具（工具参数即输出），思考/正文 chunk 边跑边推事件
-    （``cw_type`` 词汇表，author 为 agent 名，每轮尝试独立 artifact、结束时
-    seal）；模型未调工具或解析失败时追加反馈重试，重试耗尽走 ``process(None)``
-    兜底，成功返回 ``process(tool_call)``。
+    **决策态**：子类覆写 :meth:`build_tools` / :meth:`process` 并设类属性
+    ``final_tool``——强制调用终态工具（工具参数即输出），思考/正文 chunk 边
+    跑边推事件（``cw_type`` 词汇表，author 为 agent 名，每轮尝试独立
+    artifact、结束时 seal）；模型未调工具或解析失败时追加反馈重试，重试
+    耗尽走 ``process(None)`` 兜底，成功返回 ``process(tool_call)``。
 
-    **文字态**：三字段同缺——不声明工具的单次文字回复（ADK 无工具默认
-    路径），思考/正文照流，返回拼接文本（``LlmAgent[str]``）。
+    **文字态**：``final_tool`` 为 ``None``（默认）——不声明工具的单次文字
+    回复（ADK 无工具默认路径），思考/正文照流，返回拼接文本。
+
+    子类可直接设类属性 ``system_prompt`` / ``final_tool`` / ``max_retries``
+    作为默认值；构造时传入同名关键字参数可覆盖。
     """
 
-    system_prompt: str
-    build_tools: Callable[..., Awaitable[list[AgentFunction]]] | None = None
     final_tool: str | None = None
-    process: Callable[[ToolCallResult | None], T] | None = None
     max_retries: int = 2
 
-    def __post_init__(self) -> None:
-        # slots=True 的 dataclass 会重建类，零参 super() 的 __class__ 单元失效。
-        super(LlmAgent, self).__post_init__()
-        declared = (
-            self.build_tools is not None,
-            self.final_tool is not None,
-            self.process is not None,
-        )
-        if any(declared) and not all(declared):
-            raise ValueError(
-                "decision mode requires build_tools / final_tool / process together; "
-                "leave all three unset for text mode"
-            )
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        sub_agents: list[BaseAgent] | None = None,
+        system_prompt: str | None = None,
+        final_tool: str | None = None,
+        max_retries: int | None = None,
+    ) -> None:
+        super().__init__(name=name, description=description, sub_agents=sub_agents)
+        if system_prompt is not None:
+            self.system_prompt = system_prompt
+        if not hasattr(self, "system_prompt"):
+            raise TypeError(f"{type(self).__name__} requires a 'system_prompt'")
+        if final_tool is not None:
+            self.final_tool = final_tool
+        if max_retries is not None:
+            self.max_retries = max_retries
+
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        """决策态子类覆写：构建可供模型调用的工具列表。"""
+        return []
+
+    def process(self, tool_call: ToolCallResult | None) -> T:
+        """决策态子类覆写：将工具调用结果（或 ``None`` 兜底）转为类型化输出。"""
+        return cast("T", None)
 
     @override
     async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> T:
-        build_tools = self.build_tools
         final_tool = self.final_tool
-        process = self.process
         if final_tool is None:
             return await self._run_text(ctx, user)
-        if build_tools is None or process is None:
-            raise ValueError("decision mode requires build_tools / final_tool / process")
         logger.info(
             "llm_agent",
             name=self.name,
@@ -82,7 +89,7 @@ class LlmAgent[T](BaseAgent):
                     max_attempts=self.max_retries + 1,
                     error=last_error,
                 )
-            tools = await build_tools(ctx, **tool_kwargs)
+            tools = await self.build_tools(ctx, **tool_kwargs)
             thought_id = uuid.uuid4().hex
             text_id = uuid.uuid4().hex
             tool_call: ToolCallResult | None = None
@@ -132,9 +139,9 @@ class LlmAgent[T](BaseAgent):
                 continue
             await self._seal_attempt(ctx, thought_id, text_id, reasoning_parts, content_parts)
             logger.info("llm_agent done", name=self.name, tool=final_tool)
-            return process(tool_call)
+            return self.process(tool_call)
         logger.warning("llm_agent exhausted", name=self.name, retries=self.max_retries)
-        return process(None)
+        return self.process(None)
 
     async def _run_text(self, ctx: TurnContext, user: str) -> T:
         """文字态：无工具单次回复，流式推思考/正文，返回拼接文本。"""

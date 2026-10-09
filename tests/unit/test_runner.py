@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 from a2a.server.events import EventQueue
@@ -11,9 +10,10 @@ from choirworks.core.agents.context import TurnContext
 from choirworks.core.runner import Runner
 
 
-@dataclass(slots=True)
 class _LeafAgent(BaseAgent):
-    calls: list[tuple[str, bool]] = field(default_factory=list)
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.calls: list[tuple[str, bool]] = []
 
     async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> None:
         self.calls.append((user, ctx.lock.locked()))

@@ -7,9 +7,11 @@ missing tool call yields ``None``.
 
 from __future__ import annotations
 
+from typing import override
+
+from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.util import as_model
-from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (
     REPAIR_SYSTEM,
@@ -17,28 +19,24 @@ from choirworks.tools.outcome_decision import (
     decision_tool,
 )
 
-
-async def build_repair_tools(ctx: OrchestrationContext, **kwargs: object) -> list[AgentFunction]:
-    return [
-        decision_tool(
-            "RepairDecision",
-            "Produce an incremental repair patch for a failed plan.",
-            RepairResult,
-        )
-    ]
+_REPAIR_TOOL_DESCRIPTION = "Produce an incremental repair patch for a failed plan."
 
 
-def _process_repair(tool_call: ToolCallResult | None) -> RepairResult | None:
-    if tool_call is None:
-        return None
-    return as_model(tool_call, RepairResult)
+class RepairAgent(LlmAgent[RepairResult | None]):
+    name = "repair"
+    system_prompt = REPAIR_SYSTEM
+    final_tool = "RepairDecision"
+    max_retries = 0
+
+    @override
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        return [decision_tool("RepairDecision", _REPAIR_TOOL_DESCRIPTION, RepairResult)]
+
+    @override
+    def process(self, tool_call: ToolCallResult | None) -> RepairResult | None:
+        if tool_call is None:
+            return None
+        return as_model(tool_call, RepairResult)
 
 
-REPAIR_AGENT: LlmAgent[RepairResult | None] = LlmAgent(
-    name="repair",
-    system_prompt=REPAIR_SYSTEM,
-    final_tool="RepairDecision",
-    build_tools=build_repair_tools,
-    process=_process_repair,
-    max_retries=0,
-)
+repair_agent = RepairAgent()

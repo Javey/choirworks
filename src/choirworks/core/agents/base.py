@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
 
 from choirworks.core.agents.context import TurnContext
 
 
-@dataclass(slots=True, kw_only=True)
 class BaseAgent(abc.ABC):
     """Agent 基类：身份 + agent 树 + 统一运行入口。
 
@@ -15,14 +13,28 @@ class BaseAgent(abc.ABC):
     agent 返回 ``None``（回合驱动），LlmAgent 返回类型化结果；事件经
     ``ctx.queue`` 直推 A2A 标准事件，不走 Event 生成器（决策 2）。返回
     ``object`` 是砍掉内部 Event 后对 ADK ``AsyncGenerator[Event]`` 的替代。
+
+    子类可直接设类属性 ``name`` / ``description`` 作为默认值，无需在
+    ``__init__`` 中传参；构造时传入同名关键字参数可覆盖类属性。
     """
 
-    name: str
     description: str = ""
-    sub_agents: list[BaseAgent] = field(default_factory=list)
-    parent_agent: BaseAgent | None = field(default=None, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        sub_agents: list[BaseAgent] | None = None,
+    ) -> None:
+        if name is not None:
+            self.name = name
+        if not hasattr(self, "name"):
+            raise TypeError(f"{type(self).__name__} requires a 'name'")
+        if description is not None:
+            self.description = description
+        self.sub_agents: list[BaseAgent] = list(sub_agents or [])
+        self.parent_agent: BaseAgent | None = None
         for sub_agent in self.sub_agents:
             if sub_agent.parent_agent is not None:
                 raise ValueError(

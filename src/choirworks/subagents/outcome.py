@@ -6,9 +6,11 @@ for more information, or a structural plan revision.
 
 from __future__ import annotations
 
+from typing import override
+
+from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.util import as_model
-from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (
     OUTCOME_SYSTEM,
@@ -16,30 +18,23 @@ from choirworks.tools.outcome_decision import (
     decision_tool,
 )
 
-
-async def build_outcome_tools(
-    ctx: OrchestrationContext,
-    **kwargs: object,
-) -> list[AgentFunction]:
-    return [
-        decision_tool(
-            "OutcomeDecision",
-            "Decide what an agent's final reply means for the plan.",
-            OutcomeResult,
-        )
-    ]
+_OUTCOME_TOOL_DESCRIPTION = "Decide what an agent's final reply means for the plan."
 
 
-def _process_outcome(tool_call: ToolCallResult | None) -> OutcomeResult:
-    if tool_call is None:
-        return OutcomeResult(intent="deliver")
-    return as_model(tool_call, OutcomeResult)
+class OutcomeAgent(LlmAgent[OutcomeResult]):
+    name = "outcome"
+    system_prompt = OUTCOME_SYSTEM
+    final_tool = "OutcomeDecision"
+
+    @override
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        return [decision_tool("OutcomeDecision", _OUTCOME_TOOL_DESCRIPTION, OutcomeResult)]
+
+    @override
+    def process(self, tool_call: ToolCallResult | None) -> OutcomeResult:
+        if tool_call is None:
+            return OutcomeResult(intent="deliver")
+        return as_model(tool_call, OutcomeResult)
 
 
-OUTCOME_AGENT: LlmAgent[OutcomeResult] = LlmAgent(
-    name="outcome",
-    system_prompt=OUTCOME_SYSTEM,
-    final_tool="OutcomeDecision",
-    build_tools=build_outcome_tools,
-    process=_process_outcome,
-)
+outcome_agent = OutcomeAgent()

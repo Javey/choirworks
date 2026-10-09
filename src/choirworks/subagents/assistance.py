@@ -8,9 +8,11 @@ answer (``target_agent`` empty).  Falls back to an empty
 
 from __future__ import annotations
 
+from typing import override
+
+from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.util import as_model
-from choirworks.orchestration.context import OrchestrationContext
 from choirworks.tools.base import AgentFunction, ToolCallResult
 from choirworks.tools.outcome_decision import (
     ASSISTANCE_SYSTEM,
@@ -19,29 +21,27 @@ from choirworks.tools.outcome_decision import (
     decision_tool,
 )
 
-
-async def build_assistance_tools(
-    ctx: OrchestrationContext,
-    *,
-    exclude_agent: str = "",
-    **kwargs: object,
-) -> list[AgentFunction]:
-    agents = await ctx.registry.list()
-    candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents
-    schema = assistance_schema([a.name for a in candidates])
-    return [decision_tool("AssistanceDecision", "Decide how to handle a blocked agent.", schema)]
+_ASSISTANCE_TOOL_DESCRIPTION = "Decide how to handle a blocked agent."
 
 
-def _process_assistance(tool_call: ToolCallResult | None) -> AssistanceResult:
-    if tool_call is None:
-        return AssistanceResult()
-    return as_model(tool_call, AssistanceResult)
+class AssistanceAgent(LlmAgent[AssistanceResult]):
+    name = "assistance"
+    system_prompt = ASSISTANCE_SYSTEM
+    final_tool = "AssistanceDecision"
+
+    @override
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        exclude_agent = str(kwargs.get("exclude_agent", ""))
+        agents = await ctx.registry.list()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents  # pyright: ignore[reportUnknownVariableType]
+        schema = assistance_schema([a.name for a in candidates])  # pyright: ignore[reportUnknownArgumentType]
+        return [decision_tool("AssistanceDecision", _ASSISTANCE_TOOL_DESCRIPTION, schema)]
+
+    @override
+    def process(self, tool_call: ToolCallResult | None) -> AssistanceResult:
+        if tool_call is None:
+            return AssistanceResult()
+        return as_model(tool_call, AssistanceResult)
 
 
-ASSISTANCE_AGENT: LlmAgent[AssistanceResult] = LlmAgent(
-    name="assistance",
-    system_prompt=ASSISTANCE_SYSTEM,
-    final_tool="AssistanceDecision",
-    build_tools=build_assistance_tools,
-    process=_process_assistance,
-)
+assistance_agent = AssistanceAgent()

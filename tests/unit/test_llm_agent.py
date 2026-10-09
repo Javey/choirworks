@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import override
 
-import pytest
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 from litellm.types.utils import Delta
 from pydantic import BaseModel
 
+from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.events import TEXT, THOUGHT
 from choirworks.tools.base import AgentFunction, FunctionResult, ToolCallResult
@@ -32,15 +33,22 @@ _DECISION_TOOL = AgentFunction(
 )
 
 
-async def _build_tools(ctx: object, **kwargs: object) -> list[AgentFunction]:
-    return [_DECISION_TOOL]
+class _DecisionAgent(LlmAgent[str]):
+    name = "oracle"
+    system_prompt = "SYS"
+    final_tool = "decide"
+    max_retries = 2
 
+    @override
+    async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[AgentFunction]:
+        return [_DECISION_TOOL]
 
-def _process(tool_call: ToolCallResult | None) -> str:
-    if tool_call is None:
-        return "fallback"
-    args = tool_call.args if isinstance(tool_call.args, _DecisionArgs) else None
-    return args.answer if args else "unparsed"
+    @override
+    def process(self, tool_call: ToolCallResult | None) -> str:
+        if tool_call is None:
+            return "fallback"
+        args = tool_call.args if isinstance(tool_call.args, _DecisionArgs) else None
+        return args.answer if args else "unparsed"
 
 
 class _FakeLLM:
@@ -70,22 +78,6 @@ class _Queue:
 
     async def enqueue_event(self, event: object) -> None:
         self.events.append(event)
-
-
-def _agent(
-    name: str = "oracle",
-    max_retries: int = 2,
-    sub_agents: list[LlmAgent[str]] | None = None,
-) -> LlmAgent[str]:
-    return LlmAgent(
-        name=name,
-        system_prompt="SYS",
-        final_tool="decide",
-        build_tools=_build_tools,
-        process=_process,
-        max_retries=max_retries,
-        sub_agents=sub_agents or [],
-    )
 
 
 def _text_agent(name: str = "scribe") -> LlmAgent[str]:
@@ -120,7 +112,7 @@ async def test_run_async_streams_and_returns_processed_result():
             ]
         ]
     )
-    agent = _agent()
+    agent = _DecisionAgent()
     ctx, queue = _ctx(llm)
 
     result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
@@ -143,7 +135,7 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
             ],
         ]
     )
-    agent = _agent()
+    agent = _DecisionAgent()
     ctx, queue = _ctx(llm)
 
     result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
@@ -158,7 +150,7 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
 
 async def test_run_async_exhausts_retries_into_process_fallback():
     llm = _FakeLLM([[Delta(reasoning_content="想")], [Delta(reasoning_content="再想")]])
-    agent = _agent(max_retries=1)
+    agent = _DecisionAgent(max_retries=1)
     ctx, _queue = _ctx(llm)
 
     result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
@@ -168,8 +160,8 @@ async def test_run_async_exhausts_retries_into_process_fallback():
 
 
 async def test_llm_agent_joins_agent_tree():
-    child = _agent(name="child")
-    root = _agent(name="root", sub_agents=[child])
+    child = _DecisionAgent(name="child")
+    root = _DecisionAgent(name="root", sub_agents=[child])
 
     assert child.parent_agent is root
 
@@ -201,6 +193,6 @@ async def test_text_mode_streams_and_returns_joined_text_without_tools():
     ]
 
 
-async def test_mixed_decision_fields_are_rejected():
-    with pytest.raises(ValueError, match="decision mode"):
-        LlmAgent(name="bad", system_prompt="SYS", final_tool="decide")
+async def test_text_mode_is_default_when_final_tool_unset():
+    agent = LlmAgent(name="plain", system_prompt="SYS")
+    assert agent.final_tool is None
