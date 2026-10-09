@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from typing import Literal
 
 import structlog
 from a2a.helpers import new_task
-from a2a.server.agent_execution import RequestContext
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.recovery import is_recover_request, recover_session
-from choirworks.a2a.room import RoomOptions, room_options
+from choirworks.a2a.room import room_options
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_intervention_rejected,
@@ -23,7 +21,6 @@ from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
 from choirworks.orchestration.hitl.intervention import (
-    QuestionResponse,
     answer_intervention,
     emit_pending_questions,
     parse_question_response,
@@ -32,7 +29,6 @@ from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.planner import plan_and_launch
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
-    NodeState,
     NodeStatus,
     active_nodes,
     blocked_nodes,
@@ -45,74 +41,62 @@ from choirworks.orchestration.transitions import apply_transition
 logger = structlog.get_logger(__name__)
 
 
-@dataclass(slots=True)
-class MessagePayload:
-    context: RequestContext
-    text: str = ""
-    room: RoomOptions = field(default_factory=RoomOptions)
-    updater: TaskUpdater | None = None
-    responses: list[QuestionResponse] = field(default_factory=list)
-    malformed: str | None = None
-    needs_runner: bool = False
-    quote_id: str | None = None
-    target: NodeState | None = None
-
-
 async def _prepare_inbound(
-    ctx: OrchestrationContext, payload: MessagePayload
+    ctx: OrchestrationContext, _payload: None
 ) -> Literal["recover", "ready"]:
-    if is_recover_request(payload.context):
+    request = ctx.request
+    assert request is not None
+    if is_recover_request(request):
         logger.info("execute recover", task_id=ctx.task_id, context_id=ctx.context_id)
         return "recover"
-    context = payload.context
-    payload.text = (context.get_user_input() or "").strip()
-    if context.message is not None:
+    ctx.text = (request.get_user_input() or "").strip()
+    if request.message is not None:
         try:
-            payload.responses = parse_question_response(context.message)
+            ctx.responses = parse_question_response(request.message)
         except ValueError as exc:
-            payload.malformed = str(exc)
-    if context.current_task is None:
+            ctx.malformed = str(exc)
+    if request.current_task is None:
         initial_task = new_task(
             task_id=ctx.task_id,
             context_id=ctx.context_id,
             state=TaskState.TASK_STATE_SUBMITTED,
-            history=[context.message] if context.message else None,
+            history=[request.message] if request.message else None,
         )
         await ctx.queue.enqueue_event(initial_task)
-    payload.updater = TaskUpdater(ctx.queue, ctx.task_id, ctx.context_id)
-    room = room_options(context.message)
+    ctx.updater = TaskUpdater(ctx.queue, ctx.task_id, ctx.context_id)
+    room = room_options(request.message)
     mentions = list(room.get("mentions") or [])
-    for name in re.findall(r"@([A-Za-z0-9_-]+)", payload.text):
+    for name in re.findall(r"@([A-Za-z0-9_-]+)", ctx.text):
         if name not in mentions:
             mentions.append(name)
     if mentions:
         room["mentions"] = mentions
-    payload.room = room
+    ctx.room = room
     return "ready"
 
 
-async def _do_recover(ctx: OrchestrationContext, _payload: MessagePayload) -> FlowOutcome:
+async def _do_recover(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     await recover_session(ctx)
     return FlowOutcome.END
 
 
-async def _do_reject(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_reject(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info(
         "execute route=intervention_malformed", task_id=ctx.task_id, context_id=ctx.context_id
     )
-    await emit_intervention_rejected(ctx, "", payload.malformed or "")
+    await emit_intervention_rejected(ctx, "", ctx.malformed or "")
     return FlowOutcome.END
 
 
-async def _do_answers(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_answers(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info(
         "execute route=intervention_answers",
         task_id=ctx.task_id,
         context_id=ctx.context_id,
-        answers=len(payload.responses),
+        answers=len(ctx.responses),
     )
     resolved = False
-    for response in payload.responses:
+    for response in ctx.responses:
         if await answer_intervention(
             ctx, intervention_id=response.intervention_id, answer=response.answer
         ):
@@ -125,77 +109,77 @@ async def _do_answers(ctx: OrchestrationContext, payload: MessagePayload) -> Flo
     return FlowOutcome.END
 
 
-async def _do_reemit_questions(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_reemit_questions(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info(
         "execute route=intervention_unanswered",
         task_id=ctx.task_id,
         context_id=ctx.context_id,
-        text=payload.text,
+        text=ctx.text,
     )
     await emit_pending_questions(ctx)
     return FlowOutcome.END
 
 
-async def _do_complete(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_complete(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info("execute route=empty_complete", task_id=ctx.task_id, context_id=ctx.context_id)
-    updater = payload.updater
+    updater = ctx.updater
     assert updater is not None
     await updater.complete()
     ctx.sessions.evict_session(ctx.context_id)
     return FlowOutcome.END
 
 
-async def _do_plan_and_launch(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_plan_and_launch(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info(
         "execute route=plan_and_launch",
         task_id=ctx.task_id,
         context_id=ctx.context_id,
-        text=payload.text,
+        text=ctx.text,
     )
-    updater = payload.updater
+    updater = ctx.updater
     assert updater is not None
     await updater.start_work()
-    await plan_and_launch(ctx, payload.text, room=payload.room)
+    await plan_and_launch(ctx, ctx.text, room=ctx.room)
     return FlowOutcome.END
 
 
-def _finish(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    if payload.needs_runner:
+def _finish(ctx: OrchestrationContext) -> FlowOutcome:
+    if ctx.needs_runner:
         start_runner(ctx)
     return FlowOutcome.END
 
 
-async def _do_noop(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    return _finish(ctx, payload)
+async def _do_noop(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
+    return _finish(ctx)
 
 
-async def _do_enqueue(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    node = payload.target
+async def _do_enqueue(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
+    node = ctx.target
     if node is None:
-        return _finish(ctx, payload)
+        return _finish(ctx)
     logger.info(
         "execute route=enqueue", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
-    _ = enqueue(ctx.state, node.id, payload.text, sender="user", quote_id=payload.quote_id)
+    _ = enqueue(ctx.state, node.id, ctx.text, sender="user", quote_id=ctx.quote_id)
     await ctx.sessions.persist(ctx)
-    return _finish(ctx, payload)
+    return _finish(ctx)
 
 
-async def _do_spawn_followup(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    node = payload.target
+async def _do_spawn_followup(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
+    node = ctx.target
     if node is None:
-        return _finish(ctx, payload)
+        return _finish(ctx)
     logger.info(
         "execute route=followup", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
-    await spawn_followup_node(ctx, payload.text, node)
-    return _finish(ctx, payload)
+    await spawn_followup_node(ctx, ctx.text, node)
+    return _finish(ctx)
 
 
-async def _do_interrupt(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
-    node = payload.target
+async def _do_interrupt(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
+    node = ctx.target
     if node is None:
-        return _finish(ctx, payload)
+        return _finish(ctx)
     logger.info(
         "execute route=interrupt", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
@@ -217,18 +201,18 @@ async def _do_interrupt(ctx: OrchestrationContext, payload: MessagePayload) -> F
             **{b.id: {"status": NodeStatus.INVALIDATED} for b in invalidated},
         },
     )
-    await spawn_followup_node(ctx, payload.text, node, deps=[])
-    return _finish(ctx, payload)
+    await spawn_followup_node(ctx, ctx.text, node, deps=[])
+    return _finish(ctx)
 
 
-async def _do_new_plan(ctx: OrchestrationContext, payload: MessagePayload) -> FlowOutcome:
+async def _do_new_plan(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
     logger.info("execute route=new_plan", task_id=ctx.task_id, context_id=ctx.context_id)
-    await plan_and_launch(ctx, payload.text)
-    return _finish(ctx, payload)
+    await plan_and_launch(ctx, ctx.text)
+    return _finish(ctx)
 
 
 async def _classify_inbound(
-    ctx: OrchestrationContext, payload: MessagePayload
+    ctx: OrchestrationContext, _payload: None
 ) -> Literal[
     "malformed",
     "answers",
@@ -237,9 +221,9 @@ async def _classify_inbound(
     "empty",
     "plan",
 ]:
-    if payload.malformed is not None:
+    if ctx.malformed is not None:
         return "malformed"
-    if payload.responses:
+    if ctx.responses:
         return "answers"
     if pending_interventions(ctx.state):
         return "unanswered_pending"
@@ -247,9 +231,9 @@ async def _classify_inbound(
     if runner is not None and not runner.done():
         return "room"
     if has_pending_work(ctx.state):
-        payload.needs_runner = True
+        ctx.needs_runner = True
         return "room"
-    if not payload.text:
+    if not ctx.text:
         return "empty"
     return "plan"
 
@@ -257,13 +241,13 @@ async def _classify_inbound(
 _QUOTED = Literal["quote_active", "quote_completed", "interrupt", "target", "new_plan", "noop"]
 
 
-async def _classify_room(ctx: OrchestrationContext, payload: MessagePayload) -> _QUOTED:
-    if not payload.text:
+async def _classify_room(ctx: OrchestrationContext, _payload: None) -> _QUOTED:
+    if not ctx.text:
         return "noop"
     state = ctx.state
     active = active_nodes(state)
-    quote_id = payload.room.get("quote_id")
-    interrupt = bool(payload.room.get("interrupt"))
+    quote_id = ctx.room.get("quote_id")
+    interrupt = bool(ctx.room.get("interrupt"))
     if quote_id and not interrupt:
         quoted = next(
             (
@@ -274,14 +258,14 @@ async def _classify_room(ctx: OrchestrationContext, payload: MessagePayload) -> 
             None,
         )
         if quoted is not None and quoted.status in ACTIVE_NODE_STATUSES:
-            payload.quote_id = str(quote_id)
-            payload.target = quoted
+            ctx.quote_id = str(quote_id)
+            ctx.target = quoted
             return "quote_active"
         if quoted is not None and quoted.status == NodeStatus.COMPLETED:
-            payload.target = quoted
+            ctx.target = quoted
             return "quote_completed"
     if interrupt and active:
-        payload.target = active[0]
+        ctx.target = active[0]
         return "interrupt"
     target = (
         active[0]
@@ -292,13 +276,13 @@ async def _classify_room(ctx: OrchestrationContext, payload: MessagePayload) -> 
         )
     )
     if target is not None:
-        payload.quote_id = str(quote_id) if quote_id else None
-        payload.target = target
+        ctx.quote_id = str(quote_id) if quote_id else None
+        ctx.target = target
         return "target"
     return "new_plan"
 
 
-message_flow: Flow[MessagePayload] = Flow(
+message_flow: Flow[None] = Flow(
     name="message_flow",
     start=_prepare_inbound,
     edges=(

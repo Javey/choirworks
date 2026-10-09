@@ -15,7 +15,7 @@ from choirworks.a2a.wire import status_update
 from choirworks.core.context import ContextBriefBuilder
 from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
-from choirworks.orchestration.flows.message import MessagePayload, message_flow
+from choirworks.orchestration.flows.message import message_flow
 from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
@@ -94,9 +94,8 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         runtime = await self._session_mgr.ensure_session(
             context.context_id, context.task_id, event_queue
         )
-        payload = MessagePayload(context=context)
         async with runtime.lock:
-            _ = await message_flow.run(self._build_ctx(runtime), payload)
+            _ = await message_flow.run(self._build_ctx(runtime, request=context), None)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         assert context.task_id is not None
@@ -154,7 +153,9 @@ class ChoirWorksAgentExecutor(AgentExecutor):
 
     # ------------------------------------------------------------- context
 
-    def _build_ctx(self, runtime: SessionRuntime) -> OrchestrationContext:
+    def _build_ctx(
+        self, runtime: SessionRuntime, *, request: RequestContext | None = None
+    ) -> OrchestrationContext:
         """Build an OrchestrationContext for the given runtime."""
         return OrchestrationContext(
             runtime=runtime,
@@ -164,4 +165,5 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             sessions=self._session_mgr,
             config=self._config,
             brief_builder=self._brief_builder,
+            request=request,
         )

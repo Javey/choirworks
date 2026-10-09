@@ -148,8 +148,8 @@ class LlmAgent[T](BaseAgent):
 - `core/agents/context.py`：`TurnContext` = 回合上下文基座（ADK
   InvocationContext 对应物）——`task_id` / `context_id` / `queue` / `lock` /
   `llm`。非泛型具体类，天然满足 `core/events.EventSink`。
-- 业务子类（接线期由现 `OrchestrationContext` 演化）扩展 `registry` /
-  `state` / `sessions` / 入站解析（吸收现 `MessagePayload`）；LlmAgent 收
+- 业务子类 `OrchestrationContext` 已就位：扩展 `registry` / `state` /
+  `sessions` / 入站解析（原 `MessagePayload` 字段落在 ctx 上）；LlmAgent 收
   `TurnContext` 即同时收得下业务子类。
 
 ## 四、推进方式（地基与接线分离）
@@ -170,6 +170,7 @@ basedpyright 0 errors）。
 | ✓ | `LlmAgent` 双态：`build_tools` / `final_tool`（原 `tool_name`）/ `process` 可选化，无终态工具 = 文字态（返回拼接文本） |
 | ✓ | `BaseAgent` / `LlmAgent` 去 dataclass 改普通类——类属性缺省 + 覆写 `build_tools` / `process`（ADK 风格） |
 | ✓ | **接线 2**：Subagent 迁移——outcome / assistance / repair 迁为 `LlmAgent` 子类实例；`Subagent` / `run_subagent` 退役；`OutcomeDecision` 拆为 `OutcomeResult` / `AssistanceResult` / `RepairResult` |
+| ✓ | **接线 3**：TurnContext 业务子类——`OrchestrationContext` 继承 `TurnContext`（task_id / context_id / queue / lock 仍委托 runtime）；吸收 `MessagePayload`（`request` / `text` / `room` / `updater` / `responses` / `malformed` / `needs_runner` / `quote_id` / `target` 落在 ctx 上）；清三处调用点与 assistance 三处类型缝 ignore |
 
 **地基已完成**（core/：agents/base、agents/context、agents/llm_agent、events、runner）。
 
@@ -178,7 +179,6 @@ basedpyright 0 errors）。
 | 项 | 内容 |
 |---|---|
 | events 收敛 | 问答卡（`build_questions_message` / `emit_pending_questions` / `QUESTION_PART`）在 `hitl/intervention.py`；`a2a/executor.py` cancel 直推；`remote_caller.py` 三处远端转发直推——收敛为「core 造词、orchestration 组句」两层 |
-| TurnContext 业务子类 | 现 `OrchestrationContext` 演化（吸收 `MessagePayload`，扩展 registry/state/sessions）；顺带清 Subagent 覆写里的 `reportAttributeAccessIssue` ignore |
 | 编排器根 | `OrchestratorAgent`（message_flow / DAG 调度 / settlement / HITL 移植为根 impl） |
 | PlannerAgent | `core/planner.py` 的 `plan()` 循环迁为 LlmAgent 特化（只迁现状） |
 | RemoteAgent | `remote_caller` 收编，节点执行走 agent |

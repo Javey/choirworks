@@ -6,14 +6,19 @@ from typing import TYPE_CHECKING, override
 
 from a2a.server.events import EventQueue
 
+from choirworks.a2a.room import RoomOptions
 from choirworks.core.agents.context import TurnContext
 from choirworks.orchestration.session import SessionManager, SessionRuntime
-from choirworks.orchestration.state import OrchestrationState
+from choirworks.orchestration.state import NodeState, OrchestrationState
 
 if TYPE_CHECKING:
+    from a2a.server.agent_execution import RequestContext
+    from a2a.server.tasks.task_updater import TaskUpdater
+
     from choirworks.a2a.client import RemoteAgentClient
     from choirworks.core.context import ContextBriefBuilder
     from choirworks.core.llm import LiteLLMClient
+    from choirworks.orchestration.hitl.intervention import QuestionResponse
     from choirworks.orchestration.registry import AgentRegistry
 
 
@@ -50,6 +55,7 @@ class OrchestrationContext(TurnContext):
         sessions: SessionManager,
         config: ExecutorConfig,
         brief_builder: ContextBriefBuilder,
+        request: RequestContext | None = None,
     ) -> None:
         super().__init__(
             task_id=runtime.task_id,
@@ -64,6 +70,16 @@ class OrchestrationContext(TurnContext):
         self.sessions = sessions
         self.config = config
         self.brief_builder = brief_builder
+        # 入站解析（吸收原 MessagePayload）：桥装配时带 request，cancel 等无入站时为 None。
+        self.request = request
+        self.text = ""
+        self.room: RoomOptions = RoomOptions()
+        self.updater: TaskUpdater | None = None
+        self.responses: list[QuestionResponse] = []
+        self.malformed: str | None = None
+        self.needs_runner = False
+        self.quote_id: str | None = None
+        self.target: NodeState | None = None
 
     @property
     def state(self) -> OrchestrationState:
