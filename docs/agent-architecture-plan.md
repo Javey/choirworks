@@ -58,7 +58,7 @@ session：快照持久化不变
 | core/（ADK 同构，业务无关） | ADK 对应 | 业务侧落点 |
 |---|---|---|
 | `agents/base.py`（已建） | `agents/base_agent.py` | 身份 + 树 |
-| `agents/llm_agent.py` | `agents/llm_agent.py`（SingleFlow 语义） | PlannerAgent、四件套实例定义在 `orchestration/` |
+| `agents/llm_agent.py` | `agents/llm_agent.py`（双态：终态工具决策 / 文字回复） | PlannerAgent、四件套实例定义在 `orchestration/` |
 | `agents/context.py`（TurnContext） | `agents/invocation_context.py` | 由桥 / Runner 装配，吸收现 `MessagePayload` |
 | `runner.py` | `runners.py` | 持业务服务实例，驱动根 agent |
 | `events.py`（事件构造器 + `emit` 单点） | `events/`（Event——**不搬**） | `cw_type` data part 约定（替代内部 Event） |
@@ -70,8 +70,8 @@ session：快照持久化不变
 **不搬清单**：ADK 的回调体系（before/after agent/model/tool）、clone、
 find_agent/root_agent、`run_live`、事件重放 / rehydration、agent name 的
 identifier 校验（本仓 agent 名带连字符，如 `qa-engineer`）、pydantic
-model_config 体系、ADK 的 agentic 工具循环（AutoFlow——本仓 LLM 件是单次
-结构化决策）。
+model_config 体系、ADK 的 AutoFlow 多工具自由循环（本仓 LLM 件为双态：终态
+工具决策或文字回复，多工具循环按需再议）。
 
 ### 3.3 事件词汇表（cw 扩展，第 1 期定稿）
 
@@ -104,7 +104,7 @@ A2A 桥 (a2a/executor.py)
       ▼
   TurnContext（core 基座 ← 业务子类）   ← queue 已在 ctx 里（共享层）
       ├─ OrchestratorAgent.run_async(ctx, user) -> None      ← 回合驱动
-      └─ LlmAgent.run_async(ctx, user, **kw) -> T            ← 单次结构化 LLM 决策
+      └─ LlmAgent.run_async(ctx, user, **kw) -> T            ← LLM 双态：决策 / 文字
 ```
 
 ```python
@@ -122,18 +122,21 @@ class BaseAgent(abc.ABC):
     ) -> object:
         """跑一次调用：吃一条用户消息，产出输出；事件经 ctx 推出。"""
 
-# core/agents/llm_agent.py：LlmAgent[T](BaseAgent)
+# core/agents/llm_agent.py：LlmAgent[T](BaseAgent)——双态
 class LlmAgent[T](BaseAgent):
     system_prompt: str
-    tool_name: str
-    build_tools: Callable[..., Awaitable[list[AgentFunction]]]
-    process: Callable[[ToolCallResult | None], T]
+    # 决策态：三字段同现——强制调用终态工具，参数即输出
+    build_tools: Callable[..., Awaitable[list[AgentFunction]]] | None = None
+    final_tool: str | None = None
+    process: Callable[[ToolCallResult | None], T] | None = None
     max_retries: int = 2
+    # 文字态：三字段同缺——不声明工具的单次文字回复，返回拼接文本（LlmAgent[str]）
 
     @override
     async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> T:
-        # 思考/正文 chunk 事件边跑边推（core/events）；无调用/解析失败 → 追加反馈重试；
+        # 决策态：思考/正文 chunk 边跑边推；无调用/解析失败 → 追加反馈重试；
         # 耗尽 → process(None) 兜底；成功 → process(tool_call)
+        # 文字态：单次调用、思考/正文照流，返回拼接文本
 ```
 
 - 返回 `object`：ADK 靠 `AsyncGenerator[Event]` 统一输出，本仓砍了内部 Event
@@ -164,6 +167,7 @@ basedpyright 0 errors）。
 | ✓ | `BaseAgent` 挂统一 `run_async`（ADK 形状）+ `core/agents/context.py`（TurnContext 基座） |
 | ✓ | `core/agents/llm_agent.py`：`LlmAgent[T]`（SingleFlow 循环 + 流式推事件）+ `test_llm_agent.py` |
 | ✓ | `core/runner.py`：`Runner(root, prepare)` 持锁驱动根 agent + `test_runner.py` |
+| ✓ | `LlmAgent` 双态：`build_tools` / `final_tool`（原 `tool_name`）/ `process` 可选化，无终态工具 = 文字态（返回拼接文本） |
 
 **地基已完成**（core/：agents/base、agents/context、agents/llm_agent、events、runner）。
 

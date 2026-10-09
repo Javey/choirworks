@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 from litellm.types.utils import Delta
 from pydantic import BaseModel
 
 from choirworks.core.agents.llm_agent import LlmAgent
-from choirworks.core.events import THOUGHT
+from choirworks.core.events import TEXT, THOUGHT
 from choirworks.tools.base import AgentFunction, FunctionResult, ToolCallResult
 
 
@@ -79,12 +80,16 @@ def _agent(
     return LlmAgent(
         name=name,
         system_prompt="SYS",
-        tool_name="decide",
+        final_tool="decide",
         build_tools=_build_tools,
         process=_process,
         max_retries=max_retries,
         sub_agents=sub_agents or [],
     )
+
+
+def _text_agent(name: str = "scribe") -> LlmAgent[str]:
+    return LlmAgent(name=name, system_prompt="SYS")
 
 
 def _ctx(llm: _FakeLLM) -> tuple[SimpleNamespace, _Queue]:
@@ -93,14 +98,14 @@ def _ctx(llm: _FakeLLM) -> tuple[SimpleNamespace, _Queue]:
     return ctx, queue
 
 
-def _thought_chunks(queue: _Queue) -> list[tuple[str, bool, bool]]:
+def _chunks(queue: _Queue, kind: str) -> list[tuple[str, bool, bool]]:
     chunks: list[tuple[str, bool, bool]] = []
     for event in queue.events:
         if not isinstance(event, TaskArtifactUpdateEvent):
             continue
         part = event.artifact.parts[0]
-        kind = part.metadata.fields.get("cw_type")
-        if kind is None or kind.string_value != THOUGHT:
+        cw_type = part.metadata.fields.get("cw_type")
+        if cw_type is None or cw_type.string_value != kind:
             continue
         chunks.append((part.text, event.append, event.last_chunk))
     return chunks
@@ -125,7 +130,7 @@ async def test_run_async_streams_and_returns_processed_result():
     assert call["system"] == "SYS"
     assert call["user"] == "问"
     assert call["tool_choice"] == {"type": "function", "function": {"name": "decide"}}
-    assert _thought_chunks(queue) == [("思考一", False, False), ("思考一", False, True)]
+    assert _chunks(queue, THOUGHT) == [("思考一", False, False), ("思考一", False, True)]
 
 
 async def test_run_async_retries_with_feedback_and_streams_both_attempts():
@@ -146,7 +151,7 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
     assert result == "好"
     assert len(llm.calls) == 2
     assert "Your previous tool call was invalid" in llm.calls[1]["user"]
-    chunks = _thought_chunks(queue)
+    chunks = _chunks(queue, THOUGHT)
     assert ("第一轮思考", False, True) in chunks
     assert ("第二轮思考", False, True) in chunks
 
@@ -167,3 +172,35 @@ async def test_llm_agent_joins_agent_tree():
     root = _agent(name="root", sub_agents=[child])
 
     assert child.parent_agent is root
+
+
+async def test_text_mode_streams_and_returns_joined_text_without_tools():
+    llm = _FakeLLM(
+        [
+            [
+                Delta(reasoning_content="想"),
+                Delta(content="你好"),
+                Delta(content="！"),
+            ]
+        ]
+    )
+    agent = _text_agent()
+    ctx, queue = _ctx(llm)
+
+    result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
+
+    assert result == "你好！"
+    call = llm.calls[0]
+    assert call["tools"] is None
+    assert call["tool_choice"] == "auto"
+    assert _chunks(queue, THOUGHT) == [("想", False, False), ("想", False, True)]
+    assert _chunks(queue, TEXT) == [
+        ("你好", False, False),
+        ("！", True, False),
+        ("你好！", False, True),
+    ]
+
+
+async def test_mixed_decision_fields_are_rejected():
+    with pytest.raises(ValueError, match="decision mode"):
+        LlmAgent(name="bad", system_prompt="SYS", final_tool="decide")
