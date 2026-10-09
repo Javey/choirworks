@@ -147,6 +147,22 @@ async def test_ask_user_marks_node_input_required():
     assert [iv.question for iv in pending] == ["请问？"]
 
 
+async def test_ask_user_fails_when_question_already_pending():
+    state = OrchestrationState()
+    make_node(state, "n1", status=NodeStatus.WORKING)
+
+    ctx = make_ctx(state)
+    first = await ask_user_func.execute(ctx, AskUserArgs(node_id="n1", question="第一问"))
+    second = await ask_user_func.execute(ctx, AskUserArgs(node_id="n1", question="第二问"))
+
+    assert first.success is True
+    assert second.success is False
+    assert second.error == "question already pending"
+    node = state.nodes["n1"]
+    assert node.question == "第一问"
+    assert [iv.question for iv in pending_interventions(state)] == ["第一问"]
+
+
 async def test_ask_user_rejects_unknown_node():
     result = await ask_user_func.execute(
         make_ctx(OrchestrationState()), AskUserArgs(node_id="ghost", question="?")

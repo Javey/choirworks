@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 from choirworks.orchestration.state import (
     NodeStatus,
     QuestionType,
-    pending_intervention_for,
     request_user_input,
 )
 from choirworks.orchestration.transitions import apply_transition
@@ -73,7 +72,6 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         question_type=ask_args.question_type,
     )
     apply_transition(node, NodeStatus.INPUT_REQUIRED)
-    node.question = ask_args.question
 
     intervention = request_user_input(
         state,
@@ -85,9 +83,8 @@ async def execute_ask_user(ctx: OrchestrationContext, args: BaseModel) -> Functi
         requester=node.agent_name,
     )
     if intervention is None:
-        intervention = pending_intervention_for(state, node.id)
-    if intervention is None:
         return FunctionResult(success=False, error="question already pending")
+    node.question = ask_args.question
 
     return FunctionResult(
         success=True,
