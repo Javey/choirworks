@@ -171,7 +171,7 @@ basedpyright 0 errors）。
 | ✓ | `LlmAgent` 双态：`build_tools` / `final_tool`（原 `tool_name`）/ `process` 可选化，无终态工具 = 文字态（返回拼接文本） |
 | ✓ | `BaseAgent` / `LlmAgent` 去 dataclass 改普通类——类属性缺省 + 覆写 `build_tools` / `process`（ADK 风格） |
 | ✓ | **接线 2**：Subagent 迁移——outcome / assistance / repair 迁为 `LlmAgent` 子类实例；`Subagent` / `run_subagent` 退役；`OutcomeDecision` 拆为 `OutcomeResult` / `AssistanceResult` / `RepairResult` |
-| ✓ | **接线 3**：TurnContext 协议 + 业务实现——`OrchestrationContext` 实现 `TurnContext` 协议（无继承；task_id / context_id / queue / lock 委托 runtime）；吸收 `MessagePayload`（`request` / `text` / `room` / `updater` / `responses` / `malformed` / `needs_runner` / `quote_id` / `target` 落在 ctx 上）；清三处调用点与 assistance 三处类型缝 ignore |
+| ✓ | **接线 3**：TurnContext 协议 + 业务实现——`OrchestrationContext` 实现 `TurnContext` 协议（无继承；dataclass 字段 + 委托 property；task_id / context_id / queue / lock 委托 runtime）；吸收 `MessagePayload`（`request` / `text` / `room` / `updater` / `responses` / `malformed` / `needs_runner` / `quote_id` / `target` 落在 ctx 上）；清三处调用点与 assistance 三处类型缝 ignore |
 
 **地基已完成**（core/：agents/base、agents/context、agents/llm_agent、events、runner）。
 

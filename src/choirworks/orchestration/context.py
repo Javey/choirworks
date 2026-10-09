@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from a2a.server.events import EventQueue
@@ -34,6 +34,7 @@ class ExecutorConfig:
     max_plan_retries: int = 2
 
 
+@dataclass(slots=True, kw_only=True)
 class OrchestrationContext:
     """One turn's orchestration context: TurnContext 协议的业务实现（无继承）。
 
@@ -44,35 +45,23 @@ class OrchestrationContext:
     inbound message updates runtime.task_id / runtime.queue).
     """
 
-    def __init__(
-        self,
-        *,
-        runtime: SessionRuntime,
-        registry: AgentRegistry,
-        remote: RemoteAgentClient,
-        llm: LiteLLMClient,
-        sessions: SessionManager,
-        config: ExecutorConfig,
-        brief_builder: ContextBriefBuilder,
-        request: RequestContext | None = None,
-    ) -> None:
-        self.runtime = runtime
-        self.registry = registry
-        self.remote = remote
-        self.llm = llm
-        self.sessions = sessions
-        self.config = config
-        self.brief_builder = brief_builder
-        # 入站解析（吸收原 MessagePayload）：桥装配时带 request，cancel 等无入站时为 None。
-        self.request = request
-        self.text = ""
-        self.room: RoomOptions = RoomOptions()
-        self.updater: TaskUpdater | None = None
-        self.responses: list[QuestionResponse] = []
-        self.malformed: str | None = None
-        self.needs_runner = False
-        self.quote_id: str | None = None
-        self.target: NodeState | None = None
+    runtime: SessionRuntime  # 会话运行时：跨轮活状态（state / queue / lock / runner / 任务表）
+    registry: AgentRegistry  # agent 注册表（名称 → 记录）
+    remote: RemoteAgentClient  # 远端 peer 的 A2A 客户端
+    llm: LiteLLMClient  # LLM 客户端（回合共享）
+    sessions: SessionManager  # 会话生命周期：load / ensure / persist / evict
+    config: ExecutorConfig  # 执行配置：并行度 / 超时 / 重试 / 上限
+    brief_builder: ContextBriefBuilder  # 跨任务群聊历史摘要（超长时折叠）
+    # 入站解析（吸收原 MessagePayload，由 _prepare_inbound / _classify_* 填充）
+    request: RequestContext | None = None  # 本轮 A2A 请求；cancel 等无入站时为 None
+    text: str = ""  # 本轮用户消息文本（strip 后）
+    room: RoomOptions = field(default_factory=RoomOptions)  # 房间元数据（mentions / 引用 / 打断）
+    updater: TaskUpdater | None = None  # 本轮 A2A 任务写入器（装配初始任务时创建）
+    responses: list[QuestionResponse] = field(default_factory=list)  # 本轮解析出的问答响应
+    malformed: str | None = None  # 问答解析失败原因
+    needs_runner: bool = False  # 分类标记：需要启动后台 runner
+    quote_id: str | None = None  # 分类结果：引用的节点 id
+    target: NodeState | None = None  # 分类结果：命中的目标节点
 
     @property
     def state(self) -> OrchestrationState:
