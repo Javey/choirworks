@@ -4,17 +4,17 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 
-from a2a.server.agent_execution import RequestContext
-from a2a.server.events import EventQueue
+from choirworks.core.agents.context import TurnContext
 
 
 @dataclass(slots=True)
 class BaseAgent(abc.ABC):
-    """Agent 基类：身份 + agent 树 + 回合运行入口。
+    """Agent 基类：身份 + agent 树 + 统一运行入口。
 
-    ``run_async`` 是根 agent 的回合入口：一条入站消息进，事件经
-    ``event_queue`` 出。对应 ADK ``run_async`` 的事件流，本仓事件直接推
-    队列，不走 Event 生成器。
+    ``run_async`` 对应 ADK ``run_async``：吃一条用户消息、产出输出——根
+    agent 返回 ``None``（回合驱动），LlmAgent 返回类型化结果；事件经
+    ``ctx.queue`` 直推 A2A 标准事件，不走 Event 生成器（决策 2）。返回
+    ``object`` 是砍掉内部 Event 后对 ADK ``AsyncGenerator[Event]`` 的替代。
     """
 
     name: str
@@ -32,5 +32,5 @@ class BaseAgent(abc.ABC):
             sub_agent.parent_agent = self
 
     @abc.abstractmethod
-    async def run_async(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """处理一条入站消息，事件经 ``event_queue`` 发布。"""
+    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> object:
+        """跑一次调用：吃一条用户消息，产出输出；事件经 ctx 推出。"""
