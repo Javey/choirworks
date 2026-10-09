@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from choirworks.core.agents.context import TurnContext
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class BaseAgent(abc.ABC):
     """Agent 基类：身份 + agent 树 + 统一运行入口。
 
