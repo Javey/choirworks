@@ -8,12 +8,12 @@ from typing import Literal
 
 import structlog
 
-from choirworks.core.prompts import build_outcome_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome, Route
 from choirworks.orchestration.hitl.assist import arbitrate_mentions
 from choirworks.orchestration.planning.derived import spawn_followup_node
 from choirworks.orchestration.planning.repair import revise_plan
+from choirworks.orchestration.prompts import build_outcome_user
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
 from choirworks.subagents.outcome import outcome_agent

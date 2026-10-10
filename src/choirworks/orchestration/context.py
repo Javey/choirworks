@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
     from choirworks.a2a.client import RemoteAgentClient
     from choirworks.core.llm import LiteLLMClient
-    from choirworks.core.prompts import ContextBriefBuilder
     from choirworks.orchestration.hitl.intervention import QuestionResponse
+    from choirworks.orchestration.prompts import ContextBriefBuilder
     from choirworks.orchestration.registry import AgentRegistry
 
 

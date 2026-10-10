@@ -7,13 +7,13 @@ from typing import Literal
 
 import structlog
 
-from choirworks.core.prompts import build_assistance_decision_user
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_interventions_expired, emit_state_delta
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.hitl.assist import spawn_assist
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
+from choirworks.orchestration.prompts import build_assistance_decision_user
 from choirworks.orchestration.state import (
     ACTIVE_NODE_STATUSES,
     PENDING_NODE_STATUSES,

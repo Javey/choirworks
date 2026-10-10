@@ -12,7 +12,8 @@ from choirworks.core.fencing import (
     QUOTED_CONTENT_PREAMBLE,
 )
 from choirworks.core.planner import SYSTEM_PROMPT
-from choirworks.core.prompts import (
+from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.prompts import (
     ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
@@ -22,7 +23,6 @@ from choirworks.core.prompts import (
     build_replan_context,
     build_replan_reason,
 )
-from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.state import NodeState
 from choirworks.subagents.assistance.prompt import ASSISTANCE_SYSTEM
 from choirworks.subagents.outcome.prompt import OUTCOME_SYSTEM

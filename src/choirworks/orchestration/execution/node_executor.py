@@ -4,12 +4,12 @@ import asyncio
 
 import structlog
 
-from choirworks.core.prompts import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_interventions_expired
 from choirworks.orchestration.execution.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.flows.outcome import OutcomePayload, outcome_flow
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
+from choirworks.orchestration.prompts import build_continuation_text, build_dispatch_text
 from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,

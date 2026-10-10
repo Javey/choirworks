@@ -13,10 +13,10 @@ from a2a.types.a2a_pb2 import (
 from choirworks.a2a.client import RemoteAgentClient
 from choirworks.a2a.wire import status_update
 from choirworks.core.llm import LiteLLMClient
-from choirworks.core.prompts import ContextBriefBuilder
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.flows.message import message_flow
 from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
+from choirworks.orchestration.prompts import ContextBriefBuilder
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus

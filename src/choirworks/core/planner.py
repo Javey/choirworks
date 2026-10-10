@@ -9,8 +9,8 @@ from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
 from choirworks.core.llm import ToolParseError
-from choirworks.core.prompts import build_planner_capabilities, build_planner_user_message
 from choirworks.models.domain import AgentRecord
+from choirworks.orchestration.prompts import build_planner_capabilities, build_planner_user_message
 
 if TYPE_CHECKING:
     from choirworks.core.tool import ToolCallResult

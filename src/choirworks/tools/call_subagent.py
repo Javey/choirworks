@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Literal, override
 import structlog
 from pydantic import BaseModel, create_model
 
-from choirworks.core.prompts import build_peer_fallback_input
 from choirworks.core.tool import FunctionResult, FunctionTool
 from choirworks.orchestration.planning.derived import DerivedKind, spawn_derived_node
+from choirworks.orchestration.prompts import build_peer_fallback_input
 
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
