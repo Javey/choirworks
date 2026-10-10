@@ -7,15 +7,15 @@ import asyncio
 from typing import Protocol
 
 from choirworks.core.events import EventSink
-from choirworks.core.llm import LiteLLMClient
+from choirworks.core.llm import ChatMessage, LiteLLMClient
 
 
 class TurnContext(EventSink, Protocol):
     """回合上下文协议（ADK InvocationContext 对应物）。
 
     core 只声明「agent 需要什么形状的 ctx」：身份 / 队列（``EventSink``）
-    + 锁 + LLM 客户端。业务侧以普通类实现（``orchestration.context.
-    OrchestrationContext``），无需继承。
+    + 锁 + LLM 客户端 + 对话历史。业务侧以普通类实现
+    （``orchestration.context.OrchestrationContext``），无需继承。
     """
 
     @property
@@ -23,3 +23,6 @@ class TurnContext(EventSink, Protocol):
 
     @property
     def llm(self) -> LiteLLMClient: ...
+
+    @property
+    def messages(self) -> list[ChatMessage]: ...

@@ -136,7 +136,10 @@ async def _stream_structured_response(
 
 def _request(user: str) -> str:
     match = REQUEST_PATTERN.search(user)
-    return (match.group(1).strip() if match else user.strip()) or "任务"
+    if match:
+        return match.group(1).strip() or "任务"
+    first_block = user.split("\n\n")[0].strip()
+    return first_block or "任务"
 
 
 def _registered(user: str) -> set[str]:
@@ -289,15 +292,14 @@ async def sim_acompletion(
     """
     tools = kwargs.get("tools")
     messages = kwargs.get("messages", [])
-    user_content = next(
-        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
-        "",
-    )
+    user_messages = [m.get("content", "") for m in messages if m.get("role") == "user"]
+    user_content = user_messages[-1] if user_messages else ""
+    all_user_text = "\n\n".join(user_messages)
 
     if kwargs.get("stream"):
         tool_name = tools[0]["function"]["name"] if tools else ""
         if tool_name == "create_plan":
-            reasoning, draft = _make_plan(user_content)
+            reasoning, draft = _make_plan(all_user_text)
             arguments = draft.model_dump_json()
         elif tool_name == "OutcomeDecision":
             reasoning, decision = _make_outcome_decision()

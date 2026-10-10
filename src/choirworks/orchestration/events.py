@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 from a2a.types.a2a_pb2 import (
+    Artifact,
     Message,
+    Part,
+    TaskArtifactUpdateEvent,
     TaskState,
+)
+from google.protobuf import struct_pb2
+from litellm.types.llms.openai import (
+    OpenAIChatCompletionAssistantMessage,
+    OpenAIChatCompletionUserMessage,
 )
 
 from choirworks.core.events import (
@@ -249,3 +258,75 @@ async def emit_function_error(
         ),
     )
     await emit_event(ctx, state_name)
+
+
+async def record_decision(
+    ctx: OrchestrationContext,
+    content: str,
+    *,
+    role: Literal["user", "assistant"] = "assistant",
+) -> None:
+    """Append a message to runtime.messages and emit a TaskArtifactUpdateEvent.
+
+    The artifact carries ``cw_type=decision`` in part metadata so ``rebuild``
+    can recover it from the task store on restart.
+    """
+    if role == "user":
+        ctx.runtime.messages.append(OpenAIChatCompletionUserMessage(role="user", content=content))
+    else:
+        ctx.runtime.messages.append(
+            OpenAIChatCompletionAssistantMessage(role="assistant", content=content)
+        )
+    part = Part(text=content)
+    meta = struct_pb2.Struct()
+    meta.update({"cw_type": CwType.DECISION, "role": role})
+    part.metadata.CopyFrom(meta)
+    logger.info(
+        "record_decision",
+        task_id=ctx.task_id,
+        role=role,
+        content=content[:200],
+    )
+    await ctx.queue.enqueue_event(
+        TaskArtifactUpdateEvent(
+            task_id=ctx.task_id,
+            context_id=ctx.context_id,
+            artifact=Artifact(
+                artifact_id=uuid.uuid4().hex,
+                parts=[part],
+            ),
+            append=False,
+            last_chunk=True,
+        )
+    )
+
+
+async def emit_compaction(
+    ctx: OrchestrationContext,
+    *,
+    compacted_count: int,
+    summary: str,
+) -> None:
+    """Persist a compaction artifact so ``rebuild`` can recover it on restart."""
+    part = Part(text=summary)
+    meta = struct_pb2.Struct()
+    meta.update({"cw_type": CwType.COMPACTION, "compacted_count": compacted_count})
+    part.metadata.CopyFrom(meta)
+    logger.info(
+        "emit_compaction",
+        task_id=ctx.task_id,
+        compacted_count=compacted_count,
+        summary_len=len(summary),
+    )
+    await ctx.queue.enqueue_event(
+        TaskArtifactUpdateEvent(
+            task_id=ctx.task_id,
+            context_id=ctx.context_id,
+            artifact=Artifact(
+                artifact_id=uuid.uuid4().hex,
+                parts=[part],
+            ),
+            append=False,
+            last_chunk=True,
+        )
+    )

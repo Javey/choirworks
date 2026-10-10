@@ -32,6 +32,8 @@ class CwType(StrEnum):
     TEXT = "text"
     FUNCTION_CALL = "function_call"
     QUESTION = "question"
+    DECISION = "decision"
+    COMPACTION = "compaction"
 
 
 ChunkKind = Literal[CwType.THOUGHT, CwType.TEXT]

@@ -5,7 +5,7 @@ import asyncio
 import structlog
 
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_interventions_expired
+from choirworks.orchestration.events import emit_interventions_expired, record_decision
 from choirworks.orchestration.execution.remote_caller import recover_remote, stream_remote
 from choirworks.orchestration.flows.outcome import OutcomePayload, outcome_flow
 from choirworks.orchestration.hitl.intervention import emit_pending_questions
@@ -77,6 +77,8 @@ async def execute_node(
         node.error = str(exc)
 
     if current == NodeStatus.COMPLETED:
+        if node.output:
+            await record_decision(ctx, f"[{node.agent_name}] {node.output}")
         _ = await outcome_flow.run(ctx, OutcomePayload(node=node))
     elif current == NodeStatus.CANCELED:
         logger.info("execute_node canceled", context_id=ctx.context_id, node_id=node.id)

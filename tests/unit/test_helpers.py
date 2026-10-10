@@ -49,7 +49,7 @@ def make_ctx(agents: list[AgentRecord]) -> tuple[OrchestrationContext, FakeQueue
         llm=SimpleNamespace(),
         sessions=SimpleNamespace(),
         config=SimpleNamespace(),
-        brief_builder=SimpleNamespace(),
+        history_builder=SimpleNamespace(),
     )
     return ctx, queue
 

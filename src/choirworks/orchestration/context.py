@@ -15,9 +15,9 @@ if TYPE_CHECKING:
     from a2a.server.tasks.task_updater import TaskUpdater
 
     from choirworks.a2a.client import RemoteAgentClient
-    from choirworks.core.llm import LiteLLMClient
+    from choirworks.core.llm import ChatMessage, LiteLLMClient
+    from choirworks.orchestration.history import HistoryBuilder
     from choirworks.orchestration.hitl.intervention import QuestionResponse
-    from choirworks.orchestration.prompts import ContextBriefBuilder
     from choirworks.orchestration.registry import AgentRegistry
 
 
@@ -58,7 +58,7 @@ class OrchestrationContext:
     # 执行配置：并行度 / 超时 / 重试 / 上限
     config: ExecutorConfig
     # 跨任务群聊历史摘要（超长时折叠）
-    brief_builder: ContextBriefBuilder
+    history_builder: HistoryBuilder
     # —— 入站解析（吸收原 MessagePayload，由 _prepare_inbound / _classify_* 填充）
     # 本轮 A2A 请求；cancel 等无入站时为 None
     request: RequestContext | None = None
@@ -94,6 +94,10 @@ class OrchestrationContext:
     @property
     def queue(self) -> EventQueue:
         return self.runtime.queue
+
+    @property
+    def messages(self) -> list[ChatMessage]:
+        return self.runtime.messages
 
     @property
     def lock(self) -> asyncio.Lock:

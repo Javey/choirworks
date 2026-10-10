@@ -19,6 +19,7 @@ def make_ctx() -> TurnContext:
         queue=EventQueue(),
         lock=asyncio.Lock(),
         llm=None,
+        messages=[],
     )
 
 

@@ -61,12 +61,12 @@ def make_orch_ctx(
         llm=llm if llm is not None else SimpleNamespace(),  # type: ignore[arg-type]
         sessions=FakeSessions(),  # type: ignore[arg-type]
         config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
-        brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
+        history_builder=SimpleNamespace(),  # type: ignore[arg-type]
     )
 
 
 class FakeLLM:
-    """Mock LLM client for testing Planner / ContextBriefBuilder.
+    """Mock LLM client for testing Planner / HistoryBuilder.
 
     Pass ``structured_results`` (list of Pydantic models) to script
     ``stream()`` calls in order, and ``text_results`` to script
@@ -87,7 +87,8 @@ class FakeLLM:
         self,
         *,
         system: str,
-        user: str,
+        user: str | None = None,
+        messages: list[object] | None = None,
         tools: list[FunctionTool] | None = None,
         ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
@@ -97,6 +98,7 @@ class FakeLLM:
             {
                 "system": system,
                 "user": user,
+                "messages": messages,
                 "tools": tools,
                 "ctx": ctx,
                 "tool_choice": tool_choice,
@@ -119,7 +121,7 @@ class FakeLLM:
             yield ToolCallResult(function=tools[0], args=result)
 
     async def text(self, *, system: str, user: str) -> str:
-        """Direct LLM client interface — used by ContextBriefBuilder."""
+        """Direct LLM client interface — used by HistoryBuilder."""
         self.text_calls.append({"system": system, "user": user})
         if not self.text_results:
             raise AssertionError("FakeLLM has no scripted text result")

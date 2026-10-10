@@ -5,17 +5,11 @@ from __future__ import annotations
 # which splits prompt construction into dedicated modules.
 from collections.abc import Iterable, Mapping, Sequence
 
-from a2a.server.tasks.task_store import TaskStore
-from a2a.types.a2a_pb2 import Role
-
-from choirworks.a2a.room import message_text, room_options
-from choirworks.a2a.tasks import list_all_tasks
 from choirworks.core.fencing import (
     QUOTED_CONTENT_PREAMBLE,
     cap_description,
     quote_untrusted,
 )
-from choirworks.core.llm import LiteLLMClient
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.state import NodeState, NodeStatus, OrchestrationState
 
@@ -118,16 +112,6 @@ def build_continuation_text(
     return parts
 
 
-SUMMARIZE_PROMPT = """You are summarizing a group chat history for an AI assistant.
-Condense the following messages into a brief summary preserving:
-- Key decisions and their rationale
-- Completed work and outputs
-- Unresolved questions and pending tasks
-- Agent assignments and roles
-
-Be concise. Output only the summary."""
-
-
 def _skill_descriptions(agent: AgentRecord) -> str:
     raw = agent.card.get("skills")
     if not isinstance(raw, list):
@@ -151,21 +135,13 @@ def build_planner_capabilities(agents: Sequence[AgentRecord]) -> str:
 
 
 def build_planner_user_message(
-    request: str,
     capabilities: str,
     *,
     reason: str | None = None,
-    context: str | None = None,
 ) -> str:
-    user = (
-        f"User request:\n{request}\n\n"
-        f"{QUOTED_CONTENT_PREAMBLE}\n"
-        f"{quote_untrusted('Available agents:\n' + capabilities)}"
-    )
+    user = f"{QUOTED_CONTENT_PREAMBLE}\n{quote_untrusted('Available agents:\n' + capabilities)}"
     if reason:
         user += f"\n\n{quote_untrusted('Reason for replanning:\n' + reason)}"
-    if context:
-        user += f"\n\n{quote_untrusted('Completed work so far:\n' + context)}"
     return user
 
 
@@ -238,14 +214,6 @@ def build_replan_reason(nodes: Iterable[NodeState]) -> str:
     return f"nodes failed: {errors}"
 
 
-def build_replan_context(nodes: Iterable[NodeState]) -> str:
-    return "\n".join(
-        f"- @{node.agent_name}: {(node.output or '')[:400]}"
-        for node in nodes
-        if node.status == NodeStatus.COMPLETED
-    )
-
-
 def build_assist_input(requester_name: str, output: str | None) -> str:
     return (
         f"{requester_name} 在协作中请求你的协助。\n"
@@ -257,72 +225,3 @@ def build_assist_input(requester_name: str, output: str | None) -> str:
 
 def build_peer_fallback_input(blocked_text: str) -> str:
     return f"请协助回答以下问题：\n{blocked_text}"
-
-
-class ContextBriefBuilder:
-    """Builds the cross-task conversation brief with summary compaction."""
-
-    def __init__(
-        self,
-        llm: LiteLLMClient,
-        task_store: TaskStore,
-        *,
-        compaction_threshold: float = 0.8,
-        compaction_retention: int = 10,
-    ):
-        self._llm = llm
-        self._task_store = task_store
-        self._compaction_threshold = compaction_threshold
-        self._compaction_retention = compaction_retention
-        self._cache: dict[str, tuple[str, int]] = {}
-
-    async def build(self, context_id: str, exclude_task_id: str) -> str:
-        if not context_id:
-            return ""
-        try:
-            tasks = await list_all_tasks(self._task_store, context_id=context_id, reverse=True)
-        except Exception:  # noqa: BLE001 - context is best effort
-            return ""
-
-        timeline: list[str] = []
-        for task in tasks:
-            if task.id == exclude_task_id:
-                continue
-            for msg in task.history or []:
-                rm = room_options(msg)
-                sender = rm.get("sender") or ("user" if msg.role == Role.ROLE_USER else "agent")
-                text = message_text(msg)
-                if text:
-                    timeline.append(f"[{sender}] {text}")
-
-        if not timeline:
-            return ""
-
-        full_text = "\n".join(timeline)
-        threshold = int(self._llm.get_context_window() * self._compaction_threshold)
-        if self._llm.count_tokens(full_text) <= threshold:
-            return full_text
-
-        retention = min(self._compaction_retention, len(timeline))
-        split = len(timeline) - retention
-        recent = timeline[split:]
-        old = timeline[:split]
-
-        cached = self._cache.get(context_id)
-        if cached and cached[1] == split:
-            summary = cached[0]
-        elif cached and cached[1] < split:
-            new_msgs = "\n".join(timeline[cached[1] : split])
-            summary = await self._llm.text(
-                system=SUMMARIZE_PROMPT,
-                user=f"Previous summary:\n{cached[0]}\n\nNew messages:\n{new_msgs}",
-            )
-            self._cache[context_id] = (summary, split)
-        else:
-            summary = await self._llm.text(
-                system=SUMMARIZE_PROMPT,
-                user="\n".join(old),
-            )
-            self._cache[context_id] = (summary, split)
-
-        return f"## 群聊历史摘要\n{summary}\n\n## 最近消息\n" + "\n".join(recent)

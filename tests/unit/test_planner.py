@@ -109,7 +109,7 @@ async def collect_plan(
 ):
     chunks: list[str] = []
     tool_call: ToolCallResult | None = None
-    async for item in plan(request, ctx=ctx, **kwargs):
+    async for item in plan(request, ctx=ctx, history=[], **kwargs):
         if isinstance(item, PlanRetry):
             continue
         if isinstance(item, ToolCallResult):
@@ -146,7 +146,7 @@ async def test_planner_streams_thinking(tmp_path):
         draft = tool_call.args
         assert isinstance(draft, PlanDraft)
         assert draft.nodes[0].agent_name == "research"
-        assert "Available agents" in llm.stream_calls[0]["user"]
+        assert "Available agents" in str(llm.stream_calls[0]["messages"])
     finally:
         await remote.close()
         await db.close()
@@ -162,7 +162,7 @@ async def test_planner_retries_with_feedback(tmp_path):
         retries: list[PlanRetry] = []
         chunks: list[str] = []
         tool_call: ToolCallResult | None = None
-        async for item in plan("x", ctx=ctx):
+        async for item in plan("x", ctx=ctx, history=[]):
             if isinstance(item, PlanRetry):
                 retries.append(item)
             elif isinstance(item, ToolCallResult):
@@ -174,7 +174,7 @@ async def test_planner_retries_with_feedback(tmp_path):
         assert tool_call is not None
         assert len(retries) == 1
         assert "unknown dependency" in retries[0].error
-        assert "unknown dependency" in llm.stream_calls[1]["user"]
+        assert "unknown dependency" in str(llm.stream_calls[1]["messages"])
         assert "".join(chunks) == "思考：将请求拆解为 1 个节点。" * 2
     finally:
         await remote.close()
@@ -226,7 +226,7 @@ async def test_planner_passes_constrained_schema_to_tool(tmp_path):
         call = llm.stream_calls[0]
         tool = call["tools"][0]
         assert tool.name == "create_plan"
-        assert "Available agents" in call["user"]
+        assert "Available agents" in str(call["messages"])
     finally:
         await remote.close()
         await db.close()

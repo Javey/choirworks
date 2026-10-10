@@ -1,11 +1,5 @@
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
-from a2a.helpers import new_text_message
-from a2a.types.a2a_pb2 import Role
-from google.protobuf.json_format import ParseDict
-
-from choirworks.a2a.room import A2A_ROOM_URI
 from choirworks.core.fencing import (
     QUOTED_CONTENT_BEGIN,
     QUOTED_CONTENT_END,
@@ -14,20 +8,17 @@ from choirworks.core.fencing import (
 from choirworks.core.planner import SYSTEM_PROMPT
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.prompts import (
-    ContextBriefBuilder,
     build_assist_input,
     build_assistance_decision_user,
     build_peer_fallback_input,
     build_planner_capabilities,
     build_planner_user_message,
-    build_replan_context,
     build_replan_reason,
 )
 from choirworks.orchestration.state import NodeState
 from choirworks.subagents.assistance.prompt import ASSISTANCE_SYSTEM
 from choirworks.subagents.outcome.prompt import OUTCOME_SYSTEM
 from choirworks.subagents.repair.prompt import REPAIR_SYSTEM
-from tests.support.fakes import FakeLLM
 
 
 def make_agent(name: str, description: str = "", skills: list[str] | None = None):
@@ -53,13 +44,6 @@ def node(node_id: str, **kwargs) -> NodeState:
     )
 
 
-def room_msg(text: str, sender: str | None = None, role: int = Role.ROLE_USER):
-    msg = new_text_message(text, role=role)
-    if sender:
-        ParseDict({A2A_ROOM_URI: {"sender": sender}}, msg.metadata)
-    return msg
-
-
 # ------------------------------------------------------------- builders
 
 
@@ -78,22 +62,18 @@ def test_build_planner_capabilities_caps_description():
 
 def test_build_planner_user_message_fences_untrusted_blocks():
     user = build_planner_user_message(
-        "帮我写报告",
         "- a: agent",
         reason="nodes failed: boom",
-        context="- @a: done",
     )
-    assert "User request:\n帮我写报告" in user
     assert QUOTED_CONTENT_PREAMBLE in user
-    assert user.count(QUOTED_CONTENT_BEGIN) == 4
-    assert user.count(QUOTED_CONTENT_END) == 4
+    assert user.count(QUOTED_CONTENT_BEGIN) == 3
+    assert user.count(QUOTED_CONTENT_END) == 3
     assert "Available agents:\n- a: agent" in user
     assert "Reason for replanning:\nnodes failed: boom" in user
-    assert "Completed work so far:\n- @a: done" in user
 
 
-def test_build_planner_user_message_without_reason_and_context():
-    user = build_planner_user_message("hi", "- a: agent")
+def test_build_planner_user_message_without_reason():
+    user = build_planner_user_message("- a: agent")
     assert user.count(QUOTED_CONTENT_BEGIN) == 2
     assert "Reason for replanning" not in user
 
@@ -108,15 +88,13 @@ def test_build_assistance_decision_user():
     assert "- b: b agent" in user
 
 
-def test_build_replan_reason_and_context():
+def test_build_replan_reason():
     nodes = [
         node("n1", status="completed", output="ok" * 150),
         node("n2", status="failed", error="boom"),
         node("n3", status="failed"),
     ]
     assert build_replan_reason(nodes) == "nodes failed: boom, n3"
-    context = build_replan_context(nodes)
-    assert context == "- @n1: " + "ok" * 150
 
 
 def test_build_assist_input_and_peer_fallback():
@@ -125,112 +103,3 @@ def test_build_assist_input_and_peer_fallback():
     assert QUOTED_CONTENT_PREAMBLE in assist
     assert QUOTED_CONTENT_BEGIN in assist
     assert build_peer_fallback_input("问题") == "请协助回答以下问题：\n问题"
-
-
-# --------------------------------------------------- ContextBriefBuilder
-
-
-class FakeTaskStore:
-    def __init__(self, tasks):
-        self._tasks = tasks
-
-    async def list(self, params, ctx):
-        tasks = list(reversed(self._tasks))
-        if params.context_id:
-            tasks = [t for t in tasks if t.context_id == params.context_id]
-        return SimpleNamespace(tasks=tasks, next_page_token="")
-
-
-def brief_builder(llm, tasks, **kwargs) -> ContextBriefBuilder:
-    return ContextBriefBuilder(llm, task_store=FakeTaskStore(tasks), **kwargs)
-
-
-async def test_brief_without_context_id_returns_empty():
-    builder = ContextBriefBuilder(FakeLLM(), task_store=FakeTaskStore([]))
-    assert await builder.build("", "t1") == ""
-
-
-def _ns_task(task_id: str, history: list, context_id: str = "ctx-1"):
-    from google.protobuf.struct_pb2 import Struct
-
-    return SimpleNamespace(
-        id=task_id,
-        context_id=context_id,
-        history=history,
-        metadata=Struct(),
-    )
-
-
-async def test_brief_small_timeline_returns_full_text():
-    tasks = [
-        _ns_task(
-            "t1",
-            [room_msg("你好", role=Role.ROLE_USER), room_msg("回复", "researcher")],
-        ),
-        _ns_task("t2", [room_msg("别的会话")]),
-    ]
-    builder = brief_builder(FakeLLM(), tasks)
-    brief = await builder.build("ctx-1", "t0")
-    assert brief == "[user] 你好\n[researcher] 回复\n[user] 别的会话"
-
-
-async def test_brief_skips_empty_messages_and_excluded_task():
-    empty = new_text_message("x")
-    empty.ClearField("parts")
-    tasks = [
-        _ns_task("t1", [room_msg("当前")]),
-        _ns_task("t2", [empty]),
-    ]
-    builder = brief_builder(FakeLLM(), tasks)
-    assert await builder.build("ctx-1", "t1") == ""
-
-
-async def test_brief_compacts_when_over_threshold():
-    llm = FakeLLM(text_results=["早期摘要"])
-    tasks = [
-        _ns_task(
-            "t2",
-            [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
-        )
-    ]
-    builder = brief_builder(llm, tasks, compaction_threshold=0.0001, compaction_retention=2)
-    brief = await builder.build("ctx-1", "t1")
-    assert brief.startswith("## 群聊历史摘要\n早期摘要\n\n## 最近消息\n")
-    assert "旧消息4" in brief
-    assert "旧消息0" not in brief
-    assert len(llm.text_calls) == 1
-
-
-async def test_brief_cache_hit_on_same_split():
-    llm = FakeLLM(text_results=["早期摘要"])
-    tasks = [
-        _ns_task(
-            "t2",
-            [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)],
-        )
-    ]
-    builder = brief_builder(llm, tasks, compaction_threshold=0.0001, compaction_retention=2)
-    await builder.build("ctx-1", "t1")
-    await builder.build("ctx-1", "t1")
-    assert len(llm.text_calls) == 1
-
-
-async def test_brief_updates_summary_incrementally():
-    llm = FakeLLM(text_results=["早期摘要", "更新摘要"])
-    history = [room_msg(f"旧消息{i}" + "内容" * 5, f"agent{i}") for i in range(5)]
-    builder = brief_builder(
-        llm,
-        [_ns_task("t2", history)],
-        compaction_threshold=0.0001,
-        compaction_retention=2,
-    )
-    await builder.build("ctx-1", "t1")
-    history.append(room_msg("新消息A" + "内容" * 5, "a6"))
-    history.append(room_msg("新消息B" + "内容" * 5, "a7"))
-    brief = await builder.build("ctx-1", "t1")
-    assert len(llm.text_calls) == 2
-    assert "Previous summary:\n早期摘要" in llm.text_calls[1]["user"]
-    assert "旧消息3" in llm.text_calls[1]["user"]
-    assert "旧消息4" in llm.text_calls[1]["user"]
-    assert "新消息A" in brief and "新消息B" in brief
-    assert "更新摘要" in brief

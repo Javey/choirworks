@@ -9,7 +9,11 @@ import structlog
 
 from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.orchestration.events import emit_interventions_expired, emit_state_delta
+from choirworks.orchestration.events import (
+    emit_interventions_expired,
+    emit_state_delta,
+    record_decision,
+)
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.hitl.assist import spawn_assist
@@ -139,7 +143,7 @@ async def _decide_assistance_impl(
         candidates,
     )
     try:
-        return await run_agent(
+        result = await run_agent(
             assistance_agent,
             ctx,
             user,
@@ -147,7 +151,12 @@ async def _decide_assistance_impl(
         )
     except Exception:
         logger.exception("assistance decision failed", node=node.id)
+        await record_decision(ctx, f"[assistance:{node.id}] target=human")
         return AssistanceResult()
+    decision = result if result is not None else AssistanceResult()
+    target = decision.target_agent or "human"
+    await record_decision(ctx, f"[assistance:{node.id}] target={target}")
+    return decision
 
 
 async def request_human(

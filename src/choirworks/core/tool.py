@@ -27,6 +27,7 @@ class ToolCallResult:
 
     function: FunctionTool
     args: BaseModel
+    call_id: str = ""
 
 
 class FunctionTool:

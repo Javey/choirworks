@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, TypeVar
 
 import litellm
 import structlog
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
+from litellm.types.llms.openai import (
+    ChatCompletionToolMessage,
+    OpenAIChatCompletionAssistantMessage,
+    OpenAIChatCompletionSystemMessage,
+    OpenAIChatCompletionUserMessage,
+)
 from litellm.types.utils import ChatCompletionDeltaToolCall, Delta, ModelResponse
 from pydantic import BaseModel, ValidationError
 
@@ -19,6 +26,13 @@ T = TypeVar("T", bound=BaseModel)
 
 type CompletionResult = ModelResponse | CustomStreamWrapper
 type CompletionFn = Callable[..., Awaitable[CompletionResult]]
+
+type ChatMessage = (
+    OpenAIChatCompletionSystemMessage
+    | OpenAIChatCompletionUserMessage
+    | OpenAIChatCompletionAssistantMessage
+    | ChatCompletionToolMessage
+)
 
 
 class ToolParseError(ValueError):
@@ -66,7 +80,8 @@ class LiteLLMClient:
         self,
         *,
         system: str,
-        user: str,
+        user: str | None = None,
+        messages: list[ChatMessage] | None = None,
         tools: list[FunctionTool] | None = None,
         ctx: OrchestrationContext | None = None,
         tool_choice: str | dict[str, object] = "auto",
@@ -74,15 +89,15 @@ class LiteLLMClient:
         """Stream ``Delta`` chunks, then yield a ``ToolCallResult`` if the
         model invokes a tool.
 
-        When *tools* and *ctx* are provided, each tool's ``_get_declaration(ctx)``
-        is awaited to build the function-tool declarations sent to the model.
-        Tool-call argument fragments are accumulated across chunks and
-        validated with the tool's schema once the stream ends.
-
-        The client does NOT execute the tool — it yields a
+        Pass ``messages`` to send a full conversation history (tool loop,
+        cross-turn context). Otherwise ``user`` is sent as a single user
+        message. The client does NOT execute the tool — it yields a
         :class:`ToolCallResult` for the caller to act on.
         """
         from choirworks.core.tool import ToolCallResult  # runtime import
+
+        if messages is None and user is None:
+            raise ValueError("stream requires user or messages")
 
         declarations: list[dict[str, object]] = []
         schemas: dict[str, type[BaseModel]] = {}
@@ -103,6 +118,12 @@ class LiteLLMClient:
                     }
                 )
 
+        sent: list[ChatMessage] = [OpenAIChatCompletionSystemMessage(role="system", content=system)]
+        if messages is None:
+            sent.append(OpenAIChatCompletionUserMessage(role="user", content=user or ""))
+        else:
+            sent.extend(messages)
+
         logger.info(
             "LLM stream",
             model=self._model,
@@ -112,10 +133,7 @@ class LiteLLMClient:
         )
         response = await self._completion_fn(
             model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=sent,
             timeout=self._timeout,
             stream=True,
             tools=declarations or None,
@@ -127,6 +145,7 @@ class LiteLLMClient:
 
         fragments: dict[int, list[str]] = {}
         call_names: dict[int, str] = {}
+        call_ids: dict[int, str] = {}
         async for chunk in response:
             if not chunk.choices:
                 continue
@@ -136,9 +155,11 @@ class LiteLLMClient:
             yield delta
             for call in delta.tool_calls or []:
                 if isinstance(call, ChatCompletionDeltaToolCall):
-                    fragments.setdefault(call.index, []).append(call.function.arguments)
+                    fragments.setdefault(call.index, []).append(call.function.arguments or "")
                     if call.function.name:
                         call_names[call.index] = call.function.name
+                    if call.id:
+                        call_ids[call.index] = call.id
 
         if not fragments:
             logger.info("LLM stream done", model=self._model, tool_call="none")
@@ -164,7 +185,11 @@ class LiteLLMClient:
             tool_call=tool_name,
             args=payload,
         )
-        yield ToolCallResult(function=functions[tool_name], args=args)
+        yield ToolCallResult(
+            function=functions[tool_name],
+            args=args,
+            call_id=call_ids.get(index) or uuid.uuid4().hex,
+        )
 
     async def text(self, *, system: str, user: str) -> str:
         logger.info(

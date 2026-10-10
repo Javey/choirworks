@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
+from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 from litellm.types.utils import Delta
 from pydantic import BaseModel, Field, ValidationError
 
-from choirworks.core.llm import ToolParseError
+from choirworks.core.llm import ChatMessage, ToolParseError
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.prompts import build_planner_capabilities, build_planner_user_message
 
@@ -82,11 +83,14 @@ class PlanningFailed(RuntimeError):
 SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
 Decompose the user's request into a DAG of tasks, each assigned to one registered agent.
 
+The conversation history contains the user's request and prior orchestration decisions.
+The latest message lists the available agents and their capabilities.
+
 First explain your decomposition briefly in your response text, then call the
 create_plan tool with the final plan.
 
 Rules:
-- agent_name is enum-constrained to the registered agents listed in the user message.
+- agent_name is enum-constrained to the registered agents listed in the latest message.
 - Use deps to express ordering; independent nodes run in parallel.
 - Keep the plan minimal: only nodes required to fulfill the request.
 - Put the exact instruction for the agent in each node's input.text.
@@ -99,8 +103,8 @@ async def plan(
     request: str,
     *,
     ctx: OrchestrationContext,
+    history: list[ChatMessage],
     reason: str | None = None,
-    context: str | None = None,
     max_nodes: int = 20,
     max_retries: int = 2,
 ) -> AsyncIterator[Delta | ToolCallResult | PlanRetry]:
@@ -115,10 +119,15 @@ async def plan(
     if not agents:
         raise PlanningFailed("no agents registered; register at least one A2A agent first")
     capabilities = build_planner_capabilities(agents)
-    user = build_planner_user_message(request, capabilities, reason=reason, context=context)
+    user_msg = build_planner_user_message(capabilities, reason=reason)
 
     last_error: Exception | None = None
     from choirworks.core.tool import ToolCallResult  # runtime: avoid circular import
+
+    messages: list[ChatMessage] = [
+        *history,
+        OpenAIChatCompletionUserMessage(role="user", content=user_msg),
+    ]
 
     for attempt in range(max_retries + 1):
         if attempt > 0:
@@ -136,7 +145,7 @@ async def plan(
 
             async for item in ctx.llm.stream(
                 system=SYSTEM_PROMPT,
-                user=user,
+                messages=messages,
                 tools=[create_plan_func],
                 ctx=ctx,
                 tool_choice={"type": "function", "function": {"name": "create_plan"}},
@@ -158,12 +167,13 @@ async def plan(
                 prev_payload = tool_call.args.model_dump_json()
             else:
                 prev_payload = ""
-            user += (
-                f"\n\nYour previous tool call was invalid.\n"
+            feedback = (
+                "Your previous tool call was invalid.\n"
                 f"Tool call args:\n{prev_payload}\n\n"
                 f"Error: {exc}\n"
                 "Return a corrected tool call."
             )
+            messages = [*messages, OpenAIChatCompletionUserMessage(role="user", content=feedback)]
             continue
 
         yield tool_call

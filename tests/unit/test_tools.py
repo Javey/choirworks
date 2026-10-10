@@ -62,7 +62,7 @@ def make_ctx(
         llm=SimpleNamespace(),  # type: ignore[arg-type]
         sessions=FakeSessions(),  # type: ignore[arg-type]
         config=SimpleNamespace(max_derived_nodes=max_derived_nodes),  # type: ignore[arg-type]
-        brief_builder=SimpleNamespace(),  # type: ignore[arg-type]
+        history_builder=SimpleNamespace(),  # type: ignore[arg-type]
     )
 
 

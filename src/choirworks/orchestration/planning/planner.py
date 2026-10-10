@@ -6,14 +6,17 @@ import structlog
 from a2a.types.a2a_pb2 import TaskState
 
 from choirworks.a2a.room import RoomOptions
+from choirworks.core.llm import ChatMessage
 from choirworks.core.planner import PlanDraft, PlanningFailed, PlanRetry, plan
 from choirworks.core.tool import ToolCallResult
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
+    emit_compaction,
     emit_event,
     emit_function_error,
     emit_text_chunk,
     emit_thought_chunk,
+    record_decision,
 )
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.helpers import execute_function, join_members
@@ -55,7 +58,7 @@ async def stream_plan(
     ctx: OrchestrationContext,
     request: str,
     *,
-    context_brief: str | None = None,
+    history: list[ChatMessage],
 ) -> ToolCallResult:
     """Stream the planning LLM, emitting thought/text chunks, return the tool call."""
     logger.info("stream_plan", task=ctx.task_id, context_id=ctx.context_id, request=request)
@@ -80,7 +83,7 @@ async def stream_plan(
         async for item in plan(
             request,
             ctx=ctx,
-            context=context_brief,
+            history=history,
             max_nodes=ctx.config.max_nodes,
             max_retries=ctx.config.max_plan_retries,
         ):
@@ -154,9 +157,17 @@ async def plan_and_launch(
     logger.info(
         "plan_and_launch", task=ctx.task_id, context_id=ctx.context_id, plan_id=state.plan_id
     )
-    context_brief = await ctx.brief_builder.build(ctx.context_id, exclude_task_id=ctx.task_id)
+    compacted, compaction = await ctx.history_builder.compact(ctx.runtime.messages, ctx.context_id)
+    ctx.runtime.messages = compacted
+    if compaction is not None:
+        await emit_compaction(
+            ctx,
+            compacted_count=compaction.compacted_count,
+            summary=compaction.summary,
+        )
+    await record_decision(ctx, text, role="user")
     try:
-        tool_call = await stream_plan(ctx, text, context_brief=context_brief or None)
+        tool_call = await stream_plan(ctx, text, history=ctx.messages)
     except PlanningFailed as exc:
         logger.warning(
             "Planning failed for task", task=ctx.task_id, context_id=ctx.context_id, error=exc
@@ -176,6 +187,9 @@ async def plan_and_launch(
         if isinstance(tool_call.args, PlanDraft)
         else (PlanDraft.model_validate(tool_call.args.model_dump()))
     )
+
+    plan_summary = "; ".join(f"{n.id}→{n.agent_name}" for n in draft.nodes) or "(empty)"
+    await record_decision(ctx, f"[planner] {plan_summary}")
 
     if not draft.nodes:
         logger.info(

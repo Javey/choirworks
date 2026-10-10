@@ -9,12 +9,13 @@ from collections.abc import AsyncGenerator
 from typing import cast, override
 
 import structlog
+from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 from litellm.types.utils import Delta
 
 from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.events import AgentEvent, ChunkKind, CwType, ResultEvent, chunk_event
-from choirworks.core.llm import ToolParseError
+from choirworks.core.llm import ChatMessage, ToolParseError
 from choirworks.core.tool import FunctionTool, ToolCallResult
 
 logger = structlog.get_logger(__name__)
@@ -84,11 +85,14 @@ class LlmAgent[T](BaseAgent):
             retries=self.max_retries,
         )
         last_error: Exception | None = None
-        current_user = user
         thought_id = ""
         text_id = ""
         reasoning_parts: list[str] = []
         content_parts: list[str] = []
+        messages: list[ChatMessage] = [
+            *ctx.messages,
+            OpenAIChatCompletionUserMessage(role="user", content=user),
+        ]
         for attempt in range(self.max_retries + 1):
             if attempt > 0:
                 logger.warning(
@@ -107,7 +111,7 @@ class LlmAgent[T](BaseAgent):
             try:
                 async for item in ctx.llm.stream(
                     system=self.system_prompt,
-                    user=current_user,
+                    messages=messages,
                     tools=tools,
                     ctx=ctx,  # pyright: ignore[reportArgumentType]
                     tool_choice={
@@ -153,12 +157,16 @@ class LlmAgent[T](BaseAgent):
                     prev_payload = tool_call.args.model_dump_json()
                 else:
                     prev_payload = ""
-                current_user += (
-                    f"\n\nYour previous tool call was invalid.\n"
+                feedback = (
+                    "Your previous tool call was invalid.\n"
                     f"Tool call args:\n{prev_payload}\n\n"
                     f"Error: {exc}\n"
                     "Return a corrected tool call."
                 )
+                messages = [
+                    *messages,
+                    OpenAIChatCompletionUserMessage(role="user", content=feedback),
+                ]
                 continue
             for ev in self._seal(ctx, thought_id, text_id, reasoning_parts, content_parts):
                 yield ev
@@ -177,7 +185,11 @@ class LlmAgent[T](BaseAgent):
         text_id = uuid.uuid4().hex
         reasoning_parts: list[str] = []
         content_parts: list[str] = []
-        async for item in ctx.llm.stream(system=self.system_prompt, user=user):
+        messages: list[ChatMessage] = [
+            *ctx.messages,
+            OpenAIChatCompletionUserMessage(role="user", content=user),
+        ]
+        async for item in ctx.llm.stream(system=self.system_prompt, messages=messages):
             if isinstance(item, Delta):
                 reasoning = getattr(item, "reasoning_content", None) or ""
                 content = item.content or ""

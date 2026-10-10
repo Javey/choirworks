@@ -60,13 +60,20 @@ class _FakeLLM:
         self,
         *,
         system: str,
-        user: str,
+        user: str | None = None,
+        messages: list[object] | None = None,
         tools: list[FunctionTool] | None = None,
         ctx: object = None,
         tool_choice: str | dict[str, object] = "auto",
     ):
         self.calls.append(
-            {"system": system, "user": user, "tools": tools, "tool_choice": tool_choice}
+            {
+                "system": system,
+                "user": user,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
         )
         for item in self._attempts.pop(0):
             yield item
@@ -86,7 +93,7 @@ def _text_agent(name: str = "scribe") -> LlmAgent[str]:
 
 def _ctx(llm: _FakeLLM) -> tuple[SimpleNamespace, _Queue]:
     queue = _Queue()
-    ctx = SimpleNamespace(task_id="t1", context_id="c1", queue=queue, llm=llm)
+    ctx = SimpleNamespace(task_id="t1", context_id="c1", queue=queue, llm=llm, messages=[])
     return ctx, queue
 
 
@@ -134,7 +141,6 @@ async def test_run_async_streams_and_returns_processed_result():
     assert result == "ok"
     call = llm.calls[0]
     assert call["system"] == "SYS"
-    assert call["user"] == "问"
     assert call["tool_choice"] == {"type": "function", "function": {"name": "decide"}}
     assert _chunks(queue, CwType.THOUGHT) == [("思考一", False, False), ("思考一", False, True)]
 
@@ -156,7 +162,13 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
 
     assert result == "好"
     assert len(llm.calls) == 2
-    assert "Your previous tool call was invalid" in llm.calls[1]["user"]
+    messages = llm.calls[1]["messages"]
+    assert isinstance(messages, list)
+    assert any(
+        isinstance(message, dict)
+        and "Your previous tool call was invalid" in str(message.get("content", ""))
+        for message in messages
+    )
     chunks = _chunks(queue, CwType.THOUGHT)
     assert ("第一轮思考", False, True) in chunks
     assert ("第二轮思考", False, True) in chunks

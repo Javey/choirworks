@@ -21,6 +21,10 @@ from choirworks.orchestration.state import (
 from tests.support.fakes import FakeRegistry, FakeSessions
 
 
+async def _async_rebuild(context_id: str, *, exclude_task_id: str = "") -> list:
+    return []
+
+
 class _Queue:
     def __init__(self) -> None:
         self.events: list[object] = []
@@ -39,6 +43,7 @@ def _ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         lock=asyncio.Lock(),
         node_tasks={},
         settle_tasks={},
+        messages=[],
     )
     ctx = OrchestrationContext(
         runtime=runtime,
@@ -47,7 +52,7 @@ def _ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         llm=SimpleNamespace(),
         sessions=FakeSessions(),
         config=SimpleNamespace(),
-        brief_builder=SimpleNamespace(),
+        history_builder=SimpleNamespace(rebuild=_async_rebuild),
     )
     return ctx, queue
 

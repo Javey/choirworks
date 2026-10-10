@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import structlog
 from a2a.server.events import EventQueue
 
+from choirworks.core.llm import ChatMessage
 from choirworks.orchestration.events import emit_event
 from choirworks.orchestration.state import (
     STATE_JSON_KEY,
@@ -30,6 +31,7 @@ class SessionRuntime:
     lock: asyncio.Lock
     task_id: str
     queue: EventQueue
+    messages: list[ChatMessage] = field(default_factory=list)
     runner: asyncio.Task[None] | None = None
     node_tasks: dict[asyncio.Task[None], NodeState] = field(default_factory=dict)
     settle_tasks: dict[asyncio.Task[None], str] = field(default_factory=dict)

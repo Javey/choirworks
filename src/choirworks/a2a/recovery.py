@@ -122,6 +122,9 @@ async def recover_session(ctx: OrchestrationContext) -> None:
             expired_interventions=len(expired),
         )
         await emit_interventions_expired(ctx, expired)
+    ctx.runtime.messages = await ctx.history_builder.rebuild(
+        ctx.context_id, exclude_task_id=ctx.task_id
+    )
     for node in ctx.state.nodes.values():
         if node.status in ACTIVE_NODE_STATUSES:
             apply_transition(

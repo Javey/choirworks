@@ -48,7 +48,7 @@ def _ctx(
             replan_on_failure=replan_on_failure,
             max_revisions=3,
         ),
-        brief_builder=SimpleNamespace(),
+        history_builder=SimpleNamespace(),
     )
     return ctx, queue, sessions
 

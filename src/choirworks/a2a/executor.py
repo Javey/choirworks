@@ -16,7 +16,7 @@ from choirworks.core.llm import LiteLLMClient
 from choirworks.orchestration.context import ExecutorConfig, OrchestrationContext
 from choirworks.orchestration.flows.message import message_flow
 from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
-from choirworks.orchestration.prompts import ContextBriefBuilder
+from choirworks.orchestration.history import HistoryBuilder
 from choirworks.orchestration.registry import AgentRegistry
 from choirworks.orchestration.session import SessionManager, SessionRuntime
 from choirworks.orchestration.state import ACTIVE_NODE_STATUSES, NodeStatus
@@ -72,11 +72,11 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             max_plan_retries=max_plan_retries,
         )
 
-        self._brief_builder = ContextBriefBuilder(
+        self._history_builder = HistoryBuilder(
             llm,
             task_store=task_store,
             compaction_threshold=compaction_threshold,
-            compaction_retention=compaction_retention,
+            retention=compaction_retention,
         )
 
         self._session_mgr = session_mgr
@@ -94,6 +94,10 @@ class ChoirWorksAgentExecutor(AgentExecutor):
         runtime = await self._session_mgr.ensure_session(
             context.context_id, context.task_id, event_queue
         )
+        if not runtime.messages:
+            runtime.messages = await self._history_builder.rebuild(
+                context.context_id, exclude_task_id=context.task_id
+            )
         async with runtime.lock:
             _ = await message_flow.run(self._build_ctx(runtime, request=context), None)
 
@@ -164,6 +168,6 @@ class ChoirWorksAgentExecutor(AgentExecutor):
             llm=self._llm,
             sessions=self._session_mgr,
             config=self._config,
-            brief_builder=self._brief_builder,
+            history_builder=self._history_builder,
             request=request,
         )

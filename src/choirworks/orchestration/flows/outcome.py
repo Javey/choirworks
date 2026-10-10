@@ -10,6 +10,7 @@ import structlog
 
 from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import record_decision
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome, Route
 from choirworks.orchestration.hitl.assist import arbitrate_mentions
 from choirworks.orchestration.planning.derived import spawn_followup_node
@@ -140,8 +141,10 @@ async def _deliver_queued(ctx: OrchestrationContext, payload: OutcomePayload) ->
 async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> OutcomeResult:
     marker = parse_marker(node.output)
     if marker is not None:
+        await record_decision(ctx, f"[outcome:{node.id}] {marker.intent}")
         return OutcomeResult(intent=marker.intent, question=marker.text)
     if not node.output:
+        await record_decision(ctx, f"[outcome:{node.id}] deliver")
         return OutcomeResult(intent="deliver")
     agents = await ctx.registry.list()
     candidates = [agent for agent in agents if agent.name != node.agent_name]
@@ -157,8 +160,11 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
         logger.exception(
             "outcome interpretation failed", context_id=ctx.context_id, node_id=node.id
         )
+        await record_decision(ctx, f"[outcome:{node.id}] deliver")
         return OutcomeResult(intent="deliver")
-    return result if result is not None else OutcomeResult(intent="deliver")
+    decision = result if result is not None else OutcomeResult(intent="deliver")
+    await record_decision(ctx, f"[outcome:{node.id}] {decision.intent}")
+    return decision
 
 
 outcome_flow: Flow[OutcomePayload] = Flow(

@@ -4,6 +4,7 @@ import structlog
 
 from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
+from choirworks.orchestration.events import record_decision
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.prompts import build_repair_user
@@ -44,6 +45,9 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
         context=ctx.context_id,
         added=len(result.added),
         invalidated=len(result.invalidated),
+    )
+    await record_decision(
+        ctx, f"[repair] added={len(result.added)} invalidated={len(result.invalidated)}"
     )
     return bool(result.added or result.invalidated)
 
