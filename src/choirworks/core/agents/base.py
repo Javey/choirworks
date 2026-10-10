@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import AsyncGenerator
 
 from choirworks.core.agents.context import TurnContext
+from choirworks.core.events import AgentEvent, ResultEvent
 
 
 class BaseAgent(abc.ABC):
     """Agent 基类：身份 + agent 树 + 统一运行入口。
 
-    ``run_async`` 对应 ADK ``run_async``：吃一条用户消息、产出输出——根
-    agent 返回 ``None``（回合驱动），LlmAgent 返回类型化结果；事件经
-    ``ctx.queue`` 直推 A2A 标准事件，不走 Event 生成器（决策 2）。返回
-    ``object`` 是砍掉内部 Event 后对 ADK ``AsyncGenerator[Event]`` 的替代。
+    ``run_async`` 是一个 ``AsyncGenerator[AgentEvent]``——yield A2A 标准事件
+    供调用方推队列，最后 yield 一个 :class:`ResultEvent` 携带类型化结果。
+    根 agent 的 ``ResultEvent`` 被丢弃（根返回 ``None``）；子 agent 的结果
+    由调用方经 :func:`run_agent` 提取。
 
     子类可直接设类属性 ``name`` / ``description`` 作为默认值，无需在
     ``__init__`` 中传参；构造时传入同名关键字参数可覆盖类属性。
@@ -44,5 +46,21 @@ class BaseAgent(abc.ABC):
             sub_agent.parent_agent = self
 
     @abc.abstractmethod
-    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> object:
-        """跑一次调用：吃一条用户消息，产出输出；事件经 ctx 推出。"""
+    def run_async(
+        self, ctx: TurnContext, user: str, **tool_kwargs: object
+    ) -> AsyncGenerator[AgentEvent]:
+        """跑一次调用：yield A2A 事件 + 最后 yield ResultEvent 携带结果。"""
+
+
+async def run_agent[T](
+    agent: BaseAgent,
+    ctx: TurnContext,
+    user: str,
+    **kwargs: object,
+) -> T | None:
+    """跑 agent 并取回类型化结果：A2A 事件推 queue，ResultEvent 的值返回。"""
+    async for event in agent.run_async(ctx, user, **kwargs):
+        if isinstance(event, ResultEvent):
+            return event.value  # pyright: ignore[reportReturnType]
+        await ctx.queue.enqueue_event(event)
+    return None

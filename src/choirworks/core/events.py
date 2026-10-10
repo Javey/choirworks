@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -36,6 +37,20 @@ class CwType(StrEnum):
 ChunkKind = Literal[CwType.THOUGHT, CwType.TEXT]
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
+
+
+@dataclass
+class ResultEvent[T]:
+    """agent 的结构化结果——纯内部信号，不上 wire。
+
+    agent 的 ``run_async`` yield 此事件结束一轮调用，调用方
+    （``run_agent``）拦截它取回类型化结果，其余 A2A 事件推队列。
+    """
+
+    value: T
+
+
+type AgentEvent = A2AEvent | ResultEvent[object]
 
 A2A_CW_EVENTS_URI = "https://github.com/Javey/choirworks/extensions/cw-events/v1"
 

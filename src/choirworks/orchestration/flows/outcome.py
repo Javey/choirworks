@@ -8,6 +8,7 @@ from typing import Literal
 
 import structlog
 
+from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome, Route
 from choirworks.orchestration.hitl.assist import arbitrate_mentions
@@ -146,7 +147,8 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
     candidates = [agent for agent in agents if agent.name != node.agent_name]
     user = build_outcome_user(node.agent_name, node.input_text, node.output, candidates)
     try:
-        return await outcome_agent.run_async(
+        result = await run_agent(
+            outcome_agent,
             ctx,
             user,
             exclude_agent=node.agent_name,
@@ -156,6 +158,7 @@ async def _interpret_outcome(ctx: OrchestrationContext, node: NodeState) -> Outc
             "outcome interpretation failed", context_id=ctx.context_id, node_id=node.id
         )
         return OutcomeResult(intent="deliver")
+    return result if result is not None else OutcomeResult(intent="deliver")
 
 
 outcome_flow: Flow[OutcomePayload] = Flow(

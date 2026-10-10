@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 
 from a2a.server.events import EventQueue
 
 from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
+from choirworks.core.events import AgentEvent, ResultEvent
 from choirworks.core.runner import Runner
 
 
@@ -15,8 +17,11 @@ class _LeafAgent(BaseAgent):
         super().__init__(**kwargs)
         self.calls: list[tuple[str, bool]] = []
 
-    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> None:
+    async def run_async(
+        self, ctx: TurnContext, user: str, **tool_kwargs: object
+    ) -> AsyncGenerator[AgentEvent]:
         self.calls.append((user, ctx.lock.locked()))
+        yield ResultEvent(None)
 
 
 def _make_ctx(queue: EventQueue) -> TurnContext:

@@ -1,6 +1,6 @@
 # 设计参考 google-adk runners.py（Apache-2.0, Copyright 2026 Google LLC）：
 # 仅借鉴「一个 Runner 驱动根 agent、会话装配与执行分离」的结构；本仓无
-# Event 生成器，事件经 TurnContext.queue 直推（决策 2）。
+# 内部 Event，agent yield A2A 事件经 Runner 推队列（决策 2）。
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -11,6 +11,7 @@ from a2a.server.events import EventQueue
 
 from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
+from choirworks.core.events import ResultEvent
 
 logger = structlog.get_logger(__name__)
 
@@ -41,4 +42,6 @@ class Runner:
             agent=self._root.name,
         )
         async with ctx.lock:
-            await self._root.run_async(ctx, user)
+            async for event in self._root.run_async(ctx, user):
+                if not isinstance(event, ResultEvent):
+                    await event_queue.enqueue_event(event)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 
 import pytest
 from a2a.server.events import EventQueue
 
-from choirworks.core.agents.base import BaseAgent
+from choirworks.core.agents.base import BaseAgent, run_agent
 from choirworks.core.agents.context import TurnContext
+from choirworks.core.events import AgentEvent, ResultEvent
 
 
 def make_ctx() -> TurnContext:
@@ -21,8 +23,10 @@ def make_ctx() -> TurnContext:
 
 
 class LeafAgent(BaseAgent):
-    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> None:
-        return None
+    async def run_async(
+        self, ctx: TurnContext, user: str, **tool_kwargs: object
+    ) -> AsyncGenerator[AgentEvent]:
+        yield ResultEvent(None)
 
 
 def test_base_agent_cannot_be_instantiated():
@@ -33,7 +37,7 @@ def test_base_agent_cannot_be_instantiated():
 async def test_leaf_agent_runs_one_turn():
     agent = LeafAgent(name="leaf")
 
-    result = await agent.run_async(make_ctx(), "hi")
+    result = await run_agent(agent, make_ctx(), "hi")
 
     assert result is None
 

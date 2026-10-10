@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
-from choirworks.core.events import CwType
+from choirworks.core.events import CwType, ResultEvent
 from choirworks.core.tool import FunctionResult, FunctionTool, ToolCallResult
 
 
@@ -103,6 +103,20 @@ def _chunks(queue: _Queue, kind: str) -> list[tuple[str, bool, bool]]:
     return chunks
 
 
+async def _collect(agent: LlmAgent[str], ctx: SimpleNamespace, user: str) -> tuple[str, _Queue]:
+    """Run agent via generator, push A2A events to queue, extract result."""
+    queue = ctx.queue
+    assert isinstance(queue, _Queue)
+    result = None
+    async for event in agent.run_async(ctx, user):  # type: ignore[arg-type]
+        if isinstance(event, ResultEvent):
+            result = event.value
+        else:
+            await queue.enqueue_event(event)
+    assert result is not None
+    return result, queue
+
+
 async def test_run_async_streams_and_returns_processed_result():
     llm = _FakeLLM(
         [
@@ -115,7 +129,7 @@ async def test_run_async_streams_and_returns_processed_result():
     agent = _DecisionAgent()
     ctx, queue = _ctx(llm)
 
-    result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
+    result, queue = await _collect(agent, ctx, "问")
 
     assert result == "ok"
     call = llm.calls[0]
@@ -138,7 +152,7 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
     agent = _DecisionAgent()
     ctx, queue = _ctx(llm)
 
-    result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
+    result, queue = await _collect(agent, ctx, "问")
 
     assert result == "好"
     assert len(llm.calls) == 2
@@ -153,7 +167,7 @@ async def test_run_async_exhausts_retries_into_process_fallback():
     agent = _DecisionAgent(max_retries=1)
     ctx, _queue = _ctx(llm)
 
-    result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
+    result, _ = await _collect(agent, ctx, "问")
 
     assert result == "fallback"
     assert len(llm.calls) == 2
@@ -179,7 +193,7 @@ async def test_text_mode_streams_and_returns_joined_text_without_tools():
     agent = _text_agent()
     ctx, queue = _ctx(llm)
 
-    result = await agent.run_async(ctx, "问")  # type: ignore[arg-type]
+    result, queue = await _collect(agent, ctx, "问")
 
     assert result == "你好！"
     call = llm.calls[0]

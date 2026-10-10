@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import structlog
 
+from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.prompts import build_repair_user
 from choirworks.orchestration.state import failed_nodes
 from choirworks.subagents.repair.agent import repair_agent
+from choirworks.subagents.repair.model import RepairResult
 from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData, revise_plan_func
 
 logger = structlog.get_logger(__name__)
@@ -27,7 +29,7 @@ async def repair_plan(ctx: OrchestrationContext) -> bool:
         return False
     user = build_repair_user(state.nodes.values(), agents)
     try:
-        decision = await repair_agent.run_async(ctx, user)
+        decision: RepairResult | None = await run_agent(repair_agent, ctx, user)  # pyright: ignore[reportArgumentType]
     except Exception:
         logger.exception("plan repair failed", context=ctx.context_id)
         return False

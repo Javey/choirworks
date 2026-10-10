@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncGenerator
 from typing import cast, override
 
 import structlog
@@ -12,7 +13,7 @@ from litellm.types.utils import Delta
 
 from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
-from choirworks.core.events import CwType, chunk_event, emit
+from choirworks.core.events import AgentEvent, ChunkKind, CwType, ResultEvent, chunk_event
 from choirworks.core.llm import ToolParseError
 from choirworks.core.tool import FunctionTool, ToolCallResult
 
@@ -24,7 +25,7 @@ class LlmAgent[T](BaseAgent):
 
     **决策态**：子类覆写 :meth:`build_tools` / :meth:`process` 并设类属性
     ``final_tool``——强制调用终态工具（工具参数即输出），思考/正文 chunk 边
-    跑边推事件（``cw_type`` 词汇表，author 为 agent 名，每轮尝试独立
+    跑边 yield 事件（``cw_type`` 词汇表，author 为 agent 名，每轮尝试独立
     artifact、结束时 seal）；模型未调工具或解析失败时追加反馈重试，重试
     耗尽走 ``process(None)`` 兜底，成功返回 ``process(tool_call)``。
 
@@ -67,10 +68,14 @@ class LlmAgent[T](BaseAgent):
         return cast("T", None)
 
     @override
-    async def run_async(self, ctx: TurnContext, user: str, **tool_kwargs: object) -> T:
+    async def run_async(
+        self, ctx: TurnContext, user: str, **tool_kwargs: object
+    ) -> AsyncGenerator[AgentEvent]:
         final_tool = self.final_tool
         if final_tool is None:
-            return await self._run_text(ctx, user)
+            async for event in self._run_text(ctx, user):
+                yield event
+            return
         logger.info(
             "llm_agent",
             name=self.name,
@@ -80,6 +85,10 @@ class LlmAgent[T](BaseAgent):
         )
         last_error: Exception | None = None
         current_user = user
+        thought_id = ""
+        text_id = ""
+        reasoning_parts: list[str] = []
+        content_parts: list[str] = []
         for attempt in range(self.max_retries + 1):
             if attempt > 0:
                 logger.warning(
@@ -93,10 +102,9 @@ class LlmAgent[T](BaseAgent):
             thought_id = uuid.uuid4().hex
             text_id = uuid.uuid4().hex
             tool_call: ToolCallResult | None = None
-            reasoning_parts: list[str] = []
-            content_parts: list[str] = []
+            reasoning_parts = []
+            content_parts = []
             try:
-                # ctx 类型缝：接线期业务回合子类就位后移除 ignore。
                 async for item in ctx.llm.stream(
                     system=self.system_prompt,
                     user=current_user,
@@ -111,19 +119,34 @@ class LlmAgent[T](BaseAgent):
                         tool_call = item
                         continue
                     if isinstance(item, Delta):
-                        await self._stream_delta(
-                            ctx,
-                            item,
-                            thought_id,
-                            text_id,
-                            reasoning_parts,
-                            content_parts,
-                        )
+                        reasoning = getattr(item, "reasoning_content", None) or ""
+                        content = item.content or ""
+                        if reasoning:
+                            reasoning_parts.append(reasoning)
+                            yield self._chunk(
+                                ctx,
+                                text=reasoning,
+                                kind=CwType.THOUGHT,
+                                artifact_id=thought_id,
+                                append=len(reasoning_parts) > 1,
+                                last_chunk=False,
+                            )
+                        if content:
+                            content_parts.append(content)
+                            yield self._chunk(
+                                ctx,
+                                text=content,
+                                kind=CwType.TEXT,
+                                artifact_id=text_id,
+                                append=len(content_parts) > 1,
+                                last_chunk=False,
+                            )
                 if tool_call is None:
                     raise ValueError(f"model did not call the {final_tool} tool")
             except (ValueError, ToolParseError) as exc:
                 last_error = exc
-                await self._seal_attempt(ctx, thought_id, text_id, reasoning_parts, content_parts)
+                for ev in self._seal(ctx, thought_id, text_id, reasoning_parts, content_parts):
+                    yield ev
                 if isinstance(exc, ToolParseError):
                     prev_payload = exc.payload
                 elif tool_call is not None:
@@ -137,14 +160,18 @@ class LlmAgent[T](BaseAgent):
                     "Return a corrected tool call."
                 )
                 continue
-            await self._seal_attempt(ctx, thought_id, text_id, reasoning_parts, content_parts)
+            for ev in self._seal(ctx, thought_id, text_id, reasoning_parts, content_parts):
+                yield ev
             logger.info("llm_agent done", name=self.name, tool=final_tool)
-            return self.process(tool_call)
+            yield ResultEvent(self.process(tool_call))
+            return
         logger.warning("llm_agent exhausted", name=self.name, retries=self.max_retries)
-        return self.process(None)
+        for ev in self._seal(ctx, thought_id, text_id, reasoning_parts, content_parts):
+            yield ev
+        yield ResultEvent(self.process(None))
 
-    async def _run_text(self, ctx: TurnContext, user: str) -> T:
-        """文字态：无工具单次回复，流式推思考/正文，返回拼接文本。"""
+    async def _run_text(self, ctx: TurnContext, user: str) -> AsyncGenerator[AgentEvent]:
+        """文字态：无工具单次回复，流式 yield 思考/正文，最后 yield 拼接文本。"""
         logger.info("llm_agent text", name=self.name, user=user)
         thought_id = uuid.uuid4().hex
         text_id = uuid.uuid4().hex
@@ -152,90 +179,86 @@ class LlmAgent[T](BaseAgent):
         content_parts: list[str] = []
         async for item in ctx.llm.stream(system=self.system_prompt, user=user):
             if isinstance(item, Delta):
-                await self._stream_delta(
-                    ctx, item, thought_id, text_id, reasoning_parts, content_parts
-                )
-        await self._seal_attempt(ctx, thought_id, text_id, reasoning_parts, content_parts)
-        return cast("T", "".join(content_parts))
+                reasoning = getattr(item, "reasoning_content", None) or ""
+                content = item.content or ""
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield self._chunk(
+                        ctx,
+                        text=reasoning,
+                        kind=CwType.THOUGHT,
+                        artifact_id=thought_id,
+                        append=len(reasoning_parts) > 1,
+                        last_chunk=False,
+                    )
+                if content:
+                    content_parts.append(content)
+                    yield self._chunk(
+                        ctx,
+                        text=content,
+                        kind=CwType.TEXT,
+                        artifact_id=text_id,
+                        append=len(content_parts) > 1,
+                        last_chunk=False,
+                    )
+        for ev in self._seal(ctx, thought_id, text_id, reasoning_parts, content_parts):
+            yield ev
+        yield ResultEvent(cast("T", "".join(content_parts)))
 
-    async def _stream_delta(
+    def _chunk(
         self,
         ctx: TurnContext,
-        delta: Delta,
+        *,
+        text: str,
+        kind: ChunkKind,
+        artifact_id: str,
+        append: bool,
+        last_chunk: bool,
+    ) -> AgentEvent:
+        """Build a chunk_event with agent's identity baked in."""
+        return chunk_event(
+            ctx.task_id,
+            ctx.context_id,
+            text=text,
+            kind=kind,
+            author=self.name,
+            artifact_id=artifact_id,
+            append=append,
+            last_chunk=last_chunk,
+        )
+
+    def _seal(
+        self,
+        ctx: TurnContext,
         thought_id: str,
         text_id: str,
         reasoning_parts: list[str],
         content_parts: list[str],
-    ) -> None:
-        reasoning = getattr(delta, "reasoning_content", None) or ""
-        content = delta.content or ""
-        if reasoning:
-            reasoning_parts.append(reasoning)
-            await emit(
-                ctx,
-                chunk_event(
-                    ctx.task_id,
-                    ctx.context_id,
-                    text=reasoning,
-                    kind=CwType.THOUGHT,
-                    author=self.name,
-                    artifact_id=thought_id,
-                    append=len(reasoning_parts) > 1,
-                    last_chunk=False,
-                ),
-            )
-        if content:
-            content_parts.append(content)
-            await emit(
-                ctx,
-                chunk_event(
-                    ctx.task_id,
-                    ctx.context_id,
-                    text=content,
-                    kind=CwType.TEXT,
-                    author=self.name,
-                    artifact_id=text_id,
-                    append=len(content_parts) > 1,
-                    last_chunk=False,
-                ),
-            )
-
-    async def _seal_attempt(
-        self,
-        ctx: TurnContext,
-        thought_id: str,
-        text_id: str,
-        reasoning_parts: list[str],
-        content_parts: list[str],
-    ) -> None:
+    ) -> list[AgentEvent]:
         """Seal this attempt's chunk artifacts（对齐 stream_plan 的收尾行为）。"""
+        events: list[AgentEvent] = []
         reasoning = "".join(reasoning_parts)
         content = "".join(content_parts)
         if reasoning:
-            await emit(
-                ctx,
-                chunk_event(
-                    ctx.task_id,
-                    ctx.context_id,
+            events.append(
+                self._chunk(
+                    ctx,
                     text=reasoning,
                     kind=CwType.THOUGHT,
-                    author=self.name,
                     artifact_id=thought_id,
                     append=False,
                     last_chunk=True,
-                ),
+                )
             )
         if content:
-            await emit(
-                ctx,
-                chunk_event(
-                    ctx.task_id,
-                    ctx.context_id,
+            events.append(
+                self._chunk(
+                    ctx,
                     text=content,
                     kind=CwType.TEXT,
-                    author=self.name,
                     artifact_id=text_id,
                     append=False,
                     last_chunk=True,
-                ),
+                )
             )
+        return events

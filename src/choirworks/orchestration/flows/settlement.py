@@ -7,6 +7,7 @@ from typing import Literal
 
 import structlog
 
+from choirworks.core.agents.base import run_agent
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import emit_interventions_expired, emit_state_delta
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
@@ -138,7 +139,8 @@ async def _decide_assistance_impl(
         candidates,
     )
     try:
-        return await assistance_agent.run_async(
+        return await run_agent(
+            assistance_agent,
             ctx,
             user,
             exclude_agent=node.agent_name,
