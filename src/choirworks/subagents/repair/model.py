@@ -9,4 +9,3 @@ class RepairResult(BaseModel):
     """An incremental repair patch for a failed plan."""
 
     patch: PlanPatch
-    reasoning: str = ""

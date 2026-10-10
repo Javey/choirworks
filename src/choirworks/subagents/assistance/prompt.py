@@ -5,7 +5,6 @@ An agent is blocked and needs help. Decide how to handle it:
 
 When target_agent is set, instruction should describe the task.
 Return only JSON matching the schema.
-- reasoning: one short sentence explaining your decision.
 
 When escalating to a human, shape the question interface:
 - question_type="confirm" when it is a yes/no decision

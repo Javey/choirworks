@@ -13,4 +13,3 @@ class OutcomeResult(BaseModel):
     intent: Literal["deliver", "need_info", "revise"]
     question: str = ""
     patch: PlanPatch | None = None
-    reasoning: str = ""

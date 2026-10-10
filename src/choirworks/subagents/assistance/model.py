@@ -13,7 +13,6 @@ class AssistanceResult(BaseModel):
 
     target_agent: str | None = None
     instruction: str = ""
-    reasoning: str = ""
     question_type: QuestionType = QuestionType.INPUT
     options: list[str] = Field(default_factory=list)
     multi: bool = False
