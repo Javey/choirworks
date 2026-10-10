@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from choirworks.core.agents.context import TurnContext
 from choirworks.core.agents.llm_agent import LlmAgent
-from choirworks.core.events import TEXT, THOUGHT
+from choirworks.core.events import CwType
 from choirworks.core.tool import FunctionResult, FunctionTool, ToolCallResult
 
 
@@ -122,7 +122,7 @@ async def test_run_async_streams_and_returns_processed_result():
     assert call["system"] == "SYS"
     assert call["user"] == "问"
     assert call["tool_choice"] == {"type": "function", "function": {"name": "decide"}}
-    assert _chunks(queue, THOUGHT) == [("思考一", False, False), ("思考一", False, True)]
+    assert _chunks(queue, CwType.THOUGHT) == [("思考一", False, False), ("思考一", False, True)]
 
 
 async def test_run_async_retries_with_feedback_and_streams_both_attempts():
@@ -143,7 +143,7 @@ async def test_run_async_retries_with_feedback_and_streams_both_attempts():
     assert result == "好"
     assert len(llm.calls) == 2
     assert "Your previous tool call was invalid" in llm.calls[1]["user"]
-    chunks = _chunks(queue, THOUGHT)
+    chunks = _chunks(queue, CwType.THOUGHT)
     assert ("第一轮思考", False, True) in chunks
     assert ("第二轮思考", False, True) in chunks
 
@@ -185,8 +185,8 @@ async def test_text_mode_streams_and_returns_joined_text_without_tools():
     call = llm.calls[0]
     assert call["tools"] is None
     assert call["tool_choice"] == "auto"
-    assert _chunks(queue, THOUGHT) == [("想", False, False), ("想", False, True)]
-    assert _chunks(queue, TEXT) == [
+    assert _chunks(queue, CwType.THOUGHT) == [("想", False, False), ("想", False, True)]
+    assert _chunks(queue, CwType.TEXT) == [
         ("你好", False, False),
         ("！", True, False),
         ("你好！", False, True),

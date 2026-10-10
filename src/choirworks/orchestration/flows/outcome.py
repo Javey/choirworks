@@ -16,7 +16,7 @@ from choirworks.orchestration.planning.repair import revise_plan
 from choirworks.orchestration.prompts import build_outcome_user
 from choirworks.orchestration.state import NodeState, NodeStatus, take_queued
 from choirworks.orchestration.transitions import transition
-from choirworks.subagents.outcome import outcome_agent
+from choirworks.subagents.outcome.agent import outcome_agent
 from choirworks.subagents.outcome.model import OutcomeResult
 
 logger = structlog.get_logger(__name__)

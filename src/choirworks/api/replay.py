@@ -12,8 +12,7 @@ from a2a.types.a2a_pb2 import (
 from google.protobuf.json_format import MessageToDict
 
 from choirworks.core.events import (
-    FUNCTION_CALL,
-    THOUGHT,
+    CwType,
     state_delta_event,
 )
 from choirworks.orchestration.state import (
@@ -116,7 +115,7 @@ def synthesize_replay_events(
                 continue
             kind_field = parts[0].metadata.fields.get("cw_type")
             kind = kind_field.string_value if kind_field is not None else ""
-            is_verbatim = kind in {THOUGHT, FUNCTION_CALL}
+            is_verbatim = kind in {CwType.THOUGHT, CwType.FUNCTION_CALL}
 
             if is_verbatim:
                 events.append(

@@ -7,7 +7,7 @@ from choirworks.orchestration.helpers import execute_function
 from choirworks.orchestration.planning.patch import PatchResult, PlanPatch
 from choirworks.orchestration.prompts import build_repair_user
 from choirworks.orchestration.state import failed_nodes
-from choirworks.subagents.repair import repair_agent
+from choirworks.subagents.repair.agent import repair_agent
 from choirworks.tools.revise_plan import RevisePlanArgs, RevisePlanData, revise_plan_func
 
 logger = structlog.get_logger(__name__)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Literal, Protocol
 
 import structlog
@@ -24,13 +25,15 @@ from choirworks.a2a.wire import status_update
 
 logger = structlog.get_logger(__name__)
 
-THOUGHT = "thought"
-TEXT = "text"
-FUNCTION_CALL = "function_call"
-STATE_DELTA = "state_delta"
-QUESTION = "question"
 
-ChunkKind = Literal["thought", "text"]
+class CwType(StrEnum):
+    THOUGHT = "thought"
+    TEXT = "text"
+    FUNCTION_CALL = "function_call"
+    QUESTION = "question"
+
+
+ChunkKind = Literal[CwType.THOUGHT, CwType.TEXT]
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
 
@@ -111,7 +114,7 @@ def function_call_event(
         data_value,
     )
     part_meta = struct_pb2.Struct()
-    part_meta.update({"cw_type": FUNCTION_CALL})
+    part_meta.update({"cw_type": CwType.FUNCTION_CALL})
     part = Part()
     part.data.CopyFrom(data_value)
     part.metadata.CopyFrom(part_meta)

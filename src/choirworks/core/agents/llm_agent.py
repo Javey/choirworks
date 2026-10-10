@@ -12,7 +12,7 @@ from litellm.types.utils import Delta
 
 from choirworks.core.agents.base import BaseAgent
 from choirworks.core.agents.context import TurnContext
-from choirworks.core.events import TEXT, THOUGHT, chunk_event, emit
+from choirworks.core.events import CwType, chunk_event, emit
 from choirworks.core.llm import ToolParseError
 from choirworks.core.tool import FunctionTool, ToolCallResult
 
@@ -177,7 +177,7 @@ class LlmAgent[T](BaseAgent):
                     ctx.task_id,
                     ctx.context_id,
                     text=reasoning,
-                    kind=THOUGHT,
+                    kind=CwType.THOUGHT,
                     author=self.name,
                     artifact_id=thought_id,
                     append=len(reasoning_parts) > 1,
@@ -192,7 +192,7 @@ class LlmAgent[T](BaseAgent):
                     ctx.task_id,
                     ctx.context_id,
                     text=content,
-                    kind=TEXT,
+                    kind=CwType.TEXT,
                     author=self.name,
                     artifact_id=text_id,
                     append=len(content_parts) > 1,
@@ -218,7 +218,7 @@ class LlmAgent[T](BaseAgent):
                     ctx.task_id,
                     ctx.context_id,
                     text=reasoning,
-                    kind=THOUGHT,
+                    kind=CwType.THOUGHT,
                     author=self.name,
                     artifact_id=thought_id,
                     append=False,
@@ -232,7 +232,7 @@ class LlmAgent[T](BaseAgent):
                     ctx.task_id,
                     ctx.context_id,
                     text=content,
-                    kind=TEXT,
+                    kind=CwType.TEXT,
                     author=self.name,
                     artifact_id=text_id,
                     append=False,

@@ -10,8 +10,7 @@ from a2a.types.a2a_pb2 import (
 )
 
 from choirworks.core.events import (
-    TEXT,
-    THOUGHT,
+    CwType,
     chunk_event,
     emit,
     function_call_event,
@@ -158,7 +157,7 @@ async def emit_thought_chunk(
             ctx.task_id,
             ctx.context_id,
             text=text,
-            kind=THOUGHT,
+            kind=CwType.THOUGHT,
             author=author,
             artifact_id=artifact_id,
             append=append,
@@ -189,7 +188,7 @@ async def emit_text_chunk(
             ctx.task_id,
             ctx.context_id,
             text=text,
-            kind=TEXT,
+            kind=CwType.TEXT,
             author="assistant",
             artifact_id=artifact_id,
             append=append,

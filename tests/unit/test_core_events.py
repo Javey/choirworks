@@ -6,8 +6,7 @@ from a2a.types.a2a_pb2 import TaskState
 from google.protobuf.json_format import MessageToDict
 
 from choirworks.core.events import (
-    FUNCTION_CALL,
-    THOUGHT,
+    CwType,
     chunk_event,
     emit,
     function_call_event,
@@ -53,7 +52,7 @@ def test_chunk_event_carries_kind_and_author_in_part_metadata():
         "t1",
         "c1",
         text="思考",
-        kind=THOUGHT,
+        kind=CwType.THOUGHT,
         author="assistant",
         artifact_id="a1",
         append=True,
@@ -62,7 +61,7 @@ def test_chunk_event_carries_kind_and_author_in_part_metadata():
 
     part = event.artifact.parts[0]
     assert part.text == "思考"
-    assert MessageToDict(part.metadata) == {"cw_type": THOUGHT, "author": "assistant"}
+    assert MessageToDict(part.metadata) == {"cw_type": CwType.THOUGHT, "author": "assistant"}
     assert event.artifact.artifact_id == "a1"
     assert event.append is True
     assert event.last_chunk is False
@@ -82,7 +81,7 @@ def test_function_call_event_carries_payload():
     assert payload["function_name"] == "ask_user"
     assert payload["function_args"] == {"node_id": "n1"}
     assert payload["function_result"] == {"success": True}
-    assert MessageToDict(part.metadata) == {"cw_type": FUNCTION_CALL}
+    assert MessageToDict(part.metadata) == {"cw_type": CwType.FUNCTION_CALL}
     assert event.append is False
     assert event.last_chunk is True
 
