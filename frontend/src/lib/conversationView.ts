@@ -478,7 +478,10 @@ function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
     })
     .join("");
 
-  const mergedArtifact = { ...artifact, parts: [{ content: { $case: "text", value: mergedText } }] };
+  const mergedArtifact = {
+    ...artifact,
+    parts: [{ content: { $case: "text", value: mergedText }, metadata: firstPartMeta }],
+  };
   return {
     payload: {
       $case: "artifactUpdate",
@@ -669,6 +672,13 @@ function applyStreamEventInner(
     const parts = (artifact.parts as ProtoStruct[] | undefined) ?? [];
     const pMeta = parts.length > 0 ? metaOf(parts[0]) : {};
     const firstPartContent = parts[0]?.content as { $case?: string; value?: unknown } | undefined;
+
+    // Internal kinds: persisted for the LLM (history) or bookkeeping (summary),
+    // never rendered as chat messages.
+    if (pMeta.cw_type === "history" || pMeta.cw_type === "compaction") {
+      return { ...view, lastSeq: Math.max(view.lastSeq, seq) };
+    }
+
     if (firstPartContent?.$case === "data" && pMeta.cw_type === "function_call") {
       const fcData = firstPartContent.value as ProtoStruct;
       const funcName = typeof fcData.function_name === "string" ? fcData.function_name : "";

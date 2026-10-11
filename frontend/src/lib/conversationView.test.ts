@@ -834,6 +834,57 @@ describe("applyStreamEvent", () => {
     expect(view.seenArtifactIds.has("fc-call_subagent")).toBe(true);
   });
 
+  it("ignores history artifacts in both live events and snapshot replay", () => {
+    const live = {
+      payload: {
+        $case: "artifactUpdate",
+        value: {
+          artifact: {
+            artifactId: "hist-live",
+            parts: [{
+              content: { $case: "text", value: "请确认？" },
+              metadata: { cw_type: "history", role: "assistant" },
+            }],
+          },
+          append: false,
+          lastChunk: true,
+        },
+      },
+    };
+    let view = applyStreamEvent(emptyConversation, live, 1);
+    expect(view.messages).toHaveLength(0);
+
+    const snapshot = [
+      artifactInSnapshot("hist-replay", [{
+        content: { $case: "text", value: "确认" },
+        metadata: { cw_type: "history", role: "user" },
+      }]),
+    ];
+    view = applyStreamEvent(view, taskSnapshot(snapshot), 2);
+    expect(view.messages).toHaveLength(0);
+  });
+
+  it("ignores compaction artifacts", () => {
+    const live = {
+      payload: {
+        $case: "artifactUpdate",
+        value: {
+          artifact: {
+            artifactId: "compaction-1",
+            parts: [{
+              content: { $case: "text", value: "早期摘要" },
+              metadata: { cw_type: "compaction", compacted_count: 5 },
+            }],
+          },
+          append: false,
+          lastChunk: true,
+        },
+      },
+    };
+    const view = applyStreamEvent(emptyConversation, live, 1);
+    expect(view.messages).toHaveLength(0);
+  });
+
   it("snapshot replays unseen agent output artifact as an agent message", () => {
     const artifacts = [
       artifactInSnapshot(

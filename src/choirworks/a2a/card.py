@@ -14,7 +14,7 @@ from choirworks.core.events import A2A_CW_EVENTS_URI
 _ROOM_DESCRIPTION = "Group-chat fields (mentions, quote, interrupt) in message metadata"
 _EVENTS_DESCRIPTION = (
     "Custom content kinds in part metadata "
-    "(cw_type: thought | text | function_call | question); "
+    "(cw_type: thought | text | function_call | question | decision | history | compaction); "
     "plan state deltas ride on status event metadata (cw_delta)"
 )
 

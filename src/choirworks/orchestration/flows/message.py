@@ -16,6 +16,7 @@ from choirworks.orchestration.context import OrchestrationContext
 from choirworks.orchestration.events import (
     emit_intervention_rejected,
     emit_state_delta,
+    record_message,
 )
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.flows.engine import Edge, Flow, FlowOutcome
@@ -116,6 +117,8 @@ async def _do_reemit_questions(ctx: OrchestrationContext, _payload: None) -> Flo
         context_id=ctx.context_id,
         text=ctx.text,
     )
+    if ctx.text:
+        await record_message(ctx, ctx.text, role="user")
     await emit_pending_questions(ctx)
     return FlowOutcome.END
 
@@ -161,6 +164,7 @@ async def _do_enqueue(ctx: OrchestrationContext, _payload: None) -> FlowOutcome:
         "execute route=enqueue", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
     _ = enqueue(ctx.state, node.id, ctx.text, sender="user", quote_id=ctx.quote_id)
+    await record_message(ctx, ctx.text, role="user")
     await ctx.sessions.persist(ctx)
     return _finish(ctx)
 
@@ -172,6 +176,7 @@ async def _do_spawn_followup(ctx: OrchestrationContext, _payload: None) -> FlowO
     logger.info(
         "execute route=followup", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
+    await record_message(ctx, ctx.text, role="user")
     await spawn_followup_node(ctx, ctx.text, node)
     return _finish(ctx)
 
@@ -183,6 +188,7 @@ async def _do_interrupt(ctx: OrchestrationContext, _payload: None) -> FlowOutcom
     logger.info(
         "execute route=interrupt", task_id=ctx.task_id, context_id=ctx.context_id, node_id=node.id
     )
+    await record_message(ctx, ctx.text, role="user")
     if node.a2a_task_id:
         try:
             agent_url = await agent_url_for(ctx, node.agent_name)

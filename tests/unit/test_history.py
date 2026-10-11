@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from choirworks.core.events import CwType
 from choirworks.core.tool import FunctionResult, FunctionTool
-from choirworks.orchestration.events import emit_function_call, record_decision
+from choirworks.orchestration.events import emit_function_call, record_message
 from choirworks.orchestration.history import HistoryBuilder
 from choirworks.orchestration.state import OrchestrationState
 
@@ -64,6 +64,14 @@ def _make_decision_artifact(text: str, role: str = "assistant") -> Artifact:
     meta.update({"cw_type": CwType.DECISION, "role": role})
     part.metadata.CopyFrom(meta)
     return Artifact(artifact_id="decision", parts=[part])
+
+
+def _make_history_artifact(text: str, role: str = "user") -> Artifact:
+    part = Part(text=text)
+    meta = struct_pb2.Struct()
+    meta.update({"cw_type": CwType.HISTORY, "role": role})
+    part.metadata.CopyFrom(meta)
+    return Artifact(artifact_id="history", parts=[part])
 
 
 def _make_function_call_artifact(
@@ -123,15 +131,29 @@ class _StubLLM:
 
 async def test_rebuild_reads_decision_artifacts():
     task = _make_task("t1", "c1", [])
-    task.artifacts.append(_make_decision_artifact("你好", role="user"))
     task.artifacts.append(_make_decision_artifact("[planner] plan"))
+    task.artifacts.append(_make_decision_artifact("[writer] done"))
     builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
 
     messages = await builder.rebuild("c1")
 
     assert messages == [
-        {"role": "user", "content": "你好"},
         {"role": "assistant", "content": "[planner] plan"},
+        {"role": "assistant", "content": "[writer] done"},
+    ]
+
+
+async def test_rebuild_reads_history_messages():
+    task = _make_task("t1", "c1", [])
+    task.artifacts.append(_make_history_artifact("请确认？", role="assistant"))
+    task.artifacts.append(_make_history_artifact("确认", role="user"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
+
+    messages = await builder.rebuild("c1")
+
+    assert messages == [
+        {"role": "assistant", "content": "请确认？"},
+        {"role": "user", "content": "确认"},
     ]
 
 
@@ -165,7 +187,7 @@ async def test_rebuild_replays_function_call_pairs():
 
 async def test_rebuild_preserves_artifact_order():
     task = _make_task("t1", "c1", [])
-    task.artifacts.append(_make_decision_artifact("任务A", role="user"))
+    task.artifacts.append(_make_history_artifact("任务A", role="user"))
     task.artifacts.append(_make_function_call_artifact())
     task.artifacts.append(_make_decision_artifact("[outcome:n1] deliver"))
     builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
@@ -192,7 +214,7 @@ async def test_rebuild_ignores_task_history():
 
 async def test_rebuild_no_user_duplication():
     task = _make_task("t1", "c1", [(Role.ROLE_USER, "任务A")])
-    task.artifacts.append(_make_decision_artifact("任务A", role="user"))
+    task.artifacts.append(_make_history_artifact("任务A", role="user"))
     task.artifacts.append(_make_decision_artifact("[planner] plan"))
     builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
 
@@ -263,8 +285,8 @@ async def test_live_messages_match_rebuild():
         queue=queue,
         runtime=SimpleNamespace(messages=[]),
     )
-    await record_decision(ctx, "你好", role="user")
-    await record_decision(ctx, "[planner] plan")
+    await record_message(ctx, "你好", role="user")
+    await record_message(ctx, "[planner] plan")
     await emit_function_call(
         ctx,
         _DemoTool(),

@@ -17,6 +17,7 @@ from choirworks.orchestration.events import (
     emit_text_chunk,
     emit_thought_chunk,
     record_decision,
+    record_message,
 )
 from choirworks.orchestration.execution.runner import start_runner
 from choirworks.orchestration.helpers import execute_function, join_members
@@ -93,6 +94,7 @@ async def stream_plan(
                     ctx,
                     create_plan_func,
                     item.error,
+                    args_json=item.args_json,
                     state_name=TaskState.TASK_STATE_WORKING,
                 )
                 reasoning_parts = []
@@ -165,7 +167,7 @@ async def plan_and_launch(
             compacted_count=compaction.compacted_count,
             summary=compaction.summary,
         )
-    await record_decision(ctx, text, role="user")
+    await record_message(ctx, text, role="user")
     try:
         tool_call = await stream_plan(ctx, text, history=ctx.messages)
     except PlanningFailed as exc:
@@ -177,6 +179,7 @@ async def plan_and_launch(
             ctx,
             create_plan_func,
             str(exc),
+            args_json=exc.args_json,
             state_name=TaskState.TASK_STATE_FAILED,
         )
         ctx.sessions.evict_session(ctx.context_id)

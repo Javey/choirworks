@@ -33,6 +33,7 @@ class CwType(StrEnum):
     FUNCTION_CALL = "function_call"
     QUESTION = "question"
     DECISION = "decision"
+    HISTORY = "history"
     COMPACTION = "compaction"
 
 

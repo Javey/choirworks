@@ -110,7 +110,7 @@ class HistoryBuilder:
                         latest_compaction = CompactionState(
                             compacted_count=count, summary=part.text
                         )
-                    elif cw_type == CwType.DECISION:
+                    elif cw_type in (CwType.DECISION, CwType.HISTORY):
                         if part.WhichOneof("content") != "text":
                             continue
                         role_field = part.metadata.fields.get("role")

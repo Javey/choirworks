@@ -87,6 +87,8 @@ model_config 体系、ADK 的 AutoFlow 多工具自由循环（本仓 LLM 件为
 |---|---|---|
 | `thought` / `text` 分块 | `TaskArtifactUpdateEvent`，part metadata `{cw_type, author}` | 替代 part metadata `cw_thought` + artifact metadata author（author 收进 part metadata） |
 | `function_call` | `TaskArtifactUpdateEvent`，data payload + part metadata `cw_type` | `wire.function_call_part` 原样，实现迁 `core/events.py` |
+| `decision` / `history` | `TaskArtifactUpdateEvent`，part metadata `{cw_type, role}` | 编排决策（UI 可见）与用户/问答文本（仅 LLM 历史）按序持久化，`rebuild` 只按 artifacts 回放 |
+| `compaction` | `TaskArtifactUpdateEvent`，part metadata `{cw_type, compacted_count}` | 历史折叠摘要，`rebuild` 恢复压缩边界 |
 | `question` | `TaskStatusUpdateEvent` 的 status.message data part | 沿用 QUESTION_PART |
 | 状态增量 | `TaskStatusUpdateEvent` 事件 metadata `cw_delta` | **沿用**（第 1 期曾试挂 message，实测会顶掉问答卡，回退） |
 | 答题拒绝 | `TaskStatusUpdateEvent` 事件 metadata `{intervention_id, reason}` | 沿用 |

@@ -213,6 +213,7 @@ class InterventionDict(TypedDict):
     multi: bool
     requester: str
     created_at: str
+    announced: bool
 
 
 def _answer_from_json(value: object) -> str | list[str] | bool | None:
@@ -238,6 +239,7 @@ class Intervention:
     multi: bool = False
     requester: str = ""
     created_at: str = field(default_factory=now_iso)
+    announced: bool = False
 
     def to_dict(self) -> InterventionDict:
         return {
@@ -253,6 +255,7 @@ class Intervention:
             "multi": self.multi,
             "requester": self.requester,
             "created_at": self.created_at,
+            "announced": self.announced,
         }
 
     @classmethod
@@ -271,6 +274,7 @@ class Intervention:
             multi=bool(data.get("multi", False)),
             requester=str(data.get("requester", "")),
             created_at=str(data.get("created_at", now_iso())),
+            announced=bool(data.get("announced", False)),
         )
 
 

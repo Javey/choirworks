@@ -15,6 +15,7 @@ from choirworks.orchestration.events import (
     emit_intervention_rejected,
     emit_interventions_expired,
     emit_state_delta,
+    record_message,
 )
 from choirworks.orchestration.execution.remote_caller import cancel_remote_task
 from choirworks.orchestration.helpers import UnknownAgentError, agent_url_for
@@ -96,10 +97,20 @@ def build_questions_message(ctx: OrchestrationContext, pending: list[Interventio
 
 
 async def emit_pending_questions(ctx: OrchestrationContext) -> None:
-    """Emit the aggregated input-required question message (set changed)."""
+    """Emit the aggregated input-required question message (set changed).
+
+    Questions are recorded into the LLM history once (``announced``); repeated
+    re-emissions to the client do not duplicate history entries.
+    """
     pending = pending_interventions(ctx.state)
     if not pending:
         return
+    newly = [intervention for intervention in pending if not intervention.announced]
+    for intervention in newly:
+        await record_message(ctx, intervention.question, role="assistant")
+        intervention.announced = True
+    if newly:
+        await ctx.sessions.persist(ctx)
     await emit_event(
         ctx,
         TaskState.TASK_STATE_INPUT_REQUIRED,
@@ -176,6 +187,7 @@ async def answer_intervention(
         intervention.status = InterventionStatus.RESOLVED
         intervention.answer = answer
         intervention.responder = "human"
+        await record_message(ctx, render_answer(intervention), role="user")
         if answer is True:
             await cancel_node(ctx, target)
         await ctx.sessions.persist(ctx)
@@ -199,6 +211,7 @@ async def answer_intervention(
     intervention.answer = answer
     intervention.responder = "human"
     node.answer_text = render_answer(intervention)
+    await record_message(ctx, node.answer_text, role="user")
     apply_transition(node, NodeStatus.READY)
     await ctx.sessions.persist(ctx)
     await emit_state_delta(

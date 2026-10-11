@@ -41,6 +41,7 @@ class PlanRetry:
     """A failed planning attempt. The next yields are a new LLM stream."""
 
     error: str
+    args_json: str = ""
 
 
 def validate_plan(draft: PlanDraft, _agents: Sequence[AgentRecord], max_nodes: int = 20) -> None:
@@ -77,7 +78,11 @@ def validate_plan(draft: PlanDraft, _agents: Sequence[AgentRecord], max_nodes: i
 
 
 class PlanningFailed(RuntimeError):
-    pass
+    args_json: str
+
+    def __init__(self, message: str, *, args_json: str = "") -> None:
+        super().__init__(message)
+        self.args_json = args_json
 
 
 SYSTEM_PROMPT = """You are the planning brain of a multi-agent orchestration platform.
@@ -122,6 +127,7 @@ async def plan(
     user_msg = build_planner_user_message(capabilities, reason=reason)
 
     last_error: Exception | None = None
+    prev_payload = ""
     from choirworks.core.tool import ToolCallResult  # runtime: avoid circular import
 
     messages: list[ChatMessage] = [
@@ -137,7 +143,7 @@ async def plan(
                 max_attempts=max_retries + 1,
                 error=last_error,
             )
-            yield PlanRetry(error=str(last_error))
+            yield PlanRetry(error=str(last_error), args_json=prev_payload)
 
         tool_call: ToolCallResult | None = None
         try:
@@ -179,4 +185,7 @@ async def plan(
         yield tool_call
         return
 
-    raise PlanningFailed(f"planner failed after {max_retries + 1} attempts: {last_error}")
+    raise PlanningFailed(
+        f"planner failed after {max_retries + 1} attempts: {last_error}",
+        args_json=prev_payload,
+    )

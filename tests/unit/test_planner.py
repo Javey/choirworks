@@ -174,6 +174,7 @@ async def test_planner_retries_with_feedback(tmp_path):
         assert tool_call is not None
         assert len(retries) == 1
         assert "unknown dependency" in retries[0].error
+        assert "ghost" in retries[0].args_json
         assert "unknown dependency" in str(llm.stream_calls[1]["messages"])
         assert "".join(chunks) == "思考：将请求拆解为 1 个节点。" * 2
     finally:
@@ -187,8 +188,9 @@ async def test_planner_fails_after_retries(tmp_path):
     db, remote, registry = await make_registry(tmp_path, AGENTS)
     try:
         ctx = make_orch_ctx(registry, llm=llm)
-        with pytest.raises(PlanningFailed):
+        with pytest.raises(PlanningFailed) as exc_info:
             await collect_plan("x", ctx)
+        assert "ghost" in exc_info.value.args_json
         assert len(llm.stream_calls) == 3
     finally:
         await remote.close()

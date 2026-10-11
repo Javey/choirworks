@@ -287,9 +287,11 @@ async def emit_function_error(
     error: str,
     *,
     call_id: str = "",
+    args_json: str = "",
     state_name: TaskState = TaskState.TASK_STATE_FAILED,
 ) -> None:
     call_id = call_id or uuid.uuid4().hex
+    args_json = args_json or "{}"
     result = {"success": False, "error": error}
     result_json = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
     logger.warning(
@@ -302,7 +304,7 @@ async def emit_function_error(
         ctx,
         function_name=func.name,
         call_id=call_id,
-        args_json="{}",
+        args_json=args_json,
         result_json=result_json,
     )
     await emit(
@@ -314,23 +316,24 @@ async def emit_function_error(
             args={},
             result=result,
             call_id=call_id,
-            args_json="{}",
+            args_json=args_json,
             result_json=result_json,
         ),
     )
     await emit_event(ctx, state_name)
 
 
-async def record_decision(
+async def _record_message(
     ctx: OrchestrationContext,
     content: str,
     *,
-    role: Literal["user", "assistant"] = "assistant",
+    cw_type: CwType,
+    role: Literal["user", "assistant"],
 ) -> None:
-    """Append a message to runtime.messages and emit a TaskArtifactUpdateEvent.
+    """Append one message to runtime.messages and persist it as an artifact.
 
-    The artifact carries ``cw_type=decision`` in part metadata so ``rebuild``
-    can recover it from the task store on restart.
+    The artifact carries ``cw_type`` and ``role`` in part metadata so
+    ``rebuild`` can replay the exact same message from the task store.
     """
     if role == "user":
         ctx.runtime.messages.append(OpenAIChatCompletionUserMessage(role="user", content=content))
@@ -340,11 +343,12 @@ async def record_decision(
         )
     part = Part(text=content)
     meta = struct_pb2.Struct()
-    meta.update({"cw_type": CwType.DECISION, "role": role})
+    meta.update({"cw_type": cw_type, "role": role})
     part.metadata.CopyFrom(meta)
     logger.info(
-        "record_decision",
+        "record_message",
         task_id=ctx.task_id,
+        cw_type=str(cw_type),
         role=role,
         content=content[:200],
     )
@@ -360,6 +364,25 @@ async def record_decision(
             last_chunk=True,
         )
     )
+
+
+async def record_decision(ctx: OrchestrationContext, content: str) -> None:
+    """Record a UI-visible orchestration decision (assistant message)."""
+    await _record_message(ctx, content, cw_type=CwType.DECISION, role="assistant")
+
+
+async def record_message(
+    ctx: OrchestrationContext,
+    content: str,
+    *,
+    role: Literal["user", "assistant"] = "assistant",
+) -> None:
+    """Record a history-only message: LLM context, hidden from the UI.
+
+    Used for user turns and question/answer text that already has a dedicated
+    UI surface (task history snapshot / question cards).
+    """
+    await _record_message(ctx, content, cw_type=CwType.HISTORY, role=role)
 
 
 async def emit_compaction(

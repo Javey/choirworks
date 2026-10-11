@@ -47,6 +47,7 @@ def make_ctx(state: OrchestrationState) -> tuple[OrchestrationContext, _Queue]:
         context_id="c1",
         queue=queue,
         lock=asyncio.Lock(),
+        messages=[],
     )
     deps = SimpleNamespace(registry=FakeRegistry([]))
     ctx = OrchestrationContext(
@@ -176,6 +177,7 @@ async def test_answer_intervention_marks_human_responder_and_readies_node():
     assert isinstance(delta, TaskStatusUpdateEvent)
     meta = MessageToDict(delta.metadata)
     assert meta["cw_delta"]["interventions"][intervention.id]["responder"] == "human"
+    assert ctx.runtime.messages == [{"role": "user", "content": "按方案二执行"}]
 
 
 async def test_answer_intervention_rejects_unknown_id():
@@ -227,6 +229,7 @@ async def test_answer_intervention_confirm_cancel_cancels_active_node():
     assert await answer_intervention(ctx, intervention_id=pending.id, answer=True) is True
 
     assert state.nodes["n1"].status == NodeStatus.CANCELED
+    assert ctx.runtime.messages == [{"role": "user", "content": "确认"}]
 
 
 async def test_answer_intervention_expires_stale_confirm_cancel():
@@ -253,6 +256,8 @@ async def test_request_human_emits_input_required_question_message():
     pending = pending_interventions(state)
     assert len(pending) == 1
     assert pending[0].requester == "writer"
+    assert pending[0].announced is True
+    assert ctx.runtime.messages == [{"role": "assistant", "content": "请确认是否采用该方案？"}]
 
     delta = queue.events[-1]
     assert isinstance(delta, TaskStatusUpdateEvent)
@@ -279,6 +284,8 @@ async def test_request_human_is_idempotent():
     await request_human(ctx, blocked)
 
     assert len(pending_interventions(state)) == 1
+    # The repeated card emission must not duplicate the LLM history entry.
+    assert ctx.runtime.messages == [{"role": "assistant", "content": "再问一次？"}]
 
 
 def test_expire_node_interventions_keeps_live_question():
