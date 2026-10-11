@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import json
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
-from a2a.types.a2a_pb2 import Role
+from a2a.types.a2a_pb2 import Part
+from google.protobuf.json_format import MessageToDict
 from litellm.types.llms.openai import (
+    ChatCompletionToolMessage,
     OpenAIChatCompletionAssistantMessage,
     OpenAIChatCompletionUserMessage,
 )
 
-from choirworks.a2a.room import message_text
 from choirworks.a2a.tasks import list_all_tasks
 from choirworks.core.events import CwType
 from choirworks.core.llm import ChatMessage, LiteLLMClient
@@ -72,10 +75,13 @@ class HistoryBuilder:
         self._compaction_state: dict[str, CompactionState] = {}
 
     async def rebuild(self, context_id: str, *, exclude_task_id: str = "") -> list[ChatMessage]:
-        """Reconstruct messages from the A2A task store (restart recovery).
+        """Reconstruct messages from decision / function-call artifacts.
 
-        Reads user/agent messages from ``task.history`` and decision/compaction
-        artifacts from ``task.artifacts``, then applies the latest compaction.
+        Task ``history`` is deliberately ignored: it is a second, unordered
+        channel relative to artifacts, and every message written to
+        ``runtime.messages`` is also emitted as an artifact in the same order.
+        Replaying artifacts alone therefore reproduces the live message list
+        exactly (and cannot duplicate user messages).
         """
         if not context_id:
             return []
@@ -90,28 +96,23 @@ class HistoryBuilder:
         for task in tasks:
             if exclude_task_id and task.id == exclude_task_id:
                 continue
-            for msg in task.history or []:
-                text = message_text(msg)
-                if not text:
-                    continue
-                if msg.role == Role.ROLE_USER:
-                    raw.append(OpenAIChatCompletionUserMessage(role="user", content=text))
-                else:
-                    raw.append(OpenAIChatCompletionAssistantMessage(role="assistant", content=text))
             for artifact in task.artifacts or []:
                 for part in artifact.parts:
-                    if part.WhichOneof("content") != "text":
+                    cw_field = part.metadata.fields.get("cw_type")
+                    if cw_field is None:
                         continue
-                    cw_type = part.metadata.fields.get("cw_type")
-                    if cw_type is None:
-                        continue
-                    if cw_type.string_value == CwType.COMPACTION:
+                    cw_type = cw_field.string_value
+                    if cw_type == CwType.COMPACTION:
+                        if part.WhichOneof("content") != "text":
+                            continue
                         count_field = part.metadata.fields.get("compacted_count")
                         count = int(count_field.number_value) if count_field else 0
                         latest_compaction = CompactionState(
                             compacted_count=count, summary=part.text
                         )
-                    elif cw_type.string_value == CwType.DECISION:
+                    elif cw_type == CwType.DECISION:
+                        if part.WhichOneof("content") != "text":
+                            continue
                         role_field = part.metadata.fields.get("role")
                         role = role_field.string_value if role_field else "assistant"
                         if role == "user":
@@ -124,6 +125,10 @@ class HistoryBuilder:
                                     role="assistant", content=part.text
                                 )
                             )
+                    elif cw_type == CwType.FUNCTION_CALL:
+                        if part.WhichOneof("content") != "data":
+                            continue
+                        raw.extend(_tool_exchange_from_data(part))
 
         if latest_compaction is not None:
             self._compaction_state[context_id] = latest_compaction
@@ -150,6 +155,8 @@ class HistoryBuilder:
             return (messages, None)
 
         split = max(len(messages) - self._retention, 0)
+        while split > 0 and split < len(messages) and messages[split].get("role") == "tool":
+            split -= 1
         if split == 0:
             return (messages, None)
 
@@ -190,4 +197,45 @@ def _messages_text(messages: list[ChatMessage]) -> str:
         role = msg.get("role", "")
         if content:
             lines.append(f"[{role}] {content}")
+        for call in msg.get("tool_calls") or []:
+            function = call.get("function") or {}
+            name = function.get("name") or ""
+            arguments = function.get("arguments") or ""
+            if name or arguments:
+                lines.append(f"[tool_call] {name} {arguments}")
     return "\n".join(lines)
+
+
+def _tool_exchange_from_data(part: Part) -> list[ChatMessage]:
+    """Rebuild the assistant tool call + tool result pair from an artifact."""
+    payload = MessageToDict(part.data, preserving_proto_field_name=True)
+    function_name = str(payload.get("function_name", ""))
+    if not function_name:
+        return []
+    call_id = payload.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        call_id = uuid.uuid4().hex
+    args_json = payload.get("args_json")
+    if not isinstance(args_json, str) or not args_json:
+        args_json = json.dumps(
+            payload.get("function_args", {}), ensure_ascii=False, separators=(",", ":")
+        )
+    result_json = payload.get("result_json")
+    if not isinstance(result_json, str) or not result_json:
+        result_json = json.dumps(
+            payload.get("function_result", {}), ensure_ascii=False, separators=(",", ":")
+        )
+    return [
+        OpenAIChatCompletionAssistantMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": function_name, "arguments": args_json},
+                }
+            ],
+        ),
+        ChatCompletionToolMessage(role="tool", tool_call_id=call_id, content=result_json),
+    ]

@@ -53,6 +53,7 @@ def make_orch_ctx(
         context_id="c1",
         queue=None,
         lock=None,
+        messages=[],
     )
     return OrchestrationContext(
         runtime=runtime,  # type: ignore[arg-type]

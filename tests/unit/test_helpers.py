@@ -40,6 +40,7 @@ def make_ctx(agents: list[AgentRecord]) -> tuple[OrchestrationContext, FakeQueue
         context_id="c1",
         queue=queue,
         lock=asyncio.Lock(),
+        messages=[],
     )
     deps = SimpleNamespace(registry=FakeRegistry(agents))
     ctx = OrchestrationContext(
@@ -73,6 +74,15 @@ async def test_join_members_emits_function_call_artifact_and_delta() -> None:
         "error": None,
     }
     assert MessageToDict(part.metadata) == {"cw_type": "function_call"}
+
+    # The same exchange is appended to runtime messages for LLM history.
+    assert len(ctx.runtime.messages) == 2
+    tool_call = ctx.runtime.messages[0]
+    assert tool_call["role"] == "assistant"
+    assert tool_call["tool_calls"][0]["function"]["name"] == "join_members"  # type: ignore[index]
+    tool_result = ctx.runtime.messages[1]
+    assert tool_result["role"] == "tool"
+    assert tool_result["tool_call_id"] == tool_call["tool_calls"][0]["id"]  # type: ignore[index]
 
     delta_event = queue.events[2]
     assert isinstance(delta_event, TaskStatusUpdateEvent)

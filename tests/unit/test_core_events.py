@@ -74,13 +74,21 @@ def test_function_call_event_carries_payload():
         function_name="ask_user",
         args={"node_id": "n1"},
         result={"success": True},
+        call_id="call-1",
+        args_json='{"node_id":"n1"}',
+        result_json='{"success":true}',
     )
 
     part = event.artifact.parts[0]
     payload = MessageToDict(part.data, preserving_proto_field_name=True)
-    assert payload["function_name"] == "ask_user"
-    assert payload["function_args"] == {"node_id": "n1"}
-    assert payload["function_result"] == {"success": True}
+    assert payload == {
+        "function_name": "ask_user",
+        "function_args": {"node_id": "n1"},
+        "function_result": {"success": True},
+        "call_id": "call-1",
+        "args_json": '{"node_id":"n1"}',
+        "result_json": '{"success":true}',
+    }
     assert MessageToDict(part.metadata) == {"cw_type": CwType.FUNCTION_CALL}
     assert event.append is False
     assert event.last_chunk is True

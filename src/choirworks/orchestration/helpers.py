@@ -75,6 +75,7 @@ async def execute_function(
     func: FunctionTool,
     args: BaseModel,
     *,
+    call_id: str = "",
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> FunctionResult:
     """Execute a FunctionTool and emit the function-call event.
@@ -97,5 +98,5 @@ async def execute_function(
         success=result.success,
     )
     if func.emit_artifact:
-        await emit_function_call(ctx, func, args, result, state_name=state_name)
+        await emit_function_call(ctx, func, args, result, call_id=call_id, state_name=state_name)
     return result

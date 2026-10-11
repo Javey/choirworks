@@ -119,14 +119,24 @@ def function_call_event(
     function_name: str,
     args: Mapping[str, object],
     result: Mapping[str, object],
+    call_id: str = "",
+    args_json: str = "",
+    result_json: str = "",
 ) -> TaskArtifactUpdateEvent:
-    """函数调用回执：payload 在 data part，``cw_type`` 在 part metadata。"""
+    """函数调用回执：payload 在 data part，``cw_type`` 在 part metadata。
+
+    ``args_json`` / ``result_json`` 保存 live 写入 LLM 消息里的精确字符串，
+    供 ``HistoryBuilder.rebuild`` 重启后逐字节还原 tool 消息。
+    """
     data_value = struct_pb2.Value()
     ParseDict(
         {
             "function_name": function_name,
             "function_args": args,
             "function_result": result,
+            "call_id": call_id,
+            "args_json": args_json,
+            "result_json": result_json,
         },
         data_value,
     )

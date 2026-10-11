@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-from a2a.types.a2a_pb2 import Artifact, Message, Part, Role, Task
+from types import SimpleNamespace
+
+from a2a.types.a2a_pb2 import (
+    Artifact,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskArtifactUpdateEvent,
+)
 from google.protobuf import struct_pb2
+from google.protobuf.json_format import ParseDict
+from litellm.types.llms.openai import (
+    ChatCompletionToolMessage,
+    OpenAIChatCompletionAssistantMessage,
+    OpenAIChatCompletionUserMessage,
+)
+from pydantic import BaseModel
 
 from choirworks.core.events import CwType
+from choirworks.core.tool import FunctionResult, FunctionTool
+from choirworks.orchestration.events import emit_function_call, record_decision
 from choirworks.orchestration.history import HistoryBuilder
+from choirworks.orchestration.state import OrchestrationState
 
 
 class _FakeTaskStore:
@@ -47,6 +66,35 @@ def _make_decision_artifact(text: str, role: str = "assistant") -> Artifact:
     return Artifact(artifact_id="decision", parts=[part])
 
 
+def _make_function_call_artifact(
+    *,
+    function_name: str = "create_plan",
+    call_id: str = "call-1",
+    args: dict[str, object] | None = None,
+    result: dict[str, object] | None = None,
+    args_json: str = "{}",
+    result_json: str = '{"success":true,"data":null,"error":null}',
+) -> Artifact:
+    data = struct_pb2.Value()
+    ParseDict(
+        {
+            "function_name": function_name,
+            "function_args": args if args is not None else {},
+            "function_result": result if result is not None else {"success": True},
+            "call_id": call_id,
+            "args_json": args_json,
+            "result_json": result_json,
+        },
+        data,
+    )
+    part = Part()
+    part.data.CopyFrom(data)
+    meta = struct_pb2.Struct()
+    meta.update({"cw_type": CwType.FUNCTION_CALL})
+    part.metadata.CopyFrom(meta)
+    return Artifact(artifact_id="function-call", parts=[part])
+
+
 class _StubLLM:
     def __init__(
         self,
@@ -73,38 +121,96 @@ class _StubLLM:
 # ------------------------------------------------------------- rebuild
 
 
-async def test_rebuild_reads_task_history():
-    tasks = [
-        _make_task("t2", "c1", [(Role.ROLE_AGENT, "[translator] 翻译完成")]),
-        _make_task("t1", "c1", [(Role.ROLE_USER, "你好"), (Role.ROLE_AGENT, "[planner] plan")]),
-    ]
-    store = _FakeTaskStore(tasks)
-    llm = _StubLLM()
-    builder = HistoryBuilder(llm, store, retention=10)  # type: ignore[arg-type]
+async def test_rebuild_reads_decision_artifacts():
+    task = _make_task("t1", "c1", [])
+    task.artifacts.append(_make_decision_artifact("你好", role="user"))
+    task.artifacts.append(_make_decision_artifact("[planner] plan"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
 
     messages = await builder.rebuild("c1")
 
-    assert len(messages) == 3
-    assert messages[0]["role"] == "user"
-    assert messages[0]["content"] == "你好"
-    assert messages[1]["role"] == "assistant"
-    assert messages[1]["content"] == "[planner] plan"
-    assert messages[2]["content"] == "[translator] 翻译完成"
+    assert messages == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "[planner] plan"},
+    ]
+
+
+async def test_rebuild_replays_function_call_pairs():
+    task = _make_task("t1", "c1", [])
+    task.artifacts.append(
+        _make_function_call_artifact(
+            call_id="call-1",
+            args={"nodes": []},
+            result={"success": True, "data": None, "error": None},
+            args_json='{"nodes":[]}',
+            result_json='{"success":true,"data":null,"error":null}',
+        )
+    )
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
+
+    messages = await builder.rebuild("c1")
+
+    assert len(messages) == 2
+    call = messages[0]
+    assert call["role"] == "assistant"
+    assert call["content"] is None
+    assert call["tool_calls"][0]["id"] == "call-1"  # type: ignore[index]
+    assert call["tool_calls"][0]["function"]["name"] == "create_plan"  # type: ignore[index]
+    assert call["tool_calls"][0]["function"]["arguments"] == '{"nodes":[]}'  # type: ignore[index]
+    tool = messages[1]
+    assert tool["role"] == "tool"
+    assert tool["tool_call_id"] == "call-1"
+    assert tool["content"] == '{"success":true,"data":null,"error":null}'
+
+
+async def test_rebuild_preserves_artifact_order():
+    task = _make_task("t1", "c1", [])
+    task.artifacts.append(_make_decision_artifact("任务A", role="user"))
+    task.artifacts.append(_make_function_call_artifact())
+    task.artifacts.append(_make_decision_artifact("[outcome:n1] deliver"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
+
+    messages = await builder.rebuild("c1")
+
+    assert [msg["role"] for msg in messages] == ["user", "assistant", "tool", "assistant"]
+
+
+async def test_rebuild_ignores_task_history():
+    tasks = [
+        _make_task(
+            "t1",
+            "c1",
+            [(Role.ROLE_USER, "进度如何"), (Role.ROLE_AGENT, "正在处理")],
+        )
+    ]
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore(tasks), retention=10)  # type: ignore[arg-type]
+
+    messages = await builder.rebuild("c1")
+
+    assert messages == []
+
+
+async def test_rebuild_no_user_duplication():
+    task = _make_task("t1", "c1", [(Role.ROLE_USER, "任务A")])
+    task.artifacts.append(_make_decision_artifact("任务A", role="user"))
+    task.artifacts.append(_make_decision_artifact("[planner] plan"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
+
+    messages = await builder.rebuild("c1")
+
+    assert [msg["content"] for msg in messages] == ["任务A", "[planner] plan"]
 
 
 async def test_rebuild_excludes_task():
-    tasks = [
-        _make_task("t2", "c1", [(Role.ROLE_USER, "排除我")]),
-        _make_task("t1", "c1", [(Role.ROLE_USER, "你好")]),
-    ]
-    store = _FakeTaskStore(tasks)
-    llm = _StubLLM()
-    builder = HistoryBuilder(llm, store, retention=10)  # type: ignore[arg-type]
+    first = _make_task("t1", "c1", [])
+    first.artifacts.append(_make_decision_artifact("你好", role="user"))
+    second = _make_task("t2", "c1", [])
+    second.artifacts.append(_make_decision_artifact("排除我", role="user"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([second, first]), retention=10)  # type: ignore[arg-type]
 
     messages = await builder.rebuild("c1", exclude_task_id="t2")
 
-    assert len(messages) == 1
-    assert messages[0]["content"] == "你好"
+    assert messages == [{"role": "user", "content": "你好"}]
 
 
 async def test_rebuild_empty_context():
@@ -114,53 +220,74 @@ async def test_rebuild_empty_context():
 
 
 async def test_rebuild_applies_compaction():
-    tasks = [
-        _make_task("t2", "c1", [(Role.ROLE_AGENT, "[translator] done")]),
-        _make_task(
-            "t1",
-            "c1",
-            [
-                (Role.ROLE_USER, "你好"),
-                (Role.ROLE_AGENT, "[planner] plan"),
-                (Role.ROLE_AGENT, "[worker] output1"),
-            ],
-        ),
-    ]
-    tasks[1].artifacts.append(_make_compaction_artifact(2, "早期摘要"))
-    store = _FakeTaskStore(tasks)
-    llm = _StubLLM()
-    builder = HistoryBuilder(llm, store, retention=10)  # type: ignore[arg-type]
+    task = _make_task("t1", "c1", [])
+    task.artifacts.append(_make_decision_artifact("m0", role="user"))
+    task.artifacts.append(_make_decision_artifact("m1"))
+    task.artifacts.append(_make_decision_artifact("m2"))
+    task.artifacts.append(_make_compaction_artifact(2, "早期摘要"))
+    task.artifacts.append(_make_decision_artifact("m3"))
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
 
     messages = await builder.rebuild("c1")
 
-    assert len(messages) == 3
-    assert messages[0]["content"] == "早期摘要"
-    assert messages[1]["content"] == "[worker] output1"
-    assert messages[2]["content"] == "[translator] done"
+    assert [msg["content"] for msg in messages] == ["早期摘要", "m2", "m3"]
 
 
-async def test_rebuild_reads_decision_artifacts():
-    task = _make_task("t1", "c1", [(Role.ROLE_USER, "你好")])
-    task.artifacts.append(_make_decision_artifact("[planner] plan"))
-    task.artifacts.append(_make_decision_artifact("[worker] output", "assistant"))
-    store = _FakeTaskStore([task])
-    llm = _StubLLM()
-    builder = HistoryBuilder(llm, store, retention=10)  # type: ignore[arg-type]
+# ------------------------------------------------------------- live == rebuild
+
+
+class _RecordingQueue:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def enqueue_event(self, event: object) -> None:
+        self.events.append(event)
+
+
+class _DemoArgs(BaseModel):
+    value: str
+
+
+class _DemoTool(FunctionTool):
+    name = "demo"
+    description = "demo"
+
+
+async def test_live_messages_match_rebuild():
+    """Every runtime.messages append must round-trip through its artifact."""
+    queue = _RecordingQueue()
+    ctx = SimpleNamespace(
+        state=OrchestrationState(),
+        task_id="t1",
+        context_id="c1",
+        queue=queue,
+        runtime=SimpleNamespace(messages=[]),
+    )
+    await record_decision(ctx, "你好", role="user")
+    await record_decision(ctx, "[planner] plan")
+    await emit_function_call(
+        ctx,
+        _DemoTool(),
+        _DemoArgs(value="x"),
+        FunctionResult(success=True),
+        call_id="call-1",
+    )
+
+    task = Task(id="t1", context_id="c1")
+    for event in queue.events:
+        if isinstance(event, TaskArtifactUpdateEvent):
+            task.artifacts.append(event.artifact)
+    builder = HistoryBuilder(_StubLLM(), _FakeTaskStore([task]), retention=10)  # type: ignore[arg-type]
 
     messages = await builder.rebuild("c1")
 
-    assert len(messages) == 3
-    assert messages[0]["content"] == "你好"
-    assert messages[1]["content"] == "[planner] plan"
-    assert messages[2]["content"] == "[worker] output"
+    assert messages == ctx.runtime.messages
 
 
 # ------------------------------------------------------------- compact
 
 
 async def test_compact_under_threshold_returns_unchanged():
-    from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
-
     messages = [OpenAIChatCompletionUserMessage(role="user", content=f"msg{i}") for i in range(5)]
     llm = _StubLLM(token_count=100, context_window=128000)
     builder = HistoryBuilder(llm, _FakeTaskStore([]), compaction_threshold=0.8, retention=10)  # type: ignore[arg-type]
@@ -172,8 +299,6 @@ async def test_compact_under_threshold_returns_unchanged():
 
 
 async def test_compact_over_threshold_summarizes_old():
-    from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
-
     messages = [OpenAIChatCompletionUserMessage(role="user", content=f"msg{i}") for i in range(15)]
     llm = _StubLLM(summary="旧消息摘要", token_count=200000, context_window=128000)
     builder = HistoryBuilder(llm, _FakeTaskStore([]), compaction_threshold=0.8, retention=5)  # type: ignore[arg-type]
@@ -191,9 +316,33 @@ async def test_compact_over_threshold_summarizes_old():
     assert len(llm.text_calls) == 1
 
 
-async def test_compact_incremental_summary():
-    from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
+async def test_compact_keeps_tool_pair_intact():
+    messages: list[object] = [
+        *[OpenAIChatCompletionUserMessage(role="user", content=f"msg{i}") for i in range(5)],
+        OpenAIChatCompletionAssistantMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "create_plan", "arguments": "{}"},
+                }
+            ],
+        ),
+        ChatCompletionToolMessage(role="tool", tool_call_id="call-1", content="{}"),
+    ]
+    llm = _StubLLM(summary="旧消息摘要", token_count=200000, context_window=128000)
+    builder = HistoryBuilder(llm, _FakeTaskStore([]), compaction_threshold=0.8, retention=1)  # type: ignore[arg-type]
 
+    result, compaction = await builder.compact(messages, "c1")  # type: ignore[arg-type]
+
+    assert compaction is not None
+    assert [msg["role"] for msg in result] == ["assistant", "assistant", "tool"]
+    assert result[1]["tool_calls"][0]["id"] == "call-1"  # type: ignore[index]
+
+
+async def test_compact_incremental_summary():
     messages = [OpenAIChatCompletionUserMessage(role="user", content=f"msg{i}") for i in range(15)]
     llm = _StubLLM(summary="旧消息摘要", token_count=200000, context_window=128000)
     builder = HistoryBuilder(llm, _FakeTaskStore([]), compaction_threshold=0.8, retention=5)  # type: ignore[arg-type]
@@ -218,8 +367,6 @@ async def test_compact_incremental_summary():
 
 
 async def test_compact_not_enough_to_split():
-    from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
-
     messages = [OpenAIChatCompletionUserMessage(role="user", content=f"msg{i}") for i in range(3)]
     llm = _StubLLM(token_count=200000, context_window=128000)
     builder = HistoryBuilder(llm, _FakeTaskStore([]), compaction_threshold=0.8, retention=5)  # type: ignore[arg-type]

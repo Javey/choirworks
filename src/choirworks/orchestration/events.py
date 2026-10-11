@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
@@ -14,6 +15,7 @@ from a2a.types.a2a_pb2 import (
 )
 from google.protobuf import struct_pb2
 from litellm.types.llms.openai import (
+    ChatCompletionToolMessage,
     OpenAIChatCompletionAssistantMessage,
     OpenAIChatCompletionUserMessage,
 )
@@ -206,20 +208,62 @@ async def emit_text_chunk(
     )
 
 
+def _record_tool_exchange(
+    ctx: OrchestrationContext,
+    *,
+    function_name: str,
+    call_id: str,
+    args_json: str,
+    result_json: str,
+) -> None:
+    """Append the assistant tool call and its tool result to runtime messages.
+
+    Mirrors the A2A function-call artifact one-to-one so ``rebuild`` can
+    replay the exact same messages from the task store.
+    """
+    ctx.runtime.messages.append(
+        OpenAIChatCompletionAssistantMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": function_name, "arguments": args_json},
+                }
+            ],
+        )
+    )
+    ctx.runtime.messages.append(
+        ChatCompletionToolMessage(role="tool", tool_call_id=call_id, content=result_json)
+    )
+
+
 async def emit_function_call(
     ctx: OrchestrationContext,
     func: FunctionTool,
     args: BaseModel,
     result: FunctionResult,
     *,
+    call_id: str = "",
     state_name: TaskState = TaskState.TASK_STATE_WORKING,
 ) -> None:
+    call_id = call_id or uuid.uuid4().hex
+    args_json = args.model_dump_json()
+    result_json = result.model_dump_json()
     logger.info(
         "emit_function_call",
         task_id=ctx.task_id,
         function=func.name,
         success=result.success,
         args=args.model_dump(),
+    )
+    _record_tool_exchange(
+        ctx,
+        function_name=func.name,
+        call_id=call_id,
+        args_json=args_json,
+        result_json=result_json,
     )
     await emit(
         ctx,
@@ -229,6 +273,9 @@ async def emit_function_call(
             function_name=func.name,
             args=args.model_dump(),
             result=result.model_dump(),
+            call_id=call_id,
+            args_json=args_json,
+            result_json=result_json,
         ),
     )
     await emit_event(ctx, state_name)
@@ -239,13 +286,24 @@ async def emit_function_error(
     func: FunctionTool,
     error: str,
     *,
+    call_id: str = "",
     state_name: TaskState = TaskState.TASK_STATE_FAILED,
 ) -> None:
+    call_id = call_id or uuid.uuid4().hex
+    result = {"success": False, "error": error}
+    result_json = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
     logger.warning(
         "emit_function_error",
         task_id=ctx.task_id,
         function=func.name,
         error=error,
+    )
+    _record_tool_exchange(
+        ctx,
+        function_name=func.name,
+        call_id=call_id,
+        args_json="{}",
+        result_json=result_json,
     )
     await emit(
         ctx,
@@ -254,7 +312,10 @@ async def emit_function_error(
             ctx.context_id,
             function_name=func.name,
             args={},
-            result={"success": False, "error": error},
+            result=result,
+            call_id=call_id,
+            args_json="{}",
+            result_json=result_json,
         ),
     )
     await emit_event(ctx, state_name)

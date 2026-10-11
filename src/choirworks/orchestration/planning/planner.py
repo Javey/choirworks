@@ -207,7 +207,7 @@ async def plan_and_launch(
         nodes=len(draft.nodes),
         agents=[n.agent_name for n in draft.nodes],
     )
-    await execute_function(ctx, tool_call.function, tool_call.args)
+    await execute_function(ctx, tool_call.function, tool_call.args, call_id=tool_call.call_id)
 
     agents = await ctx.registry.list()
     agent_urls = {agent.name: agent.card_url for agent in agents}
