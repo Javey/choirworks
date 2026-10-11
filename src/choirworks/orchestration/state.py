@@ -282,6 +282,16 @@ class Intervention:
         )
 
 
+def render_answer(intervention: Intervention) -> str:
+    """Render a typed answer as the continuation text sent to the node."""
+    answer = intervention.answer
+    if intervention.question_type == QuestionType.SELECT and isinstance(answer, list):
+        return "、".join(answer)
+    if intervention.question_type == QuestionType.CONFIRM:
+        return "确认" if answer is True else "取消"
+    return answer if isinstance(answer, str) else ""
+
+
 class QueuedMessageDict(TypedDict):
     """Serialized :class:`QueuedMessage`."""
 

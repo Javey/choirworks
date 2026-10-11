@@ -1,4 +1,4 @@
-from a2a.types import Artifact, Part, Task, TaskState, TaskStatus
+from a2a.types import Artifact, Message, Part, Role, Task, TaskState, TaskStatus
 from google.protobuf import struct_pb2
 from google.protobuf.json_format import ParseDict
 
@@ -8,6 +8,7 @@ from choirworks.orchestration.state import (
     Member,
     NodeState,
     OrchestrationState,
+    QuestionType,
 )
 
 
@@ -56,8 +57,137 @@ def test_replay_artifact_without_metadata_stays_bare() -> None:
 
 
 def test_replay_merged_artifact_keeps_part_metadata() -> None:
-    part = Part(text="确认")
+    part = Part(text="你好")
+    part.metadata.CopyFrom(_struct({"lang": "zh"}))
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    task.artifacts.append(Artifact(artifact_id="a1", parts=[part]))
+
+    events = synthesize_replay_events([task], "c1", state=None)
+
+    update = [e for e in events if "artifactUpdate" in e][0]["artifactUpdate"]
+    assert update["artifact"]["parts"][0]["metadata"] == {"lang": "zh"}
+
+
+def test_replay_snapshot_drops_history_and_artifacts() -> None:
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        history=[Message(message_id="m1", role=Role.ROLE_USER, parts=[Part(text="开发网站")])],
+    )
+    task.artifacts.append(Artifact(artifact_id="a1", parts=[Part(text="回复")]))
+
+    events = synthesize_replay_events([task], "c1", state=None)
+
+    snapshot = events[0]["task"]
+    assert snapshot.get("history") in (None, [])
+    assert snapshot.get("artifacts") in (None, [])
+
+
+def test_replay_user_history_becomes_positioned_message() -> None:
+    part = Part(text="开发网站")
     part.metadata.CopyFrom(_struct({"cw_type": "history", "role": "user"}))
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        history=[Message(message_id="m1", role=Role.ROLE_USER, parts=[Part(text="开发网站")])],
+    )
+    task.artifacts.append(Artifact(artifact_id="h1", parts=[part]))
+    task.artifacts.append(Artifact(artifact_id="a1", parts=[Part(text="回复")]))
+
+    events = synthesize_replay_events([task], "c1", state=None)
+
+    assert [next(iter(event)) for event in events] == [
+        "task",
+        "message",
+        "artifactUpdate",
+    ]
+    message = events[1]["message"]
+    assert message["messageId"] == "m1"
+    assert message["role"] == Role.ROLE_USER
+    assert message["parts"][0]["text"] == "开发网站"
+
+
+def test_replay_question_artifact_becomes_positioned_pending_delta() -> None:
+    question = Part(text="请确认是否采用该方案？")
+    question.metadata.CopyFrom(_struct({"cw_type": "history", "role": "assistant"}))
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    task.artifacts.append(Artifact(artifact_id="h1", parts=[question]))
+    state = OrchestrationState()
+    state.interventions["i1"] = Intervention(
+        id="i1",
+        node_id="n1",
+        question="请确认是否采用该方案？",
+        requester="code-reviewer",
+        question_type=QuestionType.CONFIRM,
+        status="resolved",
+        answer=True,
+        responder="human",
+    )
+
+    events = synthesize_replay_events([task], "c1", state)
+
+    assert [next(iter(event)) for event in events] == ["task", "statusUpdate", "statusUpdate"]
+    delta = events[1]["statusUpdate"]["metadata"]["cw_delta"]["interventions"]["i1"]
+    assert delta["status"] == "pending"
+    assert delta["question"] == "请确认是否采用该方案？"
+    assert delta["question_type"] == "confirm"
+    assert "answer" not in delta
+
+
+def test_replay_answer_artifact_resolves_intervention_in_place() -> None:
+    def _history(text: str, role: str) -> Artifact:
+        part = Part(text=text)
+        part.metadata.CopyFrom(_struct({"cw_type": "history", "role": role}))
+        return Artifact(artifact_id=f"h-{text}", parts=[part])
+
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    task.artifacts.append(_history("请确认是否采用该方案？", "assistant"))
+    task.artifacts.append(_history("确认", "user"))
+    state = OrchestrationState()
+    state.interventions["i1"] = Intervention(
+        id="i1",
+        node_id="n1",
+        question="请确认是否采用该方案？",
+        question_type=QuestionType.CONFIRM,
+        status="resolved",
+        answer=True,
+        responder="human",
+    )
+
+    events = synthesize_replay_events([task], "c1", state)
+
+    assert [next(iter(event)) for event in events] == [
+        "task",
+        "statusUpdate",
+        "statusUpdate",
+        "statusUpdate",
+    ]
+    pending = events[1]["statusUpdate"]["metadata"]["cw_delta"]["interventions"]["i1"]
+    assert pending["status"] == "pending"
+    resolved = events[2]["statusUpdate"]["metadata"]["cw_delta"]["interventions"]["i1"]
+    assert resolved["status"] == "resolved"
+    assert resolved["answer"] is True
+    final = events[3]["statusUpdate"]["metadata"]["cw_delta"]["interventions"]["i1"]
+    assert final["status"] == "resolved"
+
+
+def test_replay_unknown_assistant_history_falls_back_to_artifact() -> None:
+    part = Part(text="无人认领的问题")
+    part.metadata.CopyFrom(_struct({"cw_type": "history", "role": "assistant"}))
     task = Task(
         id="t1",
         context_id="c1",
@@ -67,8 +197,12 @@ def test_replay_merged_artifact_keeps_part_metadata() -> None:
 
     events = synthesize_replay_events([task], "c1", state=None)
 
-    update = [e for e in events if "artifactUpdate" in e][0]["artifactUpdate"]
-    assert update["artifact"]["parts"][0]["metadata"] == {"cw_type": "history", "role": "user"}
+    assert [next(iter(event)) for event in events] == ["task", "artifactUpdate"]
+    update = events[1]["artifactUpdate"]
+    assert update["artifact"]["parts"][0]["metadata"] == {
+        "cw_type": "history",
+        "role": "assistant",
+    }
 
 
 def test_replay_interleaves_task_events_with_their_artifacts() -> None:

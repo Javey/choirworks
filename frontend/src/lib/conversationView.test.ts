@@ -1,4 +1,4 @@
-import { TaskState, taskStateToJSON } from "@a2a-js/sdk";
+import { Role, TaskState, taskStateToJSON } from "@a2a-js/sdk";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -1267,5 +1267,38 @@ describe("questions", () => {
 
     expect(Object.keys(view.questions)).toEqual(["iv1"]);
     expect(view.messages.some((message) => message.id === "m1")).toBe(false);
+  });
+
+  it("skips question-response history messages when seeding a snapshot", () => {
+    const task = {
+      payload: {
+        $case: "task",
+        value: {
+          id: "t1",
+          contextId: "c1",
+          status: { state: TaskState.TASK_STATE_INPUT_REQUIRED },
+          history: [
+            {
+              messageId: "m1",
+              role: Role.ROLE_USER,
+              parts: [
+                { content: { $case: "text", value: "确认" } },
+                {
+                  content: {
+                    $case: "data",
+                    value: { intervention_id: "iv1", answer: true },
+                  },
+                  metadata: { cw_type: "question_response" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    const view = applyStreamEvent(emptyConversation, task, 1);
+
+    expect(view.messages).toHaveLength(0);
   });
 });

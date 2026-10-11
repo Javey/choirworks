@@ -192,14 +192,14 @@ TaskStatusUpdateEvent(
     - 解析 message 里的 `question_response` data parts → 逐个调用 `answer_intervention`
     - 有 pending 且无答复 part → 重发问题消息，不消费（含 confirm_cancel 期间，决策 4）
     - 合法答复 → resolve（内部已 `wake`）后 `_start_runner` 兜底（幂等；runner 已退出时启动）
-21. `api/replay.py`：final state delta 输出干预新字段与 `answer`
+21. `api/replay.py`：final state delta 输出干预新字段与 `answer`；并按 artifact 顺序为 `cw_type=history` 文本补定位事件（用户消息→`message`、提问→pending delta、答案→resolved delta），task 快照不再携带 history/artifacts
 
 ### Phase 4 — 前端
 
 22. `lib/conversationView.ts`
     - 新增 `questions` 状态（按 `intervention_id` 去重）
     - `statusUpdate` 分支：识别任意状态 `status.message` 中 `cw_type:"question"` 的 part → 问题卡片（§4.3 下通常为 `input_required`；当前约 479-508 行会把 `status.message` 当 thinking，需修）
-    - task history 里的问题消息同样识别（回放）
+    - task history 里的问题消息同样识别（live `follow` 快照兜底；`/replay` 由 artifact 定位的 `cw_delta` 建卡）；`question_response` 答复消息只进卡片"已答"，不播种成用户气泡
     - `state_delta` 的 interventions 更新 pending/resolved/expired/answer
     - 删除 ask_user artifact 分支（artifact 已移除）
     - 修复 artifact 层级回归：`revise_plan` 等读 `funcResult.data.*`（:584 等）

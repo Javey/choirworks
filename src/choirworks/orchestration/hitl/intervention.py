@@ -30,6 +30,7 @@ from choirworks.orchestration.state import (
     blocked_nodes,
     expire_node_interventions,
     pending_interventions,
+    render_answer,
 )
 from choirworks.orchestration.transitions import apply_transition
 
@@ -116,16 +117,6 @@ async def emit_pending_questions(ctx: OrchestrationContext) -> None:
         TaskState.TASK_STATE_INPUT_REQUIRED,
         message=build_questions_message(ctx, pending),
     )
-
-
-def render_answer(intervention: Intervention) -> str:
-    """Render a typed answer as the continuation text sent to the node."""
-    answer = intervention.answer
-    if intervention.question_type == QuestionType.SELECT and isinstance(answer, list):
-        return "、".join(answer)
-    if intervention.question_type == QuestionType.CONFIRM:
-        return "确认" if answer is True else "取消"
-    return answer if isinstance(answer, str) else ""
 
 
 def _validate_answer(intervention: Intervention, answer: str | list[str] | bool) -> str | None:

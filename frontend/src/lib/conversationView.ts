@@ -219,6 +219,17 @@ function questionPartsOf(container: ProtoStruct): QuestionInfo[] {
   return found;
 }
 
+/** A user message carrying an answer: shown by the question card, not a bubble. */
+function isQuestionResponse(container: ProtoStruct): boolean {
+  const parts = (container.parts as ProtoStruct[] | undefined) ?? [];
+  return parts.some((part) => {
+    const content = part.content as { $case?: string } | undefined;
+    if (content?.$case !== "data") return false;
+    const partMeta = (part.metadata as ProtoStruct | undefined) ?? {};
+    return partMeta.cw_type === "question_response";
+  });
+}
+
 function upsertQuestions(
   questions: Record<string, QuestionInfo>,
   incoming: QuestionInfo[],
@@ -563,6 +574,10 @@ function applyStreamEventInner(
       const infos = questionPartsOf(msg);
       if (infos.length > 0) {
         historyQuestions = [...historyQuestions, ...infos];
+        seenIds.add(id);
+        continue;
+      }
+      if (isQuestionResponse(msg)) {
         seenIds.add(id);
         continue;
       }
