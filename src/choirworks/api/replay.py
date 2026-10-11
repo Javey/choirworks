@@ -133,7 +133,7 @@ def synthesize_replay_events(
                     merged = Artifact(
                         artifact_id=art.artifact_id,
                         name=art.name,
-                        parts=[Part(text=merged_text)],
+                        parts=[Part(text=merged_text, metadata=parts[0].metadata)],
                         metadata=art.metadata,
                     )
                     events.append(

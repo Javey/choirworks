@@ -55,6 +55,22 @@ def test_replay_artifact_without_metadata_stays_bare() -> None:
     assert update.get("metadata") in (None, {})
 
 
+def test_replay_merged_artifact_keeps_part_metadata() -> None:
+    part = Part(text="确认")
+    part.metadata.CopyFrom(_struct({"cw_type": "history", "role": "user"}))
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    task.artifacts.append(Artifact(artifact_id="h1", parts=[part]))
+
+    events = synthesize_replay_events([task], "c1", state=None)
+
+    update = [e for e in events if "artifactUpdate" in e][0]["artifactUpdate"]
+    assert update["artifact"]["parts"][0]["metadata"] == {"cw_type": "history", "role": "user"}
+
+
 def test_replay_interleaves_task_events_with_their_artifacts() -> None:
     def _task(task_id: str, artifact_text: str) -> Task:
         task = Task(

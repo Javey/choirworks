@@ -106,13 +106,12 @@ function UserBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-function AgentBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessage | null }) {
+function AgentBubble({ msg }: { msg: ChatMessage }) {
   const sender = msg.sender || "agent";
   return (
     <div className="flex gap-2.5">
       <Avatar name={sender} />
       <div className="flex-1 max-w-[70%]">
-        {thinking ? <ThinkingSection text={thinking.text} /> : null}
         <div className="text-[11px] text-feishu-muted mb-1 ml-1">@{sender}</div>
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-white border border-feishu-border text-feishu-text text-sm prose-sm max-w-none">
           <ReactMarkdown
@@ -127,12 +126,12 @@ function AgentBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessa
   );
 }
 
-function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: ChatMessage | null }) {
+function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: string[] | null }) {
   return (
     <div className="flex gap-2.5">
       <Avatar name="规划大脑" />
       <div className="flex-1 max-w-[70%]">
-        {thinking ? <ThinkingSection text={thinking.text} /> : null}
+        {thinking?.map((text, index) => <ThinkingSection key={index} text={text} />)}
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-primary-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMention]}
@@ -146,14 +145,20 @@ function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: C
   );
 }
 
-function NotificationItem({ notif, thinking }: { notif: SystemNotification; thinking?: ChatMessage | null }) {
+function ThinkingItem({ blocks }: { blocks: string[] }) {
+  return (
+    <div className="flex gap-2.5">
+      <Avatar name="规划大脑" />
+      <div className="flex-1 max-w-[70%]">
+        {blocks.map((text, index) => <ThinkingSection key={index} text={text} />)}
+      </div>
+    </div>
+  );
+}
+
+function NotificationItem({ notif }: { notif: SystemNotification }) {
   return (
     <div className="flex flex-col items-center gap-1">
-      {thinking ? (
-        <div className="w-full max-w-[70%]">
-          <ThinkingSection text={thinking.text} />
-        </div>
-      ) : null}
       <div className="text-[12px] text-feishu-muted bg-feishu-bg px-3 py-1 rounded-full">
         {notif.text}
       </div>
@@ -161,13 +166,12 @@ function NotificationItem({ notif, thinking }: { notif: SystemNotification; thin
   );
 }
 
-function WorkingItem({ bubble, thinking }: { bubble: WorkingBubble; thinking?: ChatMessage | null }) {
+function WorkingItem({ bubble }: { bubble: WorkingBubble }) {
   const sender = bubble.author || "agent";
   return (
     <div className="flex gap-2.5">
       <Avatar name={sender} />
       <div className="flex-1 max-w-[70%]">
-        {thinking ? <ThinkingSection text={thinking.text} /> : null}
         <div className="text-[11px] text-feishu-muted mb-1 ml-1">
           @{sender} 正在工作
         </div>
@@ -220,49 +224,64 @@ export function ChatPanel({
   }
 
   const rendered: React.ReactNode[] = [];
-  let pendingThinking: ChatMessage | null = null;
+  let thinkingBlocks: string[] = [];
+  let thinkingId = "";
+
+  const flushThinking = (): void => {
+    if (thinkingBlocks.length === 0) return;
+    rendered.push(
+      <div key={`thinking-${thinkingId}`} className="animate-[fade-in_0.3s_ease-out]">
+        <ThinkingItem blocks={thinkingBlocks} />
+      </div>,
+    );
+    thinkingBlocks = [];
+    thinkingId = "";
+  };
+
+  const accumulateThinking = (msg: ChatMessage): void => {
+    thinkingBlocks = [...thinkingBlocks, msg.text];
+    if (!thinkingId) thinkingId = msg.id;
+  };
 
   for (const item of timeline) {
     if (item.type === "message" && item.data.thinking) {
-      pendingThinking = item.data;
+      accumulateThinking(item.data);
       continue;
     }
 
     if (item.type === "message") {
-      if (item.data.role === "user") {
-        if (pendingThinking) {
-          rendered.push(
-            <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
-              <UserBubble msg={item.data} />
-            </div>,
-          );
-          pendingThinking = null;
-        } else {
-          rendered.push(
-            <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
-              <UserBubble msg={item.data} />
-            </div>,
-          );
-        }
-      } else {
-        const bubble = item.data.role === "assistant"
-          ? <AssistantTextBubble msg={item.data} thinking={pendingThinking} />
-          : <AgentBubble msg={item.data} thinking={pendingThinking} />;
+      if (item.data.role === "assistant") {
+        // Thinking blocks share one 规划大脑 avatar with the reply they precede.
         rendered.push(
           <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
-            {bubble}
+            <AssistantTextBubble
+              msg={item.data}
+              thinking={thinkingBlocks.length ? thinkingBlocks : null}
+            />
           </div>,
         );
-        pendingThinking = null;
+        thinkingBlocks = [];
+        thinkingId = "";
+        continue;
       }
-    } else if (item.type === "notification") {
+      flushThinking();
+      const bubble = item.data.role === "user"
+        ? <UserBubble msg={item.data} />
+        : <AgentBubble msg={item.data} />;
       rendered.push(
-        <div key={`notif-${item.data.id}`} className="animate-[fade-in_0.3s_ease-out]">
-          <NotificationItem notif={item.data} thinking={pendingThinking} />
+        <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
+          {bubble}
         </div>,
       );
-      pendingThinking = null;
+    } else if (item.type === "notification") {
+      flushThinking();
+      rendered.push(
+        <div key={`notif-${item.data.id}`} className="animate-[fade-in_0.3s_ease-out]">
+          <NotificationItem notif={item.data} />
+        </div>,
+      );
     } else if (item.type === "question") {
+      flushThinking();
       rendered.push(
         <div key={`question-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
           <QuestionCard
@@ -271,29 +290,16 @@ export function ChatPanel({
           />
         </div>,
       );
-      pendingThinking = null;
     } else {
+      flushThinking();
       rendered.push(
         <div key={`working-${item.data.artifactId}`} className="animate-[fade-in_0.3s_ease-out]">
-          <WorkingItem bubble={item.data} thinking={pendingThinking} />
+          <WorkingItem bubble={item.data} />
         </div>,
       );
-      pendingThinking = null;
     }
   }
-
-  if (pendingThinking) {
-    rendered.push(
-      <div key="pending-thinking" className="animate-[fade-in_0.3s_ease-out]">
-        <div className="flex gap-2.5">
-          <Avatar name="规划大脑" />
-          <div className="flex-1 max-w-[70%]">
-            <ThinkingSection text={pendingThinking.text} />
-          </div>
-        </div>
-      </div>,
-    );
-  }
+  flushThinking();
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-feishu-bg/50 px-4 py-4">

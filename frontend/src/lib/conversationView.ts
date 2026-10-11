@@ -235,6 +235,35 @@ function upsertQuestions(
 
 const TERMINAL_NODE_STATUSES = new Set(["completed", "failed", "canceled", "invalidated"]);
 
+/**
+ * Map an orchestration decision artifact to a lightweight system notice.
+ * Decisions are LLM-facing bookkeeping; only the routing/outcome ones are
+ * surfaced, so narration and action stay traceable. Returns null to hide.
+ */
+function decisionNotice(text: string): { kind: string; text: string } | null {
+  const assist = /^\[assistance:([^\]]+)\] target=(.+)$/.exec(text);
+  if (assist) {
+    const [, nodeId, target] = assist;
+    const action = target === "human" ? "升级人工确认" : `转交 @${target} 协助`;
+    return { kind: "orchestration.assist", text: `${action}（${nodeId}）` };
+  }
+  const outcome = /^\[outcome:([^\]]+)\] (\w+)$/.exec(text);
+  if (outcome) {
+    const [, nodeId, intent] = outcome;
+    if (intent === "need_info") {
+      return { kind: "orchestration.outcome", text: `需要补充信息（${nodeId}）` };
+    }
+    if (intent === "revise") {
+      return { kind: "orchestration.outcome", text: `根据反馈修订计划（${nodeId}）` };
+    }
+    return null;
+  }
+  if (/^\[repair\]/.test(text)) {
+    return { kind: "orchestration.repair", text: "计划已自动修复" };
+  }
+  return null;
+}
+
 function materializeBubble(
   view: ConversationView,
   bubble: WorkingBubble,
@@ -459,7 +488,7 @@ function synthesizeArtifactUpdate(artifact: ProtoStruct): ProtoStruct {
   const firstPartContent = firstPart.content as { $case?: string; value?: unknown } | undefined;
 
   const isFc = firstPartContent?.$case === "data" && firstPartMeta.cw_type === "function_call";
-  const isThought = firstPartMeta.cw_thought === true;
+  const isThought = firstPartMeta.cw_type === "thought";
 
   if (isFc || isThought) {
     return {
@@ -673,10 +702,30 @@ function applyStreamEventInner(
     const pMeta = parts.length > 0 ? metaOf(parts[0]) : {};
     const firstPartContent = parts[0]?.content as { $case?: string; value?: unknown } | undefined;
 
-    // Internal kinds: persisted for the LLM (history) or bookkeeping (summary),
-    // never rendered as chat messages.
+    // Internal kinds: persisted for the LLM (history) or bookkeeping
+    // (compaction summary), never rendered as chat messages.
     if (pMeta.cw_type === "history" || pMeta.cw_type === "compaction") {
       return { ...view, lastSeq: Math.max(view.lastSeq, seq) };
+    }
+
+    // Decisions are LLM bookkeeping too, but routing/outcome decisions are
+    // surfaced as lightweight system notices so actions stay traceable.
+    if (pMeta.cw_type === "decision") {
+      const notice = decisionNotice(text);
+      if (notice === null) {
+        return { ...view, lastSeq: Math.max(view.lastSeq, seq) };
+      }
+      return {
+        ...view,
+        notifications: [...view.notifications, {
+          id: `sys-decision-${seq}`,
+          kind: notice.kind,
+          text: notice.text,
+          created_at: new Date().toISOString(),
+          seq,
+        }],
+        lastSeq: Math.max(view.lastSeq, seq),
+      };
     }
 
     if (firstPartContent?.$case === "data" && pMeta.cw_type === "function_call") {
@@ -899,7 +948,7 @@ function applyStreamEventInner(
     }
 
     // Streaming assistant message (planner thought or direct text reply)
-    const isThought = pMeta.cw_thought === true;
+    const isThought = pMeta.cw_type === "thought";
     const isAssistantText = !isThought && author === "assistant" && !nodeId;
     if ((isThought || isAssistantText) && text) {
       const existing = view.messages.find((m) => m.id === artifactId);

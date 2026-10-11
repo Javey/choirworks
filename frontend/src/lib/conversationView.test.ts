@@ -652,7 +652,7 @@ describe("applyStreamEvent", () => {
               artifactId: id,
               parts: [{
                 content: { $case: "text", value: "The" },
-                metadata: { cw_thought: true },
+                metadata: { cw_type: "thought", author: "assistant" },
               }],
             },
             metadata: { author: "assistant" },
@@ -673,7 +673,7 @@ describe("applyStreamEvent", () => {
               artifactId: id,
               parts: [{
                 content: { $case: "text", value: " user" },
-                metadata: { cw_thought: true },
+                metadata: { cw_type: "thought", author: "assistant" },
               }],
             },
             metadata: { author: "assistant" },
@@ -694,7 +694,7 @@ describe("applyStreamEvent", () => {
               artifactId: id,
               parts: [{
                 content: { $case: "text", value: " said hello" },
-                metadata: { cw_thought: true },
+                metadata: { cw_type: "thought", author: "assistant" },
               }],
             },
             metadata: { author: "assistant" },
@@ -834,7 +834,7 @@ describe("applyStreamEvent", () => {
     expect(view.seenArtifactIds.has("fc-call_subagent")).toBe(true);
   });
 
-  it("ignores history artifacts in both live events and snapshot replay", () => {
+  it("ignores internal artifacts (history / decision) in live events and snapshot replay", () => {
     const live = {
       payload: {
         $case: "artifactUpdate",
@@ -852,6 +852,26 @@ describe("applyStreamEvent", () => {
       },
     };
     let view = applyStreamEvent(emptyConversation, live, 1);
+    view = applyStreamEvent(
+      view,
+      {
+        payload: {
+          $case: "artifactUpdate",
+          value: {
+            artifact: {
+              artifactId: "decision-live",
+              parts: [{
+                content: { $case: "text", value: "[planner] (empty)" },
+                metadata: { cw_type: "decision", role: "assistant" },
+              }],
+            },
+            append: false,
+            lastChunk: true,
+          },
+        },
+      },
+      2,
+    );
     expect(view.messages).toHaveLength(0);
 
     const snapshot = [
@@ -859,9 +879,57 @@ describe("applyStreamEvent", () => {
         content: { $case: "text", value: "确认" },
         metadata: { cw_type: "history", role: "user" },
       }]),
+      artifactInSnapshot("decision-replay", [{
+        content: { $case: "text", value: "[planner] n1→echo" },
+        metadata: { cw_type: "decision", role: "assistant" },
+      }]),
     ];
-    view = applyStreamEvent(view, taskSnapshot(snapshot), 2);
+    view = applyStreamEvent(view, taskSnapshot(snapshot), 3);
     expect(view.messages).toHaveLength(0);
+  });
+
+  it("surfaces routing decisions as system notices, keeps others hidden", () => {
+    const decision = (text: string, id: string) => ({
+      payload: {
+        $case: "artifactUpdate",
+        value: {
+          artifact: {
+            artifactId: id,
+            parts: [{
+              content: { $case: "text", value: text },
+              metadata: { cw_type: "decision", role: "assistant" },
+            }],
+          },
+          append: false,
+          lastChunk: true,
+        },
+      },
+    });
+    let view = applyStreamEvent(
+      emptyConversation,
+      decision("[assistance:code-review] target=approval-manager", "d1"),
+      1,
+    );
+    view = applyStreamEvent(view, decision("[assistance:code-review-h1] target=human", "d2"), 2);
+    view = applyStreamEvent(view, decision("[outcome:code-review] need_info", "d3"), 3);
+    view = applyStreamEvent(view, decision("[planner] n1→echo", "d4"), 4);
+    view = applyStreamEvent(view, decision("[outcome:code-review] deliver", "d5"), 5);
+
+    expect(view.messages).toHaveLength(0);
+    expect(view.notifications.map((n) => n.text)).toEqual([
+      "转交 @approval-manager 协助（code-review）",
+      "升级人工确认（code-review-h1）",
+      "需要补充信息（code-review）",
+    ]);
+
+    const snapshot = [
+      artifactInSnapshot("d6", [{
+        content: { $case: "text", value: "[assistance:x] target=human" },
+        metadata: { cw_type: "decision", role: "assistant" },
+      }]),
+    ];
+    view = applyStreamEvent(view, taskSnapshot(snapshot), 6);
+    expect(view.notifications.at(-1)?.text).toBe("升级人工确认（x）");
   });
 
   it("ignores compaction artifacts", () => {
@@ -905,7 +973,7 @@ describe("applyStreamEvent", () => {
     const artifacts = [
       artifactInSnapshot(
         "thought-1",
-        [{ content: { $case: "text", value: "正在思考" }, metadata: { cw_thought: true } }],
+        [{ content: { $case: "text", value: "正在思考" }, metadata: { cw_type: "thought", author: "assistant" } }],
         { author: "assistant" },
       ),
     ];

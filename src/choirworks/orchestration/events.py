@@ -367,7 +367,7 @@ async def _record_message(
 
 
 async def record_decision(ctx: OrchestrationContext, content: str) -> None:
-    """Record a UI-visible orchestration decision (assistant message)."""
+    """Record an orchestration decision as LLM-only context (hidden from the UI)."""
     await _record_message(ctx, content, cw_type=CwType.DECISION, role="assistant")
 
 
