@@ -206,6 +206,36 @@ async def test_call_subagent_falls_back_to_requester_question():
     assert "缺少接口文档" in helper.input_text
 
 
+async def test_call_subagent_rejects_self_chain_and_duplicate_targets():
+    state = OrchestrationState()
+    make_node(state, "n1", status=NodeStatus.INPUT_REQUIRED, question="需要数据")
+    ctx = make_ctx(state)
+
+    self_result = await call_subagent_func.run_async(
+        ctx, CallSubagentArgs(requested_by="n1", target_agent="research")
+    )
+    assert self_result.success is False
+    assert self_result.error == "cannot target the requesting agent"
+
+    first = await call_subagent_func.run_async(
+        ctx, CallSubagentArgs(requested_by="n1", target_agent="writer")
+    )
+    assert first.success is True
+    assert isinstance(first.data, CallSubagentData)
+
+    duplicate = await call_subagent_func.run_async(
+        ctx, CallSubagentArgs(requested_by="n1", target_agent="writer")
+    )
+    assert duplicate.success is False
+    assert duplicate.error == "agent already asked for help: writer"
+
+    chained = await call_subagent_func.run_async(
+        ctx, CallSubagentArgs(requested_by=first.data.helper_node_id, target_agent="research")
+    )
+    assert chained.success is False
+    assert chained.error == "agent already in this assist chain: research"
+
+
 async def test_call_subagent_rejects_assistant_and_unknown_agent():
     state = OrchestrationState()
     ctx = make_ctx(state)

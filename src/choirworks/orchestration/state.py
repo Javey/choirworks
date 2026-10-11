@@ -73,6 +73,7 @@ class NodeDict(TypedDict):
     answer_text: str | None
     answer_from: str | None
     assist_requested_by: str | None
+    adopted_helpers: list[str]
 
 
 @dataclass
@@ -92,6 +93,7 @@ class NodeState:
     answer_text: str | None = None
     answer_from: str | None = None
     assist_requested_by: str | None = None
+    adopted_helpers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> NodeDict:
         return {
@@ -110,6 +112,7 @@ class NodeState:
             "answer_text": self.answer_text,
             "answer_from": self.answer_from,
             "assist_requested_by": self.assist_requested_by,
+            "adopted_helpers": list(self.adopted_helpers),
         }
 
     @classmethod
@@ -130,6 +133,7 @@ class NodeState:
             answer_text=data.get("answer_text"),
             answer_from=data.get("answer_from"),
             assist_requested_by=data.get("assist_requested_by"),
+            adopted_helpers=[str(helper) for helper in data.get("adopted_helpers", [])],
         )
 
 
@@ -408,6 +412,25 @@ def assist_nodes_for(
         and node.assist_requested_by == requested_by
         and node.agent_name == agent_name
     ]
+
+
+def assist_chain_agents(state: OrchestrationState, node: NodeState) -> set[str]:
+    """Agents already involved in this assist chain (requester + its ancestors).
+
+    Walking ``assist_requested_by`` yields the chained helpers a node descends
+    from; targeting any of them again would loop the help chain.
+    """
+    names = {node.agent_name}
+    seen = {node.id}
+    current = node
+    while current.assist_requested_by and current.assist_requested_by not in seen:
+        seen.add(current.assist_requested_by)
+        parent = state.nodes.get(current.assist_requested_by)
+        if parent is None:
+            break
+        names.add(parent.agent_name)
+        current = parent
+    return names
 
 
 def pending_interventions(state: OrchestrationState) -> list[Intervention]:

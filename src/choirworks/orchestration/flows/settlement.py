@@ -25,6 +25,7 @@ from choirworks.orchestration.state import (
     NodeState,
     NodeStatus,
     QuestionType,
+    assist_chain_agents,
     expire_node_interventions,
     input_required_nodes,
     pending_intervention_for,
@@ -61,7 +62,7 @@ async def settle_node_input(ctx: OrchestrationContext, node: NodeState) -> bool:
 
 async def _inspect_helpers(
     ctx: OrchestrationContext, payload: SettlementPayload
-) -> Literal["already_pending", "helper_completed", "helper_active", "decide"]:
+) -> Literal["already_pending", "helper_completed", "helper_active", "helper_blocked", "decide"]:
     state = ctx.state
     node = payload.node
     if pending_intervention_for(state, node.id) is not None:
@@ -69,7 +70,10 @@ async def _inspect_helpers(
     helpers = [
         n
         for n in state.nodes.values()
-        if n.derived and n.assist_requested_by == node.id and n.status == NodeStatus.COMPLETED
+        if n.derived
+        and n.assist_requested_by == node.id
+        and n.status == NodeStatus.COMPLETED
+        and n.id not in node.adopted_helpers
     ]
     if helpers:
         payload.helper = helpers[0]
@@ -83,6 +87,13 @@ async def _inspect_helpers(
     ]
     if active_helpers:
         return "helper_active"
+    blocked_helpers = [
+        n
+        for n in state.nodes.values()
+        if n.derived and n.assist_requested_by == node.id and n.status == NodeStatus.INPUT_REQUIRED
+    ]
+    if blocked_helpers:
+        return "helper_blocked"
     return "decide"
 
 
@@ -100,6 +111,7 @@ async def _resolve_from_helper(
     async with ctx.lock:
         node.answer_text = helper.output
         node.answer_from = helper.agent_name
+        node.adopted_helpers.append(helper.id)
         apply_transition(node, NodeStatus.READY)
         expired = expire_node_interventions(ctx.state, node.id)
         await ctx.sessions.persist(ctx)
@@ -134,7 +146,8 @@ async def _decide_assistance_impl(
     if node.question is None:
         return None
     agents = await ctx.registry.list()
-    candidates = [agent for agent in agents if agent.name != node.agent_name]
+    chain = assist_chain_agents(ctx.state, node)
+    candidates = [agent for agent in agents if agent.name not in chain]
     if not candidates:
         return AssistanceResult()
     user = build_assistance_decision_user(
@@ -147,7 +160,7 @@ async def _decide_assistance_impl(
             assistance_agent,
             ctx,
             user,
-            exclude_agent=node.agent_name,
+            exclude_agents=chain,
         )
     except Exception:
         logger.exception("assistance decision failed", node=node.id)
@@ -189,7 +202,7 @@ settlement_flow: Flow[SettlementPayload] = Flow(
         Edge(
             _inspect_helpers,
             _noop,
-            frozenset({"already_pending", "helper_active"}),
+            frozenset({"already_pending", "helper_active", "helper_blocked"}),
         ),
         Edge(_inspect_helpers, _resolve_from_helper, frozenset({"helper_completed"})),
         Edge(_inspect_helpers, _decide_assistance, frozenset({"decide"})),

@@ -157,6 +157,8 @@ def build_assistance_decision_user(
     return (
         f"Requester: {requester_name}\n"
         f"Question / blocked work:\n{blocked_text}\n\n"
+        f"The requester and agents already involved in this help chain are excluded "
+        f'from the list below. Choose one of the listed agents, or "human" to escalate.\n'
         f"{QUOTED_CONTENT_PREAMBLE}\n"
         f"{quote_untrusted('Available agents:\n' + capabilities)}"
     )

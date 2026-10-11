@@ -8,6 +8,7 @@ from choirworks.core.tool import StructuredOutputTool, ToolCallResult
 from choirworks.models.domain import AgentRecord
 from choirworks.orchestration.context import OrchestrationContext
 from choirworks.sim.litellm_mock import sim_acompletion
+from choirworks.subagents.assistance.agent import assistance_agent
 from choirworks.subagents.assistance.model import AssistanceResult, assistance_schema
 from choirworks.tools.create_plan import create_plan_func
 from tests.support.fakes import FakeRegistry, make_orch_ctx
@@ -204,7 +205,19 @@ async def test_assistance_decision_routes_to_human_for_code_reviewer():
         ctx=ctx,
     )
     decision = _as(tc, AssistanceResult)
-    assert decision.target_agent is None
+    assert decision.target_agent == "human"
+    assert assistance_agent.process(tc).target_agent is None
+
+
+def test_assistance_schema_offers_human_and_defaults_to_it():
+    schema = assistance_schema(["product-manager", "developer"])
+    dumped = schema.model_json_schema()
+    assert dumped["properties"]["target_agent"]["enum"] == [
+        "human",
+        "product-manager",
+        "developer",
+    ]
+    assert schema().target_agent == "human"
 
 
 async def test_coordination_plan_runs_pm_and_developer_in_parallel():

@@ -203,10 +203,15 @@ async def _run_settlement(ctx: OrchestrationContext, node: NodeState) -> None:
 
 
 def _has_active_helper(state: OrchestrationState, node_id: str) -> bool:
+    """True when the node has an unsettled helper (including a blocked one).
+
+    A helper that itself went ``input_required`` is still being worked on by
+    its own settlement; the parent must wait for it instead of re-deciding.
+    """
     return any(
         n.derived
         and n.assist_requested_by == node_id
-        and n.status in ACTIVE_NODE_STATUSES | PENDING_NODE_STATUSES
+        and n.status in ACTIVE_NODE_STATUSES | PENDING_NODE_STATUSES | {NodeStatus.INPUT_REQUIRED}
         for n in state.nodes.values()
     )
 

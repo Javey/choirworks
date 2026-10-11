@@ -8,6 +8,7 @@ from pydantic import BaseModel, create_model
 from choirworks.core.tool import FunctionResult, FunctionTool
 from choirworks.orchestration.planning.derived import DerivedKind, spawn_derived_node
 from choirworks.orchestration.prompts import build_peer_fallback_input
+from choirworks.orchestration.state import assist_chain_agents, assist_nodes_for
 
 if TYPE_CHECKING:
     from choirworks.orchestration.context import OrchestrationContext
@@ -84,6 +85,19 @@ class CallSubagentTool(FunctionTool):
             return FunctionResult(success=False, error=f"unknown agent: {call_args.target_agent}")
 
         requester_node = state.nodes.get(call_args.requested_by)
+        if requester_node is not None:
+            if call_args.target_agent == requester_node.agent_name:
+                return FunctionResult(success=False, error="cannot target the requesting agent")
+            if call_args.target_agent in assist_chain_agents(state, requester_node):
+                return FunctionResult(
+                    success=False,
+                    error=f"agent already in this assist chain: {call_args.target_agent}",
+                )
+            if assist_nodes_for(state, call_args.target_agent, requester_node.id):
+                return FunctionResult(
+                    success=False,
+                    error=f"agent already asked for help: {call_args.target_agent}",
+                )
         helper = await spawn_derived_node(
             ctx,
             DerivedKind.HELPER,

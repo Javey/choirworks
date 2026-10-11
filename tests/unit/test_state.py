@@ -15,6 +15,7 @@ from choirworks.orchestration.state import (
     active_nodes,
     add_member,
     all_completed,
+    assist_chain_agents,
     assist_nodes_for,
     blocked_nodes,
     enqueue,
@@ -296,6 +297,31 @@ def test_assist_nodes_for_filters_by_requester_and_agent():
     helpers = assist_nodes_for(state, "b", "n1")
 
     assert [node.id for node in helpers] == ["helper"]
+
+
+def test_assist_chain_agents_walks_ancestors():
+    state = OrchestrationState()
+    _node(state, "root", status=NodeStatus.INPUT_REQUIRED, agent_name="reviewer")
+    _node(
+        state,
+        "root-h1",
+        status=NodeStatus.INPUT_REQUIRED,
+        derived=True,
+        assist_requested_by="root",
+        agent_name="approver",
+    )
+    _node(
+        state,
+        "root-h1-h2",
+        status=NodeStatus.INPUT_REQUIRED,
+        derived=True,
+        assist_requested_by="root-h1",
+        agent_name="reviewer",
+    )
+
+    assert assist_chain_agents(state, state.nodes["root"]) == {"reviewer"}
+    assert assist_chain_agents(state, state.nodes["root-h1"]) == {"approver", "reviewer"}
+    assert assist_chain_agents(state, state.nodes["root-h1-h2"]) == {"reviewer", "approver"}
 
 
 def test_pending_interventions_and_lookup():

@@ -1,9 +1,12 @@
 ASSISTANCE_SYSTEM = """You are the assistant of a multi-agent group.
 An agent is blocked and needs help. Decide how to handle it:
 - set target_agent to another registered agent that can help
-- leave target_agent empty to escalate to a human
+- set target_agent to "human" to escalate to a human
 
-When target_agent is set, instruction should describe the task.
+The blocked requester and agents already involved in this help chain must not
+be targeted again; if none of the listed agents can help, escalate to "human".
+
+When target_agent is an agent, instruction should describe the task.
 Return only JSON matching the schema.
 
 When escalating to a human, shape the question interface:

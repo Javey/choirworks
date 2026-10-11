@@ -15,7 +15,11 @@ from choirworks.core.agents.llm_agent import LlmAgent
 from choirworks.core.tool import FunctionTool, StructuredOutputTool, ToolCallResult
 from choirworks.core.util import as_model
 from choirworks.orchestration.context import OrchestrationContext
-from choirworks.subagents.assistance.model import AssistanceResult, assistance_schema
+from choirworks.subagents.assistance.model import (
+    HUMAN_TARGET,
+    AssistanceResult,
+    assistance_schema,
+)
 from choirworks.subagents.assistance.prompt import ASSISTANCE_SYSTEM
 
 _ASSISTANCE_TOOL_DESCRIPTION = "Decide how to handle a blocked agent."
@@ -29,9 +33,12 @@ class AssistanceAgent(LlmAgent[AssistanceResult]):
     @override
     async def build_tools(self, ctx: TurnContext, **kwargs: object) -> list[FunctionTool]:
         assert isinstance(ctx, OrchestrationContext)
-        exclude_agent = str(kwargs.get("exclude_agent", ""))
+        excluded = kwargs.get("exclude_agents", frozenset())
+        if not isinstance(excluded, (set, frozenset, list, tuple)):
+            raise TypeError("exclude_agents must be a collection of agent names")
+        exclude_set = {str(name) for name in excluded}
         agents = await ctx.registry.list()
-        candidates = [a for a in agents if a.name != exclude_agent] if exclude_agent else agents
+        candidates = [a for a in agents if a.name not in exclude_set]
         schema = assistance_schema([a.name for a in candidates])
         return [
             StructuredOutputTool(
@@ -45,7 +52,10 @@ class AssistanceAgent(LlmAgent[AssistanceResult]):
     def process(self, tool_call: ToolCallResult | None) -> AssistanceResult:
         if tool_call is None:
             return AssistanceResult()
-        return as_model(tool_call, AssistanceResult)
+        result = as_model(tool_call, AssistanceResult)
+        if result.target_agent == HUMAN_TARGET:
+            return result.model_copy(update={"target_agent": None})
+        return result
 
 
 assistance_agent = AssistanceAgent()

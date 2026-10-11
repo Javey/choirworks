@@ -239,7 +239,7 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
         if asking in HUMAN_AGENTS:
             reasoning = f"Agent {asking} 的求助需要人工介入。"
             return reasoning, {
-                "target_agent": None,
+                "target_agent": "human",
                 "instruction": "",
                 "question_type": "confirm",
                 "options": [],
@@ -265,7 +265,7 @@ def _make_assistance_decision(user: str) -> tuple[str, dict[str, Any]]:
 
     reasoning = "无可用 peer agent，转人工处理。"
     return reasoning, {
-        "target_agent": None,
+        "target_agent": "human",
         "instruction": "",
         "question_type": "input",
         "options": [],

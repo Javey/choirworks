@@ -12,6 +12,7 @@ from choirworks.orchestration.flows.settlement import (
     _resolve_from_helper,
     request_human,
     settle_input,
+    settle_node_input,
 )
 from choirworks.orchestration.hitl.intervention import answer_intervention, cancel_node
 from choirworks.orchestration.state import (
@@ -149,6 +150,7 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     assert resolved.status == NodeStatus.READY
     assert resolved.answer_text == "PM 的评估结论"
     assert resolved.answer_from == "product-manager"
+    assert resolved.adopted_helpers == ["3-h1"]
     # Peer assistance is not a human intervention: no question card is created.
     assert state.interventions == {}
     assert len(queue.events) == 1
@@ -157,6 +159,58 @@ async def test_settle_input_resolves_via_completed_helper_without_human():
     meta = MessageToDict(delta.metadata)
     assert "interventions" not in meta["cw_delta"]
     assert meta["cw_delta"]["nodes"]["3"]["status"] == "ready"
+
+
+async def test_settle_waits_for_blocked_helper_instead_of_deciding():
+    state = OrchestrationState()
+    blocked = node("3", NodeStatus.INPUT_REQUIRED)
+    blocked.question = "请确认是否采用该方案？"
+    state.nodes["3"] = blocked
+    state.nodes["3-h1"] = NodeState(
+        id="3-h1",
+        name="",
+        agent_name="product-manager",
+        status=NodeStatus.INPUT_REQUIRED,
+        question="还需要审批信息",
+        derived=True,
+        assist_requested_by="3",
+    )
+    ctx, queue = make_ctx(state)
+
+    progress = await settle_node_input(ctx, blocked)
+
+    # The blocked helper is still being settled by its own task; the parent
+    # must wait instead of asking a peer or the human again.
+    assert progress is False
+    assert state.interventions == {}
+    assert queue.events == []
+
+
+async def test_settle_does_not_readopt_adopted_helper():
+    state = OrchestrationState()
+    blocked = node("3", NodeStatus.INPUT_REQUIRED)
+    blocked.question = "请确认是否采用该方案？"
+    state.nodes["3"] = blocked
+    state.nodes["3-h1"] = NodeState(
+        id="3-h1",
+        name="",
+        agent_name="product-manager",
+        status=NodeStatus.COMPLETED,
+        output="PM 的评估结论",
+        derived=True,
+        assist_requested_by="3",
+    )
+    ctx, _queue = make_ctx(state)
+
+    assert await settle_node_input(ctx, blocked) is True
+    assert blocked.adopted_helpers == ["3-h1"]
+
+    # The node blocks again and the consumed helper must not be re-adopted;
+    # with no other peers it escalates to a human question instead.
+    blocked.status = NodeStatus.INPUT_REQUIRED
+    assert await settle_node_input(ctx, blocked) is False
+    assert blocked.adopted_helpers == ["3-h1"]
+    assert [iv.question for iv in pending_interventions(state)] == ["请确认是否采用该方案？"]
 
 
 async def test_answer_intervention_marks_human_responder_and_readies_node():
