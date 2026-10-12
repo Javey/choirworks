@@ -12,7 +12,10 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
-function RequesterAvatar({ name }: { name: string }) {
+function RequesterAvatar({ name, hidden = false }: { name: string; hidden?: boolean }) {
+  if (hidden) {
+    return <div className="shrink-0" style={{ width: 36, height: 36 }} />;
+  }
   const color = avatarColor(name || "规划大脑");
   return (
     <div
@@ -42,9 +45,11 @@ function answerLabel(question: QuestionInfo): string {
 
 export function QuestionCard({
   question,
+  showAvatar = true,
   onAnswer,
 }: {
   question: QuestionInfo;
+  showAvatar?: boolean;
   onAnswer: (
     question: QuestionInfo,
     answer: string | string[] | boolean,
@@ -95,9 +100,9 @@ export function QuestionCard({
 
   return (
     <div className="flex gap-2.5">
-      <RequesterAvatar name={requester} />
+      <RequesterAvatar name={requester} hidden={!showAvatar} />
       <div className="flex-1 max-w-[70%]">
-        <div className="text-[11px] text-feishu-muted mb-1 ml-1">@{requester} 提问</div>
+        {showAvatar ? <div className="text-[11px] text-feishu-muted mb-1 ml-1">@{requester} 提问</div> : null}
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-white border border-feishu-border text-feishu-text text-sm">
           <div className="whitespace-pre-wrap break-words">{question.question}</div>
 

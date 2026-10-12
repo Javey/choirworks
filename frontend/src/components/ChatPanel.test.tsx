@@ -84,3 +84,102 @@ describe("ChatPanel thinking", () => {
     expect(screen.getByText("答复正文")).toBeTruthy();
   });
 });
+
+describe("ChatPanel avatar grouping", () => {
+  it("shows one avatar for consecutive agent messages from the same sender", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "agent", sender: "writer", text: "第一段", seq: 1 }),
+        msg({ id: "m2", role: "agent", sender: "writer", text: "第二段", seq: 2 }),
+      ],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("W")).toHaveLength(1);
+    expect(screen.getAllByText("@writer")).toHaveLength(1);
+    expect(screen.getByText("第一段")).toBeTruthy();
+    expect(screen.getByText("第二段")).toBeTruthy();
+  });
+
+  it("shows separate avatars for consecutive agent messages from different senders", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "agent", sender: "writer", text: "来自 writer", seq: 1 }),
+        msg({ id: "m2", role: "agent", sender: "reviewer", text: "来自 reviewer", seq: 2 }),
+      ],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("W")).toHaveLength(1);
+    expect(screen.getAllByText("R")).toHaveLength(1);
+    expect(screen.getAllByText("@writer")).toHaveLength(1);
+    expect(screen.getAllByText("@reviewer")).toHaveLength(1);
+  });
+
+  it("resets avatar grouping when a notification interrupts", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "agent", sender: "writer", text: "第一段", seq: 1 }),
+        msg({ id: "m2", role: "agent", sender: "writer", text: "第二段", seq: 3 }),
+      ],
+      notifications: [{
+        id: "n1",
+        kind: "room.participant_joined",
+        text: "reviewer 加入了群聊",
+        created_at: "",
+        seq: 2,
+      }],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("W")).toHaveLength(2);
+    expect(screen.getAllByText("@writer")).toHaveLength(2);
+  });
+
+  it("shows one avatar for consecutive assistant messages", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "assistant", text: "第一条", seq: 1 }),
+        msg({ id: "m2", role: "assistant", text: "第二条", seq: 2 }),
+      ],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("规")).toHaveLength(1);
+    expect(screen.getByText("第一条")).toBeTruthy();
+    expect(screen.getByText("第二条")).toBeTruthy();
+  });
+
+  it("shows separate avatars for agent then assistant", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "agent", sender: "writer", text: "agent 回复", seq: 1 }),
+        msg({ id: "m2", role: "assistant", text: "assistant 回复", seq: 2 }),
+      ],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("W")).toHaveLength(1);
+    expect(screen.getAllByText("规")).toHaveLength(1);
+  });
+
+  it("resets grouping after a user message", () => {
+    const view: ConversationView = {
+      ...emptyConversation,
+      messages: [
+        msg({ id: "m1", role: "agent", sender: "writer", text: "第一段", seq: 1 }),
+        msg({ id: "m2", role: "user", text: "用户追问", seq: 2 }),
+        msg({ id: "m3", role: "agent", sender: "writer", text: "第二段", seq: 3 }),
+      ],
+    };
+    render(<ChatPanel view={view} />);
+
+    expect(screen.getAllByText("W")).toHaveLength(2);
+    expect(screen.getAllByText("@writer")).toHaveLength(2);
+  });
+});

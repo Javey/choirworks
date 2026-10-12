@@ -23,7 +23,10 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
-function Avatar({ name, size = 36 }: { name: string; size?: number }) {
+function Avatar({ name, size = 36, hidden = false }: { name: string; size?: number; hidden?: boolean }) {
+  if (hidden) {
+    return <div className="shrink-0" style={{ width: size, height: size }} />;
+  }
   const color = avatarColor(name);
   return (
     <div
@@ -106,13 +109,13 @@ function UserBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-function AgentBubble({ msg }: { msg: ChatMessage }) {
+function AgentBubble({ msg, showAvatar = true }: { msg: ChatMessage; showAvatar?: boolean }) {
   const sender = msg.sender || "agent";
   return (
     <div className="flex gap-2.5">
-      <Avatar name={sender} />
+      <Avatar name={sender} hidden={!showAvatar} />
       <div className="flex-1 max-w-[70%]">
-        <div className="text-[11px] text-feishu-muted mb-1 ml-1">@{sender}</div>
+        {showAvatar ? <div className="text-[11px] text-feishu-muted mb-1 ml-1">@{sender}</div> : null}
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-white border border-feishu-border text-feishu-text text-sm prose-sm max-w-none">
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMention]}
@@ -126,10 +129,10 @@ function AgentBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: string[] | null }) {
+function AssistantTextBubble({ msg, thinking, showAvatar = true }: { msg: ChatMessage; thinking?: string[] | null; showAvatar?: boolean }) {
   return (
     <div className="flex gap-2.5">
-      <Avatar name="规划大脑" />
+      <Avatar name="规划大脑" hidden={!showAvatar} />
       <div className="flex-1 max-w-[70%]">
         {thinking?.map((text, index) => <ThinkingSection key={index} text={text} />)}
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-feishu-primary-soft border border-feishu-primary-border text-feishu-text text-sm prose-sm max-w-none">
@@ -145,10 +148,10 @@ function AssistantTextBubble({ msg, thinking }: { msg: ChatMessage; thinking?: s
   );
 }
 
-function ThinkingItem({ blocks }: { blocks: string[] }) {
+function ThinkingItem({ blocks, showAvatar = true }: { blocks: string[]; showAvatar?: boolean }) {
   return (
     <div className="flex gap-2.5">
-      <Avatar name="规划大脑" />
+      <Avatar name="规划大脑" hidden={!showAvatar} />
       <div className="flex-1 max-w-[70%]">
         {blocks.map((text, index) => <ThinkingSection key={index} text={text} />)}
       </div>
@@ -166,15 +169,17 @@ function NotificationItem({ notif }: { notif: SystemNotification }) {
   );
 }
 
-function WorkingItem({ bubble }: { bubble: WorkingBubble }) {
+function WorkingItem({ bubble, showAvatar = true }: { bubble: WorkingBubble; showAvatar?: boolean }) {
   const sender = bubble.author || "agent";
   return (
     <div className="flex gap-2.5">
-      <Avatar name={sender} />
+      <Avatar name={sender} hidden={!showAvatar} />
       <div className="flex-1 max-w-[70%]">
-        <div className="text-[11px] text-feishu-muted mb-1 ml-1">
-          @{sender} 正在工作
-        </div>
+        {showAvatar ? (
+          <div className="text-[11px] text-feishu-muted mb-1 ml-1">
+            @{sender} 正在工作
+          </div>
+        ) : null}
         <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-md bg-white border border-feishu-border text-feishu-text text-sm">
           <span className="whitespace-pre-wrap break-words">
             <MentionText text={bubble.text} />
@@ -226,14 +231,17 @@ export function ChatPanel({
   const rendered: React.ReactNode[] = [];
   let thinkingBlocks: string[] = [];
   let thinkingId = "";
+  let lastAuthor: string | null = null;
 
   const flushThinking = (): void => {
     if (thinkingBlocks.length === 0) return;
+    const showAvatar = lastAuthor !== "规划大脑";
     rendered.push(
       <div key={`thinking-${thinkingId}`} className="animate-[fade-in_0.3s_ease-out]">
-        <ThinkingItem blocks={thinkingBlocks} />
+        <ThinkingItem blocks={thinkingBlocks} showAvatar={showAvatar} />
       </div>,
     );
+    if (showAvatar) lastAuthor = "规划大脑";
     thinkingBlocks = [];
     thinkingId = "";
   };
@@ -251,30 +259,42 @@ export function ChatPanel({
 
     if (item.type === "message") {
       if (item.data.role === "assistant") {
-        // Thinking blocks share one 规划大脑 avatar with the reply they precede.
+        const showAvatar = lastAuthor !== "规划大脑";
         rendered.push(
           <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
             <AssistantTextBubble
               msg={item.data}
               thinking={thinkingBlocks.length ? thinkingBlocks : null}
+              showAvatar={showAvatar}
             />
           </div>,
         );
+        lastAuthor = "规划大脑";
         thinkingBlocks = [];
         thinkingId = "";
         continue;
       }
       flushThinking();
-      const bubble = item.data.role === "user"
-        ? <UserBubble msg={item.data} />
-        : <AgentBubble msg={item.data} />;
-      rendered.push(
-        <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
-          {bubble}
-        </div>,
-      );
+      if (item.data.role === "user") {
+        lastAuthor = null;
+        rendered.push(
+          <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
+            <UserBubble msg={item.data} />
+          </div>,
+        );
+      } else {
+        const sender = item.data.sender || "agent";
+        const showAvatar = lastAuthor !== sender;
+        rendered.push(
+          <div key={`msg-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
+            <AgentBubble msg={item.data} showAvatar={showAvatar} />
+          </div>,
+        );
+        lastAuthor = sender;
+      }
     } else if (item.type === "notification") {
       flushThinking();
+      lastAuthor = null;
       rendered.push(
         <div key={`notif-${item.data.id}`} className="animate-[fade-in_0.3s_ease-out]">
           <NotificationItem notif={item.data} />
@@ -282,21 +302,28 @@ export function ChatPanel({
       );
     } else if (item.type === "question") {
       flushThinking();
+      const requester = item.data.requester || "规划大脑";
+      const showAvatar = lastAuthor !== requester;
       rendered.push(
         <div key={`question-${item.data.id}`} className="animate-[fade-in-up_0.2s_ease-out]">
           <QuestionCard
             question={item.data}
+            showAvatar={showAvatar}
             onAnswer={(question, answer, text) => onAnswer?.(question, answer, text)}
           />
         </div>,
       );
+      lastAuthor = requester;
     } else {
       flushThinking();
+      const author = item.data.author || "agent";
+      const showAvatar = lastAuthor !== author;
       rendered.push(
         <div key={`working-${item.data.artifactId}`} className="animate-[fade-in_0.3s_ease-out]">
-          <WorkingItem bubble={item.data} />
+          <WorkingItem bubble={item.data} showAvatar={showAvatar} />
         </div>,
       );
+      lastAuthor = author;
     }
   }
   flushThinking();
