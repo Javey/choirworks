@@ -39,6 +39,8 @@ export function useConversation(contextId: string | null) {
   const viewRef = useRef(view);
   const seqRef = useRef(0);
   const genRef = useRef(0);
+  const followAbortRef = useRef<AbortController | null>(null);
+  const sendAbortRef = useRef<AbortController | null>(null);
 
   const commit = useCallback((next: ConversationView) => {
     viewRef.current = next;
@@ -62,51 +64,62 @@ export function useConversation(contextId: string | null) {
 
   const follow = useCallback(
     async (taskId: string) => {
+      followAbortRef.current?.abort();
+      const controller = new AbortController();
+      followAbortRef.current = controller;
       const generation = genRef.current;
       const client = await getClient();
       try {
-        for await (const event of client.resubscribeTask({
-          tenant: "",
-          id: taskId,
-        })) {
+        for await (const event of client.resubscribeTask(
+          { tenant: "", id: taskId },
+          { signal: controller.signal },
+        )) {
           if (generation !== genRef.current) return;
           apply(event);
         }
       } catch {
         // Task may already be terminal or cleaned up; the snapshot stays valid.
+      } finally {
+        if (followAbortRef.current === controller) {
+          followAbortRef.current = null;
+        }
       }
     },
     [apply],
   );
 
   useEffect(() => {
-    if (viewRef.current.contextId === contextId) return;
-
-    genRef.current += 1;
-    seqRef.current = 0;
-    setRawEvents([]);
-    if (!contextId) {
-      commit(emptyConversation);
-      return;
-    }
-    const generation = genRef.current;
-    void (async () => {
-      try {
-        const events = await api.getConversationEvents(contextId);
-        if (generation !== genRef.current) return;
-        for (const raw of events) {
-          apply(StreamResponse.fromJSON(raw));
-        }
-        const snapshot = viewRef.current;
-        if (snapshot.taskId && !isSettled(snapshot.state)) {
-          await follow(snapshot.taskId);
-        }
-      } catch (exc) {
-        if (generation === genRef.current) {
-          setError(exc instanceof Error ? exc.message : "加载会话失败");
-        }
+    if (viewRef.current.contextId !== contextId) {
+      genRef.current += 1;
+      seqRef.current = 0;
+      setRawEvents([]);
+      if (!contextId) {
+        commit(emptyConversation);
+      } else {
+        const generation = genRef.current;
+        void (async () => {
+          try {
+            const events = await api.getConversationEvents(contextId);
+            if (generation !== genRef.current) return;
+            for (const raw of events) {
+              apply(StreamResponse.fromJSON(raw));
+            }
+            const snapshot = viewRef.current;
+            if (snapshot.taskId && !isSettled(snapshot.state)) {
+              await follow(snapshot.taskId);
+            }
+          } catch (exc) {
+            if (generation === genRef.current) {
+              setError(exc instanceof Error ? exc.message : "加载会话失败");
+            }
+          }
+        })();
       }
-    })();
+    }
+    return () => {
+      followAbortRef.current?.abort();
+      sendAbortRef.current?.abort();
+    };
   }, [contextId, follow, commit]);
 
   const send = useCallback(
@@ -114,6 +127,7 @@ export function useConversation(contextId: string | null) {
       input: ConversationSendInput,
       onContextCreated?: (contextId: string) => void,
     ) => {
+      followAbortRef.current?.abort();
       const client = await getClient();
       const current = viewRef.current;
       const settled = isSettled(current.state);
@@ -150,24 +164,42 @@ export function useConversation(contextId: string | null) {
         referenceTaskIds: [],
       };
 
+      const controller = new AbortController();
+      sendAbortRef.current = controller;
+      const generation = genRef.current;
       let createdTaskId = taskId;
-      for await (const event of client.sendMessageStream({
-        message,
-        tenant: "",
-        configuration: undefined,
-        metadata: undefined,
-      })) {
-        apply(event);
-        const payload = (event as StreamResponse).payload;
-        if (payload?.$case === "task" && payload.value?.id) {
-          createdTaskId = payload.value.id as string;
-          const createdContextId = payload.value.contextId;
-          if (createdContextId && createdContextId !== knownContextId) {
-            knownContextId = createdContextId;
-            onContextCreated?.(createdContextId);
+      try {
+        for await (const event of client.sendMessageStream(
+          {
+            message,
+            tenant: "",
+            configuration: undefined,
+            metadata: undefined,
+          },
+          { signal: controller.signal },
+        )) {
+          if (generation !== genRef.current) return;
+          apply(event);
+          const payload = (event as StreamResponse).payload;
+          if (payload?.$case === "task" && payload.value?.id) {
+            createdTaskId = payload.value.id as string;
+            const createdContextId = payload.value.contextId;
+            if (createdContextId && createdContextId !== knownContextId) {
+              knownContextId = createdContextId;
+              onContextCreated?.(createdContextId);
+            }
           }
         }
+      } catch (exc) {
+        if ((exc as { name?: string } | null)?.name !== "AbortError") {
+          throw exc;
+        }
+      } finally {
+        if (sendAbortRef.current === controller) {
+          sendAbortRef.current = null;
+        }
       }
+      if (controller.signal.aborted || generation !== genRef.current) return;
       const latest = viewRef.current;
       if (createdTaskId && !isSettled(latest.state)) {
         await follow(createdTaskId);
