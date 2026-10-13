@@ -1,6 +1,7 @@
 import abc
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -8,8 +9,8 @@ from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent
 
 
-class BaseAgent(BaseModel, abc.ABC):
-    model_config = ConfigDict(
+class BaseAgent(BaseModel, abc.ABC): # pyright: ignore[reportUnsafeMultipleInheritance]
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         arbitrary_types_allowed=True,
         extra="forbid",
     )

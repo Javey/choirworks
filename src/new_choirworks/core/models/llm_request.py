@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from litellm.types.llms.openai import (
     ChatCompletionToolMessage,
     OpenAIChatCompletionAssistantMessage,
@@ -17,7 +19,7 @@ type ChatMessage = (
 class LLMRequest(BaseModel):
     """A request to an LLM, including the model, messages, and any additional parameters."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     model: str | None = None
     messages: list[ChatMessage] = Field(
