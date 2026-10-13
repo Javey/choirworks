@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import LLMResponse
+from litellm.types.llms.openai import ChatCompletionToolParam
 
 load_dotenv()
 
@@ -69,7 +70,7 @@ async def test_non_stream_tool_call():
         tools=[weather_tool],
     )
     results = [r async for r in llm.generate_content_async(req, stream=False)]
-    
+
     assert len(results) == 2
     function_calls = results[1].get_function_calls()
     assert len(function_calls) == 1
@@ -78,7 +79,7 @@ async def test_non_stream_tool_call():
     assert function_calls[0].id is not None
 
 
-weather_tool = {
+weather_tool: ChatCompletionToolParam = {
     "type": "function",
     "function": {
         "name": "get_weather",

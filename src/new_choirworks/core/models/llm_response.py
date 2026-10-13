@@ -24,6 +24,8 @@ class LLMResponse(BaseModel):
     )
 
     content: LLMResponseContent | None = None
+    error_code: str | None = None
+    error_message: str | None = None
 
     def get_function_calls(self) -> list[FunctionCall]:
         """返回所有 function_call parts。"""

@@ -5,6 +5,7 @@ from litellm.types.llms.openai import (
     OpenAIChatCompletionAssistantMessage,
     OpenAIChatCompletionSystemMessage,
     OpenAIChatCompletionUserMessage,
+    ChatCompletionToolParam
 )
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,4 +27,4 @@ class LLMRequest(BaseModel):
         description="The messages to pass to the LLM.", default_factory=list
     )
 
-    tools: list[dict[str, object]] | None = Field(default_factory=list)
+    tools: list[ChatCompletionToolParam] | None = Field(default_factory=list)
