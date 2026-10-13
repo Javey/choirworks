@@ -2,28 +2,11 @@
 # 借鉴 LlmResponse → LLMResponseContent → Part 三层结构，归一化 litellm Delta 的动态字段。
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-
-
-class LLMResponsePart(BaseModel):
-    """归一化的响应片段：正文或思考。"""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
-    text: str
-    thought: bool = False
-
-
-class LLMResponseContent(BaseModel):
-    """模型响应内容，含 role 和 parts。"""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
-    # role: str | None = None
-    parts: list[LLMResponsePart] = Field(default_factory=list)
 
 
 class LLMResponse(BaseModel):
@@ -35,8 +18,40 @@ class LLMResponse(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
+        arbitrary_types_allowed=True,
         alias_generator=to_camel,
         populate_by_name=True,
     )
 
     content: LLMResponseContent | None = None
+
+    def get_function_calls(self) -> list[FunctionCall]:
+        """返回所有 function_call parts。"""
+        if not self.content:
+            return []
+        return [part.function_call for part in self.content.parts if part.function_call]
+
+@dataclass
+class FunctionCall:
+    """模型发起的工具调用。"""
+
+    id: str
+    name: str
+    args: dict[str, object] | None = field(default_factory=dict)
+
+
+@dataclass
+class LLMResponsePart:
+    """归一化的响应片段：正文、思考或工具调用。"""
+
+    text: str | None = None
+    thought: bool = False
+    function_call: FunctionCall | None = None
+
+
+@dataclass
+class LLMResponseContent:
+    """模型响应内容，含 role 和 parts。"""
+
+    parts: list[LLMResponsePart] = field(default_factory=list)
+

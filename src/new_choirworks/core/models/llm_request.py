@@ -26,11 +26,4 @@ class LLMRequest(BaseModel):
         description="The messages to pass to the LLM.", default_factory=list
     )
 
-class FunctionCall(BaseModel):
-    """A function call to be made by the LLM."""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
-    id: str
-    name: str
-    arguments: str
+    tools: list[dict[str, object]] | None = Field(default_factory=list)

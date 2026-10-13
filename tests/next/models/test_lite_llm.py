@@ -54,7 +54,12 @@ async def test_stream_tool_call():
         tools=[weather_tool],
     )
     results = [r async for r in llm.generate_content_async(req, stream=True)]
-    print(results)
+
+    function_calls = [fc for r in results for fc in r.get_function_calls()]
+    assert len(function_calls) == 1
+    assert function_calls[0].name == "get_weather"
+    assert function_calls[0].args.get("city") is not None
+    assert function_calls[0].id is not None
 
 
 weather_tool = {
@@ -66,8 +71,8 @@ weather_tool = {
             "type": "object",
             "properties": {
                 "city": {"type": "string", "description": "The city to get the weather for."},
-                "required": ["city"],
             },
+            "required": ["city"]
         },
     },
 }
