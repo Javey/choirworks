@@ -20,11 +20,13 @@ from .llm_response import FunctionCall, LLMResponse, LLMResponseContent, LLMResp
 type CompletionResult = ModelResponse | CustomStreamWrapper
 type CompletionFn = Callable[..., Awaitable[CompletionResult]]
 
+
 @dataclass
 class _ToolCallBuffer:
     id: str
     name: str
     args: list[str] = field(default_factory=list)
+
 
 class LiteLLM(BaseLLM):
     completion_fn: CompletionFn = cast(CompletionFn, litellm.acompletion)
@@ -45,17 +47,17 @@ class LiteLLM(BaseLLM):
             kwargs["tools"] = llm_request.tools
         response = await self.completion_fn(**kwargs)
 
-        _gen = _stream if stream else _text
-        async for chunk in _gen(response):
+        _gen = _stream(response) if stream else _text(response)
+        async for chunk in _gen:
             yield chunk
 
-async def _stream(response: CustomStreamWrapper) -> AsyncGenerator[LLMResponse, None]:
+
+async def _stream(response: CompletionResult) -> AsyncGenerator[LLMResponse, None]:
     """处理 CustomStreamWrapper 类型的响应，生成 LLMResponse。"""
     if not isinstance(response, CustomStreamWrapper):
         raise ValueError("Expected a CustomStreamWrapper for streaming response.")
     tool_call_buffer: dict[int, _ToolCallBuffer] = {}
     async for chunk in response:
-        print(chunk)
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
@@ -82,21 +84,18 @@ async def _stream(response: CustomStreamWrapper) -> AsyncGenerator[LLMResponse, 
     if tool_call_buffer:
         for buffer in tool_call_buffer.values():
             yield _build_function_call_response(
-                function_name=buffer.name,
-                function_args="".join(buffer.args),
-                call_id=buffer.id
+                function_name=buffer.name, function_args="".join(buffer.args), call_id=buffer.id
             )
 
-async def _text(response: ModelResponse) -> AsyncGenerator[LLMResponse, None]:
+
+async def _text(response: CompletionResult) -> AsyncGenerator[LLMResponse, None]:
     """处理 ModelResponse 类型的响应，生成 LLMResponse。"""
     if not isinstance(response, ModelResponse):
         raise ValueError("Expected a ModelResponse for non-streaming response.")
     message = response.choices[0].message
-    parts=_build_parts(message)
+    parts = _build_parts(message)
     if parts:
-        yield LLMResponse(
-            content=LLMResponseContent(parts=parts)
-        )
+        yield LLMResponse(content=LLMResponseContent(parts=parts))
     if message.tool_calls:
         for call in message.tool_calls:
             if not isinstance(call, ChatCompletionMessageToolCall):
@@ -107,15 +106,17 @@ async def _text(response: ModelResponse) -> AsyncGenerator[LLMResponse, None]:
                 call_id=call.id,
             )
 
+
 def _build_parts(message: Delta | Message) -> list[LLMResponsePart]:
     parts: list[LLMResponsePart] = []
     reasoning: str | None = getattr(message, "reasoning_content", None)
-           
+
     if reasoning:
         parts.append(LLMResponsePart(text=reasoning, thought=True))
     if message.content:
         parts.append(LLMResponsePart(text=message.content, thought=False))
     return parts
+
 
 def _build_function_call_response(
     function_name: str | None, function_args: str | None, call_id: str | None

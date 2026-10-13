@@ -33,6 +33,7 @@ class LLMResponse(BaseModel):
             return []
         return [part.function_call for part in self.content.parts if part.function_call]
 
+
 @dataclass
 class FunctionCall:
     """模型发起的工具调用。"""
@@ -56,4 +57,3 @@ class LLMResponseContent:
     """模型响应内容，含 role 和 parts。"""
 
     parts: list[LLMResponsePart] = field(default_factory=list)
-

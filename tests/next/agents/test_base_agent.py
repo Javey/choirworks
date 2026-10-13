@@ -18,7 +18,7 @@ class EchoAgent(BaseAgent):
 
 
 async def test_run_async_yields_events_in_order():
-    events = [Message(), Message()]
+    events: list[A2AEvent] = [Message(), Message()]
     agent = EchoAgent(events)
     ctx = InvocationContext()
 
