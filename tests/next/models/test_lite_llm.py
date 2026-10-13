@@ -62,6 +62,22 @@ async def test_stream_tool_call():
     assert function_calls[0].id is not None
 
 
+async def test_non_stream_tool_call():
+    llm = LiteLLM(**_llm_kwargs())
+    req = LLMRequest(
+        messages=[{"role": "user", "content": "北京的天气怎么样？"}],
+        tools=[weather_tool],
+    )
+    results = [r async for r in llm.generate_content_async(req, stream=False)]
+    
+    assert len(results) == 2
+    function_calls = results[1].get_function_calls()
+    assert len(function_calls) == 1
+    assert function_calls[0].name == "get_weather"
+    assert function_calls[0].args.get("city") is not None
+    assert function_calls[0].id is not None
+
+
 weather_tool = {
     "type": "function",
     "function": {

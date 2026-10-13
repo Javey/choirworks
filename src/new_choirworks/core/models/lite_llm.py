@@ -14,14 +14,6 @@ from .llm_response import FunctionCall, LLMResponse, LLMResponseContent, LLMResp
 type CompletionResult = ModelResponse | CustomStreamWrapper
 type CompletionFn = Callable[..., Awaitable[CompletionResult]]
 
-
-@dataclass
-class _ToolCallBuffer:
-    id: str
-    name: str
-    args: list[str] | None = field(default_factory=list)
-
-
 class LiteLLM(BaseLLM):
     completion_fn: CompletionFn = cast(CompletionFn, litellm.acompletion)
     base_url: str | None = None
@@ -75,9 +67,25 @@ class LiteLLM(BaseLLM):
         else:
             if not isinstance(response, ModelResponse):
                 raise ValueError("Expected a ModelResponse for non-streaming response.")
-            yield LLMResponse(
-                content=LLMResponseContent(parts=_build_parts(response.choices[0].message))
-            )
+            message = response.choices[0].message
+            parts=_build_parts(message)
+            if parts:
+                yield LLMResponse(
+                    content=LLMResponseContent(parts=parts)
+                )
+            if message.tool_calls:
+                for call in message.tool_calls:
+                    yield _build_function_call_response(
+                        function_name=call.function.name,
+                        function_args=call.function.arguments,
+                        call_id=call.id
+                    )
+
+@dataclass
+class _ToolCallBuffer:
+    id: str
+    name: str
+    args: list[str] | None = field(default_factory=list)
 
 
 def _build_parts(message: Delta | Message) -> list[LLMResponsePart]:
