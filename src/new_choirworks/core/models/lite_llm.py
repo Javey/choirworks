@@ -115,29 +115,33 @@ def _build_parts(message: Delta | Message) -> list[LLMResponsePart]:
 def _build_function_call_response(
     function_name: str | None, function_args: str | None, call_id: str | None
 ) -> LLMResponse:
-    """构造 FunctionCall 的 LLMResponse，解析失败时返回错误响应。"""
+    """构造 FunctionCall 的 LLMResponse，解析失败时保留原始信息并设错误字段。"""
+    error_code: str | None = None
+    error_message: str | None = None
+    args: dict[str, object] = {}
+
     if not function_name:
-        return LLMResponse(
-            error_code="MALFORMED_FUNCTION_CALL",
-            error_message=f"missing function name, call_id={call_id}",
-        )
-    try:
-        args: dict[str, object] = json.loads(function_args) if function_args else {}
-    except json.JSONDecodeError as e:
-        return LLMResponse(
-            error_code="MALFORMED_FUNCTION_CALL",
-            error_message=f"invalid arguments JSON for {function_name}: {e}",
-        )
+        error_code = "MALFORMED_FUNCTION_CALL"
+        error_message = f"missing function name, call_id={call_id}"
+    else:
+        try:
+            args = json.loads(function_args) if function_args else {}
+        except json.JSONDecodeError as e:
+            error_code = "MALFORMED_FUNCTION_CALL"
+            error_message = f"invalid arguments JSON for {function_name}: {e}"
+
     return LLMResponse(
         content=LLMResponseContent(
             parts=[
                 LLMResponsePart(
                     function_call=FunctionCall(
                         id=call_id or "",
-                        name=function_name,
+                        name=function_name or "",
                         args=args,
                     ),
                 )
             ]
-        )
+        ),
+        error_code=error_code,
+        error_message=error_message,
     )
