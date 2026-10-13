@@ -2,10 +2,10 @@ from typing import ClassVar
 
 from litellm.types.llms.openai import (
     ChatCompletionToolMessage,
+    ChatCompletionToolParam,
     OpenAIChatCompletionAssistantMessage,
     OpenAIChatCompletionSystemMessage,
     OpenAIChatCompletionUserMessage,
-    ChatCompletionToolParam
 )
 from pydantic import BaseModel, ConfigDict, Field
 

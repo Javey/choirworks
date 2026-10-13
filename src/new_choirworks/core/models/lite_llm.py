@@ -45,62 +45,67 @@ class LiteLLM(BaseLLM):
             kwargs["tools"] = llm_request.tools
         response = await self.completion_fn(**kwargs)
 
-        if stream:
-            if not isinstance(response, CustomStreamWrapper):
-                raise ValueError("Expected a CustomStreamWrapper for streaming response.")
-            tool_call_buffer: dict[int, _ToolCallBuffer] = {}
-            async for chunk in response:
-                print(chunk)
-                if not chunk.choices:
+        _gen = _stream if stream else _text
+        async for chunk in _gen(response):
+            yield chunk
+
+async def _stream(response: CustomStreamWrapper) -> AsyncGenerator[LLMResponse, None]:
+    """处理 CustomStreamWrapper 类型的响应，生成 LLMResponse。"""
+    if not isinstance(response, CustomStreamWrapper):
+        raise ValueError("Expected a CustomStreamWrapper for streaming response.")
+    tool_call_buffer: dict[int, _ToolCallBuffer] = {}
+    async for chunk in response:
+        print(chunk)
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta.tool_calls:
+            for call in delta.tool_calls:
+                if not isinstance(call, ChatCompletionDeltaToolCall):
                     continue
-                delta = chunk.choices[0].delta
-                if delta.tool_calls:
-                    for call in delta.tool_calls:
-                        if not isinstance(call, ChatCompletionDeltaToolCall):
-                            continue
-                        index = call.index
-                        if index not in tool_call_buffer:
-                            tool_call_buffer[index] = _ToolCallBuffer(
-                                id=call.id or "",
-                                name=call.function.name or "",
-                                args=[],
-                            )
-                        if call.id:
-                            tool_call_buffer[index].id = call.id
-                        if call.function.name:
-                            tool_call_buffer[index].name = call.function.name
-                        if call.function.arguments:
-                            tool_call_buffer[index].args.append(call.function.arguments)
-                parts = _build_parts(delta)
-                if parts:
-                    yield LLMResponse(content=LLMResponseContent(parts=parts))
-            if tool_call_buffer:
-                for buffer in tool_call_buffer.values():
-                    yield _build_function_call_response(
-                        function_name=buffer.name,
-                        function_args="".join(buffer.args),
-                        call_id=buffer.id
+                index = call.index
+                if index not in tool_call_buffer:
+                    tool_call_buffer[index] = _ToolCallBuffer(
+                        id=call.id or "",
+                        name=call.function.name or "",
+                        args=[],
                     )
+                if call.id:
+                    tool_call_buffer[index].id = call.id
+                if call.function.name:
+                    tool_call_buffer[index].name = call.function.name
+                if call.function.arguments:
+                    tool_call_buffer[index].args.append(call.function.arguments)
+        parts = _build_parts(delta)
+        if parts:
+            yield LLMResponse(content=LLMResponseContent(parts=parts))
+    if tool_call_buffer:
+        for buffer in tool_call_buffer.values():
+            yield _build_function_call_response(
+                function_name=buffer.name,
+                function_args="".join(buffer.args),
+                call_id=buffer.id
+            )
 
-        else:
-            if not isinstance(response, ModelResponse):
-                raise ValueError("Expected a ModelResponse for non-streaming response.")
-            message = response.choices[0].message
-            parts=_build_parts(message)
-            if parts:
-                yield LLMResponse(
-                    content=LLMResponseContent(parts=parts)
-                )
-            if message.tool_calls:
-                for call in message.tool_calls:
-                    if not isinstance(call, ChatCompletionMessageToolCall):
-                        continue
-                    yield _build_function_call_response(
-                        function_name=call.function.name,
-                        function_args=call.function.arguments,
-                        call_id=call.id,
-                    )
-
+async def _text(response: ModelResponse) -> AsyncGenerator[LLMResponse, None]:
+    """处理 ModelResponse 类型的响应，生成 LLMResponse。"""
+    if not isinstance(response, ModelResponse):
+        raise ValueError("Expected a ModelResponse for non-streaming response.")
+    message = response.choices[0].message
+    parts=_build_parts(message)
+    if parts:
+        yield LLMResponse(
+            content=LLMResponseContent(parts=parts)
+        )
+    if message.tool_calls:
+        for call in message.tool_calls:
+            if not isinstance(call, ChatCompletionMessageToolCall):
+                continue
+            yield _build_function_call_response(
+                function_name=call.function.name,
+                function_args=call.function.arguments,
+                call_id=call.id,
+            )
 
 def _build_parts(message: Delta | Message) -> list[LLMResponsePart]:
     parts: list[LLMResponsePart] = []

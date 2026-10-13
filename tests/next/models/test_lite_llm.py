@@ -2,11 +2,11 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
+from litellm.types.llms.openai import ChatCompletionToolParam
 
 from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import LLMResponse
-from litellm.types.llms.openai import ChatCompletionToolParam
 
 load_dotenv()
 
