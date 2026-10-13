@@ -12,6 +12,7 @@ from .base_agent import BaseAgent
 
 class LLMAgent(BaseAgent):
     """An agent that uses a large language model (LLM) to generate responses."""
+
     llm: BaseLLM
 
     @override

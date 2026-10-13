@@ -32,3 +32,42 @@ async def test_stream_yields_responses():
         part.text for r in results if r.content for part in r.content.parts if part.thought
     )
     assert reasoning
+
+
+async def test_non_stream_yields_single_response():
+    llm = LiteLLM(**_llm_kwargs())
+    req = LLMRequest(messages=[{"role": "user", "content": "Hello"}])
+    results = [r async for r in llm.generate_content_async(req, stream=False)]
+    print(results)
+
+    assert len(results) == 1
+    parts = results[0].content.parts
+    assert len(parts) == 2
+    assert parts[0].thought is True
+    assert parts[1].thought is False
+
+
+async def test_stream_tool_call():
+    llm = LiteLLM(**_llm_kwargs())
+    req = LLMRequest(
+        messages=[{"role": "user", "content": "北京的天气怎么样？"}],
+        tools=[weather_tool],
+    )
+    results = [r async for r in llm.generate_content_async(req, stream=True)]
+    print(results)
+
+
+weather_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a given location.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "The city to get the weather for."},
+                "required": ["city"],
+            },
+        },
+    },
+}

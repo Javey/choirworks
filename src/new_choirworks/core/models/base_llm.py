@@ -8,7 +8,7 @@ from .llm_request import LLMRequest
 from .llm_response import LLMResponse
 
 
-class BaseLLM(BaseModel, abc.ABC): # pyright: ignore[reportUnsafeMultipleInheritance]
+class BaseLLM(BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     model: str

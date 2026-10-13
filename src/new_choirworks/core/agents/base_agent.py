@@ -9,7 +9,7 @@ from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent
 
 
-class BaseAgent(BaseModel, abc.ABC): # pyright: ignore[reportUnsafeMultipleInheritance]
+class BaseAgent(BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
     model_config: ClassVar[ConfigDict] = ConfigDict(
         arbitrary_types_allowed=True,
         extra="forbid",

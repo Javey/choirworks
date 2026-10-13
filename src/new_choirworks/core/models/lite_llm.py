@@ -3,7 +3,7 @@ from typing import cast, override
 
 import litellm
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
-from litellm.types.utils import ModelResponse
+from litellm.types.utils import Delta, Message, ModelResponse
 
 from .base_llm import BaseLLM
 from .llm_request import LLMRequest
@@ -35,12 +35,21 @@ class LiteLLM(BaseLLM):
             async for chunk in response:
                 if not chunk.choices:
                     continue
-                delta = chunk.choices[0].delta
-                parts: list[LLMResponsePart] = []
-                reasoning: str | None = getattr(delta, "reasoning_content", None)
-                if reasoning:
-                    parts.append(LLMResponsePart(text=reasoning, thought=True))
-                if delta.content:
-                    parts.append(LLMResponsePart(text=delta.content, thought=False))
-                if parts:
-                    yield LLMResponse(content=LLMResponseContent(parts=parts))
+                parts = _build_parts(chunk.choices[0].delta)
+                yield LLMResponse(content=LLMResponseContent(parts=parts))
+        else:
+            if not isinstance(response, ModelResponse):
+                raise ValueError("Expected a ModelResponse for non-streaming response.")
+            yield LLMResponse(
+                content=LLMResponseContent(parts=_build_parts(response.choices[0].message))
+            )
+
+
+def _build_parts(message: Delta | Message) -> list[LLMResponsePart]:
+    parts: list[LLMResponsePart] = []
+    reasoning: str | None = getattr(message, "reasoning_content", None)
+    if reasoning:
+        parts.append(LLMResponsePart(text=reasoning, thought=True))
+    if message.content:
+        parts.append(LLMResponsePart(text=message.content, thought=False))
+    return parts

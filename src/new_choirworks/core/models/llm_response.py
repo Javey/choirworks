@@ -22,7 +22,7 @@ class LLMResponseContent(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    role: str | None = None
+    # role: str | None = None
     parts: list[LLMResponsePart] = Field(default_factory=list)
 
 
