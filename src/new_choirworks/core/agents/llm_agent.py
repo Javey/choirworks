@@ -40,5 +40,6 @@ class LLMAgent(BaseAgent):
 
         artifact_id = uuid.uuid4().hex
         async for response in self.llm.generate_content_async(req, stream=True):
+            # print(response)
             yield to_a2a_artifact(ctx, response, artifact_id=artifact_id)
 

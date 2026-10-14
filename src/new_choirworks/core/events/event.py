@@ -26,17 +26,27 @@ def to_a2a_message(response: LLMResponse) -> Message:
 
 
 def to_a2a_artifact(
-    ctx: InvocationContext, response: LLMResponse, *, artifact_id: str
+    ctx: InvocationContext,
+    response: LLMResponse,
+    *,
+    artifact_id: str,
+    append: bool = False,
+    last_chunk: bool = False,
 ) -> TaskArtifactUpdateEvent:
     """Convert LLMResponse to A2A TaskArtifactUpdateEvent."""
     parts: list[Part] = []
     if response.content:
         for part in response.content.parts:
-            parts.append(Part(text=part.text))
+            if part.text is None:
+                continue
+            p = Part(text=part.text)
+            if part.thought:
+                p.metadata["thought"] = "true"
+            parts.append(p)
     return TaskArtifactUpdateEvent(
         task_id=ctx.task_id,
         context_id=ctx.context_id,
         artifact=Artifact(artifact_id=artifact_id, parts=parts),
-        append=False,
-        last_chunk=False,
+        append=append,
+        last_chunk=last_chunk,
     )

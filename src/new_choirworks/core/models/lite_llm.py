@@ -60,6 +60,7 @@ async def _stream(response: CompletionResult) -> AsyncGenerator[LLMResponse, Non
     async for chunk in response:
         if not chunk.choices:
             continue
+        # print(chunk)
         delta = chunk.choices[0].delta
         if delta.tool_calls:
             for call in delta.tool_calls:
