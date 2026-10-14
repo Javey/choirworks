@@ -1,6 +1,8 @@
 from collections.abc import AsyncGenerator
 
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
+from google.protobuf import json_format
+from litellm.types.llms.openai import ChatCompletionToolParam
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
@@ -13,6 +15,7 @@ from new_choirworks.core.models.llm_response import (
     LLMResponseContent,
     LLMResponsePart,
 )
+from new_choirworks.core.tools.base_tool import BaseTool
 
 
 class FakeLLM(BaseLLM):
@@ -193,3 +196,96 @@ async def test_text_response(llm_kwargs):
     assert artifacts[-1].last_chunk is True
     text = "".join(p.text for e in artifacts for p in e.artifact.parts if p.text)
     assert text
+
+
+# --- integration: tool call (real LLM) ---
+
+
+class WeatherTool(BaseTool):
+    """A simple weather tool for integration testing."""
+
+    name: str = "get_weather"
+    description: str = "Get the current weather for a given city."
+
+    def _get_declaration(self) -> ChatCompletionToolParam:
+        return {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the current weather for a given city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {
+                            "type": "string",
+                            "description": "The city to get the weather for.",
+                        },
+                    },
+                    "required": ["city"],
+                },
+            },
+        }
+
+    async def run_async(self, args: dict[str, object]) -> object:
+        city = args.get("city", "")
+        return {"city": city, "weather": "sunny", "temp": 25}
+
+
+async def test_tool_call_integration(llm_kwargs):
+    llm = LiteLLM(**llm_kwargs)
+    agent = LLMAgent(name="test", llm=llm, tools=[WeatherTool()])
+    ctx = InvocationContext(
+        messages=[{"role": "user", "content": "北京的天气怎么样？"}]
+    )
+
+    results = [e async for e in agent.run_async(ctx)]
+
+    # print(results)
+
+    assert len(results) > 0
+    artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]
+
+    has_function_call = any(
+        any(
+            "type" in p.metadata and p.metadata["type"] == "function_call"
+            for p in e.artifact.parts
+        )
+        for e in artifacts
+    )
+    assert has_function_call
+
+    has_function_response = any(
+        any(
+            "type" in p.metadata and p.metadata["type"] == "function_response"
+            for p in e.artifact.parts
+        )
+        for e in artifacts
+    )
+    assert has_function_response
+
+    fc_ids = [
+        json_format.MessageToDict(p.data)["id"]
+        for e in artifacts
+        for p in e.artifact.parts
+        if "type" in p.metadata and p.metadata["type"] == "function_call"
+    ]
+    fr_ids = [
+        json_format.MessageToDict(p.data)["id"]
+        for e in artifacts
+        for p in e.artifact.parts
+        if "type" in p.metadata and p.metadata["type"] == "function_response"
+    ]
+    assert fc_ids
+    assert fr_ids
+    assert set(fc_ids) == set(fr_ids)
+
+    assert artifacts[-1].last_chunk is True
+    text = "".join(
+        p.text
+        for e in artifacts
+        for p in e.artifact.parts
+        if p.text and "type" not in p.metadata
+    )
+    assert text
+
+    assert len(ctx.messages) > 1

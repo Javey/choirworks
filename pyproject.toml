@@ -39,6 +39,8 @@ packages = ["src/choirworks", "src/new_choirworks"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+log_cli = true
+log_cli_level = "INFO"
 
 [tool.ruff]
 line-length = 100

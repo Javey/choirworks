@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import cast, override
@@ -17,6 +18,8 @@ from litellm.types.utils import (
 from .base_llm import BaseLLM
 from .llm_request import LLMRequest
 from .llm_response import FunctionCall, LLMResponse, LLMResponseContent, LLMResponsePart
+
+logger = logging.getLogger(__name__)
 
 type CompletionResult = ModelResponse | CustomStreamWrapper
 type CompletionFn = Callable[..., Awaitable[CompletionResult]]
@@ -54,6 +57,20 @@ class LiteLLM(BaseLLM):
         }
         if llm_request.tools:
             kwargs["tools"] = llm_request.tools
+
+        logger.info(
+            "LLM call: model=%s, messages=%d, tools=[%s], stream=%s",
+            effective_model,
+            len(messages),
+            ", ".join(
+                t["function"]["name"]
+                for t in llm_request.tools
+            )
+            if llm_request.tools
+            else "",
+            stream,
+        )
+        
         response = await self.completion_fn(**kwargs)
 
         _gen = _stream(response) if stream else _text(response)
