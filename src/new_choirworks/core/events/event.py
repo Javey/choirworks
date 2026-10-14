@@ -56,6 +56,18 @@ def to_a2a_artifact(
                 p.data,
             )
             parts.append(p)
+        if part.function_response is not None:
+            p = Part()
+            p.metadata["type"] = "function_response"
+            json_format.ParseDict(
+                {
+                    "name": part.function_response.name,
+                    "id": part.function_response.id,
+                    "response": part.function_response.response,
+                },
+                p.data,
+            )
+            parts.append(p)
     return TaskArtifactUpdateEvent(
         task_id=ctx.task_id,
         context_id=ctx.context_id,

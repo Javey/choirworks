@@ -44,12 +44,22 @@ class FunctionCall:
 
 
 @dataclass
+class FunctionResponse:
+    """工具执行结果。"""
+
+    id: str
+    name: str
+    response: dict[str, object]
+
+
+@dataclass
 class LLMResponsePart:
     """归一化的响应片段：正文、思考或工具调用。"""
 
     text: str | None = None
     thought: bool = False
     function_call: FunctionCall | None = None
+    function_response: FunctionResponse | None = None
 
 
 @dataclass

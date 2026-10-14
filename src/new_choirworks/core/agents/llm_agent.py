@@ -16,6 +16,7 @@ from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import ChatMessage, LLMRequest
 from new_choirworks.core.models.llm_response import (
     FunctionCall,
+    FunctionResponse,
     LLMResponse,
     LLMResponseContent,
     LLMResponsePart,
@@ -88,17 +89,20 @@ class LLMAgent(BaseAgent):
             if not function_calls:
                 break
 
-            await self._execute_tools(function_calls, tools_dict, ctx.messages, text_buf)
+            async for event in self._execute_tools(
+                function_calls, tools_dict, ctx, text_buf
+            ):
+                yield event
 
     async def _execute_tools(
         self,
         function_calls: list[FunctionCall],
         tools_dict: dict[str, BaseTool],
-        messages: list[ChatMessage],
+        ctx: InvocationContext,
         text_buf: list[str],
-    ) -> None:
-        """Execute tools and append assistant message + tool results to messages."""
-        messages.append(
+    ) -> AsyncGenerator[A2AEvent, None]:
+        """Execute tools, yield function_response events, append messages."""
+        ctx.messages.append(
             OpenAIChatCompletionAssistantMessage(
                 role="assistant",
                 content="".join(text_buf) or None,
@@ -120,12 +124,33 @@ class LLMAgent(BaseAgent):
             tool = tools_dict[fc.name]
             result = await tool.run_async(fc.args or {})
             normalized = result if isinstance(result, dict) else {"result": result}
-            messages.append(
+
+            ctx.messages.append(
                 ChatCompletionToolMessage(
                     role="tool",
                     content=json.dumps(normalized),
                     tool_call_id=fc.id,
                 )
+            )
+
+            yield to_a2a_artifact(
+                ctx,
+                LLMResponse(
+                    content=LLMResponseContent(
+                        parts=[
+                            LLMResponsePart(
+                                function_response=FunctionResponse(
+                                    id=fc.id,
+                                    name=fc.name,
+                                    response=normalized,
+                                )
+                            )
+                        ]
+                    )
+                ),
+                artifact_id=uuid.uuid4().hex,
+                append=False,
+                last_chunk=True,
             )
 
     def _close(
