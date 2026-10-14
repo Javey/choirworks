@@ -8,6 +8,7 @@ from a2a.types.a2a_pb2 import (
     TaskArtifactUpdateEvent,
     TaskStatusUpdateEvent,
 )
+from google.protobuf import json_format
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.models.llm_response import LLMResponse
@@ -35,15 +36,26 @@ def to_a2a_artifact(
 ) -> TaskArtifactUpdateEvent:
     """Convert LLMResponse to A2A TaskArtifactUpdateEvent."""
     assert response.content
-    
+
     parts: list[Part] = []
     for part in response.content.parts:
-        if part.text is None:
-            continue
-        p = Part(text=part.text)
-        if part.thought:
-            p.metadata["thought"] = "true"
-        parts.append(p)
+        if part.text is not None:
+            p = Part(text=part.text)
+            if part.thought:
+                p.metadata["thought"] = "true"
+            parts.append(p)
+        if part.function_call is not None:
+            p = Part()
+            p.metadata["type"] = "function_call"
+            json_format.ParseDict(
+                {
+                    "name": part.function_call.name,
+                    "args": part.function_call.args or {},
+                    "id": part.function_call.id,
+                },
+                p.data,
+            )
+            parts.append(p)
     return TaskArtifactUpdateEvent(
         task_id=ctx.task_id,
         context_id=ctx.context_id,

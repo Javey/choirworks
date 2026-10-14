@@ -26,5 +26,5 @@ class LLMRequest(BaseModel):
     messages: list[ChatMessage] = Field(
         description="The messages to pass to the LLM.", default_factory=list
     )
-
+    system_instruction: str | None = None
     tools: list[ChatCompletionToolParam] | None = Field(default_factory=list)

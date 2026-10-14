@@ -81,7 +81,7 @@ weather_tool: ChatCompletionToolParam = {
             "properties": {
                 "city": {"type": "string", "description": "The city to get the weather for."},
             },
-            "required": ["city"]
+            "required": ["city"],
         },
     },
 }

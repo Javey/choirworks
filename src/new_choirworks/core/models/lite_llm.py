@@ -5,6 +5,7 @@ from typing import cast, override
 
 import litellm
 from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
+from litellm.types.llms.openai import OpenAIChatCompletionSystemMessage
 from litellm.types.utils import (
     ChatCompletionDeltaToolCall,
     ChatCompletionMessageToolCall,
@@ -37,9 +38,17 @@ class LiteLLM(BaseLLM):
         self, llm_request: LLMRequest, stream: bool = False
     ) -> AsyncGenerator[LLMResponse, None]:
         effective_model = llm_request.model or self.model
+        messages = list(llm_request.messages)
+        if llm_request.system_instruction:
+            messages.insert(
+                0,
+                OpenAIChatCompletionSystemMessage(
+                    role="system", content=llm_request.system_instruction
+                ),
+            )
         kwargs: dict[str, object] = {
             "model": effective_model,
-            "messages": llm_request.messages,
+            "messages": messages,
             "stream": stream,
             "base_url": self.base_url,
         }

@@ -30,16 +30,12 @@ class FakeLLM(BaseLLM):
 
 def _chunk(text: str, thought: bool = False) -> LLMResponse:
     return LLMResponse(
-        content=LLMResponseContent(
-            parts=[LLMResponsePart(text=text, thought=thought)]
-        )
+        content=LLMResponseContent(parts=[LLMResponsePart(text=text, thought=thought)])
     )
 
 
 def _ctx() -> InvocationContext:
-    return InvocationContext(
-        task_id="task-1", context_id="ctx-1"
-    )
+    return InvocationContext(task_id="task-1", context_id="ctx-1")
 
 
 # --- to_a2a_artifact ---
@@ -54,9 +50,7 @@ def test_to_a2a_artifact_skips_none_text():
             ]
         )
     )
-    event = to_a2a_artifact(
-        _ctx(), response, artifact_id="aid", append=True, last_chunk=False
-    )
+    event = to_a2a_artifact(_ctx(), response, artifact_id="aid", append=True, last_chunk=False)
     assert event.artifact.parts[0].text == "hello"
     assert len(event.artifact.parts) == 1
 
@@ -70,9 +64,7 @@ def test_to_a2a_artifact_marks_thought():
             ]
         )
     )
-    event = to_a2a_artifact(
-        _ctx(), response, artifact_id="aid", append=False, last_chunk=True
-    )
+    event = to_a2a_artifact(_ctx(), response, artifact_id="aid", append=False, last_chunk=True)
     assert event.artifact.parts[0].metadata["thought"] == "true"
     assert "thought" not in event.artifact.parts[1].metadata
     assert event.append is False
@@ -84,7 +76,7 @@ def test_to_a2a_artifact_marks_thought():
 
 def test_close_merges_thought_and_text():
     agent = LLMAgent(name="t", llm=FakeLLM(responses=[]))
-    result = agent._close(["reasoning"], ["answer"])
+    result = agent._close(["reasoning"], ["answer"], [])
     assert result is not None
     assert result.content is not None
     parts = result.content.parts
@@ -96,7 +88,7 @@ def test_close_merges_thought_and_text():
 
 def test_close_returns_none_for_empty_buffers():
     agent = LLMAgent(name="t", llm=FakeLLM(responses=[]))
-    result = agent._close([], [])
+    result = agent._close([], [], [])
     assert result is None
 
 
@@ -176,16 +168,13 @@ async def test_instruction_added_as_system_message():
             return
             yield  # make it a generator
 
-    agent = LLMAgent(
-        name="t", llm=CaptureLLM(), instruction="You are helpful."
-    )
+    agent = LLMAgent(name="t", llm=CaptureLLM(), instruction="You are helpful.")
     ctx = InvocationContext(messages=[{"role": "user", "content": "Hi"}])
     _ = [e async for e in agent.run_async(ctx)]
 
     req = captured[0]
-    assert req.messages[0]["role"] == "system"
-    assert req.messages[0]["content"] == "You are helpful."
-    assert req.messages[1]["role"] == "user"
+    assert req.system_instruction == "You are helpful."
+    assert req.messages[0]["role"] == "user"
 
 
 # --- integration (real LLM) ---
@@ -202,7 +191,5 @@ async def test_text_response(llm_kwargs):
     artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]
     assert len(artifacts) > 0
     assert artifacts[-1].last_chunk is True
-    text = "".join(
-        p.text for e in artifacts for p in e.artifact.parts if p.text
-    )
+    text = "".join(p.text for e in artifacts for p in e.artifact.parts if p.text)
     assert text
