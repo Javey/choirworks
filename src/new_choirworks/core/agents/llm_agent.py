@@ -1,6 +1,9 @@
+import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import cast, override
+
+from pydantic import BaseModel
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent, to_a2a_artifact
@@ -13,6 +16,7 @@ from new_choirworks.core.models.llm_response import (
     LLMResponsePart,
 )
 from new_choirworks.core.tools.base_tool import BaseTool
+from new_choirworks.core.utils.schema_utils import validate_schema
 
 from .base_agent import BaseAgent
 
@@ -24,6 +28,7 @@ class LLMAgent(BaseAgent):
     instruction: str = ""
     tools: list[BaseTool] = []
     max_retries: int = 3
+    output_schema: type[BaseModel] | None = None
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
@@ -42,6 +47,7 @@ class LLMAgent(BaseAgent):
                 messages=ctx.messages,
                 tools=tool_params or None,
                 system_instruction=self.instruction or None,
+                response_schema=self.output_schema,
             )
 
             artifact_id = uuid.uuid4().hex
@@ -75,14 +81,20 @@ class LLMAgent(BaseAgent):
                     error_message = response.error_message or ""
 
             final_response = self.close(thought_buf, text_buf, function_calls)
+            structured: str | None = None
+            if not function_calls and self.output_schema is not None:
+                structured = json.dumps(validate_schema(self.output_schema, "".join(text_buf)))
             if final_response:
-                yield to_a2a_artifact(
+                event = to_a2a_artifact(
                     ctx,
                     final_response,
                     artifact_id=artifact_id,
                     append=False,
                     last_chunk=True,
                 )
+                if structured is not None:
+                    event.metadata["structured_output"] = structured
+                yield event
 
             if not function_calls:
                 break

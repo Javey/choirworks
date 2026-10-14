@@ -51,7 +51,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 ignore = ["B008"]  # FastAPI Depends() 在默认参数中调用是标准用法
 
 [tool.basedpyright]
-include = ["src/new_choirworks/**"]
+include = ["src/new_choirworks/**", "tests/next/**"]
 # 项目内存在有意为之的类型层循环（TYPE_CHECKING + 函数内延迟导入），
 # 运行时无循环；保持可见但不再作为错误阻断。
 reportImportCycles = "warning"

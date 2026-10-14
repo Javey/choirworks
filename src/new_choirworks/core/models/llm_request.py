@@ -28,3 +28,4 @@ class LLMRequest(BaseModel):
     )
     system_instruction: str | None = None
     tools: list[ChatCompletionToolParam] | None = Field(default_factory=list)
+    response_schema: type[BaseModel] | None = None

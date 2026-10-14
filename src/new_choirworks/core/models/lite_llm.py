@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -14,6 +15,7 @@ from litellm.types.utils import (
     Message,
     ModelResponse,
 )
+from pydantic import BaseModel
 
 from .base_llm import BaseLLM
 from .llm_request import LLMRequest
@@ -57,6 +59,8 @@ class LiteLLM(BaseLLM):
         }
         if llm_request.tools:
             kwargs["tools"] = llm_request.tools
+        if llm_request.response_schema:
+            kwargs["response_format"] = _to_response_format(llm_request.response_schema)
 
         logger.info(
             "LLM call: model=%s, messages=%d, tools=[%s], stream=%s",
@@ -175,3 +179,65 @@ def _build_function_call_response(
         error_code=error_code,
         error_message=error_message,
     )
+
+
+def _enforce_strict_openai_schema(schema: dict[str, object]) -> None:
+    """Recursively transforms a JSON schema for OpenAI strict structured outputs.
+
+    OpenAI strict mode requires:
+    1. additionalProperties: false on all object schemas (including nested/$defs).
+    2. All properties listed in 'required' (no optional omissions).
+    3. $ref nodes must have no sibling keywords (e.g., no 'description' next to '$ref').
+
+    This function mutates the schema dict in place.
+
+    Design reference: google-adk models/lite_llm.py _enforce_strict_openai_schema
+    (Apache-2.0, Copyright 2026 Google LLC).
+    """
+    if "$ref" in schema:
+        for key in list(schema.keys()):
+            if key != "$ref":
+                del schema[key]
+        return
+
+    if schema.get("type") == "object" and "properties" in schema:
+        schema["additionalProperties"] = False
+        properties = cast(dict[str, object], schema["properties"])
+        schema["required"] = sorted(properties.keys())
+
+    defs = cast(dict[str, object], schema.get("$defs", {}))
+    for defn in defs.values():
+        if isinstance(defn, dict):
+            _enforce_strict_openai_schema(cast(dict[str, object], defn))
+
+    props = cast(dict[str, object], schema.get("properties", {}))
+    for prop in props.values():
+        if isinstance(prop, dict):
+            _enforce_strict_openai_schema(cast(dict[str, object], prop))
+
+    for key in ("anyOf", "oneOf", "allOf"):
+        items = cast(list[object], schema.get(key, []))
+        for item in items:
+            if isinstance(item, dict):
+                _enforce_strict_openai_schema(cast(dict[str, object], item))
+
+    if "items" in schema and isinstance(schema["items"], dict):
+        _enforce_strict_openai_schema(cast(dict[str, object], schema["items"]))
+
+
+def _to_response_format(schema: type[BaseModel]) -> dict[str, object]:
+    """Convert a Pydantic model to OpenAI json_schema response_format.
+
+    Design reference: google-adk models/lite_llm.py _to_litellm_response_format
+    (Apache-2.0, Copyright 2026 Google LLC).
+    """
+    schema_dict: dict[str, object] = copy.deepcopy(schema.model_json_schema())
+    _enforce_strict_openai_schema(schema_dict)
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema.__name__,
+            "strict": True,
+            "schema": schema_dict,
+        },
+    }

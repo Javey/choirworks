@@ -2,9 +2,11 @@ import json
 from collections.abc import AsyncGenerator
 from typing import cast, override
 
+import pytest
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 from google.protobuf import json_format
 from litellm.types.llms.openai import ChatCompletionToolParam
+from pydantic import BaseModel, ValidationError
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
@@ -414,3 +416,139 @@ async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     assert text
 
     assert len(ctx.messages) > 1
+
+
+# --- unit: structured output (FakeLLM) --
+
+
+class _OutputSchema(BaseModel):
+    name: str
+    age: int
+
+
+async def test_structured_output_passes_schema_to_request():
+    """LLMRequest.response_schema is set from LLMAgent.output_schema."""
+    captured: list[LLMRequest] = []
+
+    def responder(_i: int, req: LLMRequest) -> list[LLMResponse]:
+        captured.append(req)
+        return [_chunk('{"name": "Alice", "age": 30}')]
+
+    llm = FakeLLM(responder=responder)
+    agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    _ = [e async for e in agent.run_async(ctx)]
+
+    assert captured[0].response_schema is _OutputSchema
+
+
+async def test_structured_output_valid_json():
+    """Valid JSON text → structured_output in final artifact metadata."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk('{"name": "Alice", "age": 30}')])
+    agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+    last = artifacts[-1]
+    assert last.last_chunk is True
+    assert "structured_output" in last.metadata
+
+    output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
+    assert output == {"name": "Alice", "age": 30}
+
+
+async def test_structured_output_strips_code_fence():
+    """Code-fenced JSON is accepted and validated."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk('```json\n{"name": "Bob", "age": 25}\n```')])
+    agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+    last = artifacts[-1]
+    assert "structured_output" in last.metadata
+    output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
+    assert output == {"name": "Bob", "age": 25}
+
+
+async def test_structured_output_invalid_json_raises():
+    """Invalid JSON → ValidationError, no structured_output, ctx.messages not polluted."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk("not json at all")])
+    agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    with pytest.raises(ValidationError, match="Invalid JSON"):
+        _ = [e async for e in agent.run_async(ctx)]
+
+    assert len(ctx.messages) == 1
+
+
+async def test_structured_output_empty_text_raises():
+    """Empty model output → ValidationError (no silent success)."""
+    llm = FakeLLM(responder=lambda i, r: [])
+    agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    with pytest.raises(ValidationError):
+        _ = [e async for e in agent.run_async(ctx)]
+
+
+async def test_structured_output_with_tools_intermediate_round():
+    """tools + schema: intermediate round (text + function_call) is NOT validated;
+    final round valid JSON → structured_output."""
+
+    def responder(i: int, _r: LLMRequest) -> list[LLMResponse]:
+        if i == 0:
+            return [_chunk("let me check"), _fc_chunk(name="fake_tool", id="call_1")]
+        return [_chunk('{"name": "Alice", "age": 30}')]
+
+    llm = FakeLLM(responder=responder)
+    tool = FakeTool(name="fake_tool", result={"ok": True})
+    agent = LLMAgent(name="t", llm=llm, tools=[tool], output_schema=_OutputSchema)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+
+    last = artifacts[-1]
+    assert last.last_chunk is True
+    assert "structured_output" in last.metadata
+    output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
+    assert output == {"name": "Alice", "age": 30}
+
+
+# --- integration: structured output (real LLM) ---
+
+
+class _WeatherReport(BaseModel):
+    city: str
+    weather: str
+    temperature: int
+
+
+async def test_structured_output_integration(llm_kwargs: LLMKwargs):
+    llm = LiteLLM(**llm_kwargs)
+    agent = LLMAgent(
+        name="test",
+        llm=llm,
+        output_schema=_WeatherReport,
+        instruction="Return weather information as structured JSON.",
+    )
+    ctx = InvocationContext(
+        messages=[{"role": "user", "content": "北京今天晴，25度。请返回结构化天气信息。"}]
+    )
+
+    results = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(artifacts) > 0
+
+    last = artifacts[-1]
+    assert last.last_chunk is True
+    assert "structured_output" in last.metadata
+
+    output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
+    assert output["city"] == "北京"
+    assert output["weather"] == "晴"
+    assert output["temperature"] == 25
