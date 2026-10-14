@@ -1,19 +1,11 @@
-import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import override
 
-from litellm.types.llms.openai import (
-    ChatCompletionAssistantToolCall,
-    ChatCompletionToolCallFunctionChunk,
-    ChatCompletionToolMessage,
-    OpenAIChatCompletionAssistantMessage,
-)
-
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent, to_a2a_artifact
 from new_choirworks.core.models.base_llm import BaseLLM
-from new_choirworks.core.models.llm_request import ChatMessage, LLMRequest
+from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
     FunctionCall,
     FunctionResponse,
@@ -89,9 +81,7 @@ class LLMAgent(BaseAgent):
             if not function_calls:
                 break
 
-            async for event in self._execute_tools(
-                function_calls, tools_dict, ctx, text_buf
-            ):
+            async for event in self._execute_tools(function_calls, tools_dict, ctx):
                 yield event
 
     async def _execute_tools(
@@ -99,39 +89,12 @@ class LLMAgent(BaseAgent):
         function_calls: list[FunctionCall],
         tools_dict: dict[str, BaseTool],
         ctx: InvocationContext,
-        text_buf: list[str],
     ) -> AsyncGenerator[A2AEvent, None]:
-        """Execute tools, yield function_response events, append messages."""
-        ctx.messages.append(
-            OpenAIChatCompletionAssistantMessage(
-                role="assistant",
-                content="".join(text_buf) or None,
-                tool_calls=[
-                    ChatCompletionAssistantToolCall(
-                        id=fc.id,
-                        type="function",
-                        function=ChatCompletionToolCallFunctionChunk(
-                            name=fc.name,
-                            arguments=json.dumps(fc.args),
-                        ),
-                    )
-                    for fc in function_calls
-                ],
-            )
-        )
-
+        """Execute tools and yield function_response events."""
         for fc in function_calls:
             tool = tools_dict[fc.name]
             result = await tool.run_async(fc.args or {})
             normalized = result if isinstance(result, dict) else {"result": result}
-
-            ctx.messages.append(
-                ChatCompletionToolMessage(
-                    role="tool",
-                    content=json.dumps(normalized),
-                    tool_call_id=fc.id,
-                )
-            )
 
             yield to_a2a_artifact(
                 ctx,
