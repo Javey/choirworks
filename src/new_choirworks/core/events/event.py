@@ -34,15 +34,16 @@ def to_a2a_artifact(
     last_chunk: bool = False,
 ) -> TaskArtifactUpdateEvent:
     """Convert LLMResponse to A2A TaskArtifactUpdateEvent."""
+    assert response.content
+    
     parts: list[Part] = []
-    if response.content:
-        for part in response.content.parts:
-            if part.text is None:
-                continue
-            p = Part(text=part.text)
-            if part.thought:
-                p.metadata["thought"] = "true"
-            parts.append(p)
+    for part in response.content.parts:
+        if part.text is None:
+            continue
+        p = Part(text=part.text)
+        if part.thought:
+            p.metadata["thought"] = "true"
+        parts.append(p)
     return TaskArtifactUpdateEvent(
         task_id=ctx.task_id,
         context_id=ctx.context_id,
