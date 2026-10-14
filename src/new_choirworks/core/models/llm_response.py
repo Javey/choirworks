@@ -33,6 +33,25 @@ class LLMResponse(BaseModel):
             return []
         return [part.function_call for part in self.content.parts if part.function_call]
 
+    @classmethod
+    def from_function_response(
+        cls, fc: FunctionCall, response: dict[str, object]
+    ) -> LLMResponse:
+        """Build an LLMResponse containing a single function_response part."""
+        return cls(
+            content=LLMResponseContent(
+                parts=[
+                    LLMResponsePart(
+                        function_response=FunctionResponse(
+                            id=fc.id,
+                            name=fc.name or "",
+                            response=response,
+                        )
+                    )
+                ]
+            )
+        )
+
 
 @dataclass
 class FunctionCall:

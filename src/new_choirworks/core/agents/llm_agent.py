@@ -24,6 +24,7 @@ class LLMAgent(BaseAgent):
     llm: BaseLLM
     instruction: str = ""
     tools: list[BaseTool] = []
+    max_retries: int = 3
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
@@ -34,6 +35,8 @@ class LLMAgent(BaseAgent):
 
         tool_params = [t._get_declaration() for t in self.tools]
         tools_dict = {t.name: t for t in self.tools}
+
+        retry_count = 0
 
         while True:
             req = LLMRequest(
@@ -46,6 +49,7 @@ class LLMAgent(BaseAgent):
             thought_buf: list[str] = []
             text_buf: list[str] = []
             function_calls: list[FunctionCall] = []
+            error_message = ""
 
             async for response in self.llm.generate_content_async(req, stream=True):
                 if not response.content:
@@ -68,6 +72,9 @@ class LLMAgent(BaseAgent):
                     if part.function_call is not None:
                         function_calls.append(part.function_call)
 
+                if response.error_code:
+                    error_message = response.error_message or ""
+
             final_response = self._close(thought_buf, text_buf, function_calls)
             if final_response:
                 yield to_a2a_artifact(
@@ -80,6 +87,20 @@ class LLMAgent(BaseAgent):
 
             if not function_calls:
                 break
+
+            if error_message:
+                retry_count += 1
+                for fc in function_calls:
+                    yield to_a2a_artifact(
+                        ctx,
+                        LLMResponse.from_function_response(fc, {"error": error_message}),
+                        artifact_id=uuid.uuid4().hex,
+                        append=False,
+                        last_chunk=True,
+                    )
+                if retry_count >= self.max_retries:
+                    break
+                continue
 
             async for event in self._execute_tools(function_calls, tools_dict, ctx):
                 yield event
@@ -98,19 +119,7 @@ class LLMAgent(BaseAgent):
 
             yield to_a2a_artifact(
                 ctx,
-                LLMResponse(
-                    content=LLMResponseContent(
-                        parts=[
-                            LLMResponsePart(
-                                function_response=FunctionResponse(
-                                    id=fc.id,
-                                    name=fc.name,
-                                    response=normalized,
-                                )
-                            )
-                        ]
-                    )
-                ),
+                LLMResponse.from_function_response(fc, normalized),
                 artifact_id=uuid.uuid4().hex,
                 append=False,
                 last_chunk=True,
