@@ -1,3 +1,5 @@
+from typing import override
+
 from a2a.types.a2a_pb2 import Message
 
 from new_choirworks.core.agents.base_agent import BaseAgent
@@ -10,6 +12,7 @@ class EchoAgent(BaseAgent):
     description: str = "An agent that echoes messages."
     events: list[A2AEvent]
 
+    @override
     async def _run_async_impl(self, ctx: InvocationContext):
         for event in self.events:
             yield event
@@ -20,7 +23,7 @@ async def test_run_async_yields_events_in_order():
     agent = EchoAgent(events=events)
     ctx = InvocationContext()
 
-    yielded_events = []
+    yielded_events: list[A2AEvent] = []
     async for event in agent.run_async(ctx):
         yielded_events.append(event)
 

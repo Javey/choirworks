@@ -4,8 +4,10 @@ from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import LLMResponse
 
+from ..conftest import LLMKwargs
 
-async def test_stream_yields_responses(llm_kwargs):
+
+async def test_stream_yields_responses(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     req = LLMRequest(messages=[{"role": "user", "content": "Hello"}])
     results = [r async for r in llm.generate_content_async(req, stream=True)]
@@ -32,7 +34,7 @@ async def test_stream_yields_responses(llm_kwargs):
     assert reasoning
 
 
-async def test_non_stream_yields_single_response(llm_kwargs):
+async def test_non_stream_yields_single_response(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     req = LLMRequest(messages=[{"role": "user", "content": "Hello"}])
     results = [r async for r in llm.generate_content_async(req, stream=False)]
@@ -46,7 +48,7 @@ async def test_non_stream_yields_single_response(llm_kwargs):
     assert parts[1].thought is False
 
 
-async def test_stream_tool_call(llm_kwargs):
+async def test_stream_tool_call(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     req = LLMRequest(
         messages=[{"role": "user", "content": "北京的天气怎么样？"}],
@@ -62,7 +64,7 @@ async def test_stream_tool_call(llm_kwargs):
     assert function_calls[0].id is not None
 
 
-async def test_non_stream_tool_call(llm_kwargs):
+async def test_non_stream_tool_call(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     req = LLMRequest(
         messages=[{"role": "user", "content": "北京的天气怎么样？"}],

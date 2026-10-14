@@ -62,15 +62,12 @@ class LiteLLM(BaseLLM):
             "LLM call: model=%s, messages=%d, tools=[%s], stream=%s",
             effective_model,
             len(messages),
-            ", ".join(
-                t["function"]["name"]
-                for t in llm_request.tools
-            )
+            ", ".join(t["function"]["name"] for t in llm_request.tools)
             if llm_request.tools
             else "",
             stream,
         )
-        
+
         response = await self.completion_fn(**kwargs)
 
         _gen = _stream(response) if stream else _text(response)

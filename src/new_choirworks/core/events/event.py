@@ -45,14 +45,10 @@ def to_chat_message(response: LLMResponse) -> ChatMessage | None:
         return None
 
     text = "".join(
-        part.text
-        for part in response.content.parts
-        if part.text is not None and not part.thought
+        part.text for part in response.content.parts if part.text is not None and not part.thought
     )
     function_calls = [
-        part.function_call
-        for part in response.content.parts
-        if part.function_call is not None
+        part.function_call for part in response.content.parts if part.function_call is not None
     ]
     function_responses = [
         part.function_response
@@ -114,7 +110,7 @@ def to_a2a_artifact(
         if part.function_call is not None:
             p = Part()
             p.metadata["type"] = "function_call"
-            json_format.ParseDict(
+            _ = json_format.ParseDict(
                 {
                     "name": part.function_call.name,
                     "args": part.function_call.args or {},
@@ -126,7 +122,7 @@ def to_a2a_artifact(
         if part.function_response is not None:
             p = Part()
             p.metadata["type"] = "function_response"
-            json_format.ParseDict(
+            _ = json_format.ParseDict(
                 {
                     "name": part.function_response.name,
                     "id": part.function_response.id,

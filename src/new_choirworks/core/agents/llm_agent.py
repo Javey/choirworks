@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import AsyncGenerator
-from typing import override
+from typing import cast, override
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent, to_a2a_artifact
@@ -74,7 +74,7 @@ class LLMAgent(BaseAgent):
                 if response.error_code:
                     error_message = response.error_message or ""
 
-            final_response = self._close(thought_buf, text_buf, function_calls)
+            final_response = self.close(thought_buf, text_buf, function_calls)
             if final_response:
                 yield to_a2a_artifact(
                     ctx,
@@ -114,7 +114,9 @@ class LLMAgent(BaseAgent):
         for fc in function_calls:
             tool = tools_dict[fc.name]
             result = await tool.run_async(fc.args or {})
-            normalized = result if isinstance(result, dict) else {"result": result}
+            normalized = (
+                cast(dict[str, object], result) if isinstance(result, dict) else {"result": result}
+            )
 
             yield to_a2a_artifact(
                 ctx,
@@ -124,7 +126,7 @@ class LLMAgent(BaseAgent):
                 last_chunk=True,
             )
 
-    def _close(
+    def close(
         self,
         thought_buf: list[str],
         text_buf: list[str],
@@ -138,7 +140,7 @@ class LLMAgent(BaseAgent):
             final_parts.append(LLMResponsePart(text="".join(text_buf), thought=False))
         for fc in function_calls:
             final_parts.append(LLMResponsePart(function_call=fc))
-            
+
         if not final_parts:
             return None
         return LLMResponse(content=LLMResponseContent(parts=final_parts))
