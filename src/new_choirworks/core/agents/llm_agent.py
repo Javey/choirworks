@@ -50,6 +50,7 @@ class LLMAgent(BaseAgent):
         async for response in self.llm.generate_content_async(req, stream=True):
             if not response.content:
                 continue
+            
             yield to_a2a_artifact(
                 ctx,
                 response,
