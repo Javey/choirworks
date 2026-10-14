@@ -8,7 +8,6 @@ from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
     FunctionCall,
-    FunctionResponse,
     LLMResponse,
     LLMResponseContent,
     LLMResponsePart,
@@ -33,7 +32,7 @@ class LLMAgent(BaseAgent):
         if not ctx.context_id:
             ctx.context_id = str(uuid.uuid4())
 
-        tool_params = [t._get_declaration() for t in self.tools]
+        tool_params = [t.get_declaration() for t in self.tools]
         tools_dict = {t.name: t for t in self.tools}
 
         retry_count = 0

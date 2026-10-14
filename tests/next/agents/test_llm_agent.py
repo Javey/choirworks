@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncGenerator
 
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
@@ -11,29 +12,45 @@ from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
+    FunctionCall,
     LLMResponse,
     LLMResponseContent,
     LLMResponsePart,
 )
 from new_choirworks.core.tools.base_tool import BaseTool
 
-
-class FakeLLM(BaseLLM):
-    """A fake LLM that yields predefined responses for deterministic testing."""
-
-    model: str = "fake"
-    responses: list[LLMResponse]
-
-    async def generate_content_async(
-        self, llm_request: LLMRequest, stream: bool = False
-    ) -> AsyncGenerator[LLMResponse, None]:
-        for r in self.responses:
-            yield r
+from ..conftest import FakeLLM, FakeTool
 
 
 def _chunk(text: str, thought: bool = False) -> LLMResponse:
     return LLMResponse(
         content=LLMResponseContent(parts=[LLMResponsePart(text=text, thought=thought)])
+    )
+
+
+def _fc_chunk(
+    name: str = "fake_tool", args: str = "{}", id: str = "call_1"
+) -> LLMResponse:
+    return LLMResponse(
+        content=LLMResponseContent(
+            parts=[
+                LLMResponsePart(
+                    function_call=FunctionCall(id=id, name=name, args=json.loads(args))
+                )
+            ]
+        )
+    )
+
+
+def _error_fc_chunk(
+    name: str = "", id: str = "call_1", error_msg: str = "missing function name"
+) -> LLMResponse:
+    return LLMResponse(
+        content=LLMResponseContent(
+            parts=[LLMResponsePart(function_call=FunctionCall(id=id, name=name, args={}))]
+        ),
+        error_code="MALFORMED_FUNCTION_CALL",
+        error_message=error_msg,
     )
 
 
@@ -78,7 +95,7 @@ def test_to_a2a_artifact_marks_thought():
 
 
 def test_close_merges_thought_and_text():
-    agent = LLMAgent(name="t", llm=FakeLLM(responses=[]))
+    agent = LLMAgent(name="t", llm=FakeLLM(responder=lambda i, r: []))
     result = agent._close(["reasoning"], ["answer"], [])
     assert result is not None
     assert result.content is not None
@@ -90,7 +107,7 @@ def test_close_merges_thought_and_text():
 
 
 def test_close_returns_none_for_empty_buffers():
-    agent = LLMAgent(name="t", llm=FakeLLM(responses=[]))
+    agent = LLMAgent(name="t", llm=FakeLLM(responder=lambda i, r: []))
     result = agent._close([], [], [])
     assert result is None
 
@@ -99,7 +116,7 @@ def test_close_returns_none_for_empty_buffers():
 
 
 async def test_append_last_chunk_semantics():
-    llm = FakeLLM(responses=[_chunk("a"), _chunk("b"), _chunk("c")])
+    llm = FakeLLM(responder=lambda i, r: [_chunk("a"), _chunk("b"), _chunk("c")])
     agent = LLMAgent(name="t", llm=llm)
     events = [e async for e in agent.run_async(_ctx())]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -120,7 +137,7 @@ async def test_append_last_chunk_semantics():
 
 
 async def test_seal_contains_full_text():
-    llm = FakeLLM(responses=[_chunk("你"), _chunk("好"), _chunk("！")])
+    llm = FakeLLM(responder=lambda i, r: [_chunk("你"), _chunk("好"), _chunk("！")])
     agent = LLMAgent(name="t", llm=llm)
     events = [e async for e in agent.run_async(_ctx())]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -136,10 +153,7 @@ async def test_seal_contains_full_text():
 
 async def test_thought_metadata():
     llm = FakeLLM(
-        responses=[
-            _chunk("thinking...", thought=True),
-            _chunk("answer", thought=False),
-        ]
+        responder=lambda i, r: [_chunk("thinking...", thought=True), _chunk("answer")]
     )
     agent = LLMAgent(name="t", llm=llm)
     events = [e async for e in agent.run_async(_ctx())]
@@ -180,6 +194,132 @@ async def test_instruction_added_as_system_message():
     assert req.messages[0]["role"] == "user"
 
 
+# --- tool call flow (unit) ---
+
+
+async def test_tool_call_flow():
+    """Multi-turn: function_call → tool execute → text response."""
+    llm = FakeLLM(
+        responder=lambda i, r: (
+            [_chunk("let me check"), _fc_chunk()]
+            if i == 0
+            else [_chunk("北京天气晴")]
+        )
+    )
+    tool = FakeTool(name="fake_tool", result={"weather": "sunny"})
+    agent = LLMAgent(name="t", llm=llm, tools=[tool])
+    ctx = InvocationContext(messages=[{"role": "user", "content": "北京天气"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+
+    # round 1: 1 text chunk + 1 fc chunk + 1 seal + 1 function_response
+    # round 2: 1 chunk + 1 seal
+    assert len(artifacts) == 6
+
+    # round 1 seal has function_call
+    seal1 = artifacts[2]
+    assert seal1.last_chunk is True
+    assert any(
+        "type" in p.metadata and p.metadata["type"] == "function_call"
+        for p in seal1.artifact.parts
+    )
+
+    # function_response
+    fr = artifacts[3]
+    assert any(
+        "type" in p.metadata and p.metadata["type"] == "function_response"
+        for p in fr.artifact.parts
+    )
+
+    # round 2 seal has only text
+    seal2 = artifacts[5]
+    assert seal2.last_chunk is True
+    assert all("type" not in p.metadata for p in seal2.artifact.parts)
+
+    # ctx.messages: user, assistant(tool_calls), tool, assistant(text)
+    assert len(ctx.messages) == 4
+    assert ctx.messages[0]["role"] == "user"
+    assert ctx.messages[1]["role"] == "assistant"
+    assert "tool_calls" in ctx.messages[1]
+    assert ctx.messages[1]["tool_calls"] is not None
+    assert ctx.messages[2]["role"] == "tool"
+    assert ctx.messages[3]["role"] == "assistant"
+    assert "tool_calls" in ctx.messages[3]
+    assert ctx.messages[3]["tool_calls"] is None
+
+
+async def test_error_retry():
+    """3 rounds of malformed function_call, each yields seal + error response."""
+    llm = FakeLLM(responder=lambda i, r: [_error_fc_chunk()])
+    agent = LLMAgent(name="t", llm=llm, max_retries=3)
+    ctx = InvocationContext(messages=[{"role": "user", "content": "hi"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+
+    # 3 rounds × (1 fc chunk + 1 seal + 1 error response) = 9
+    assert len(artifacts) == 9
+
+    for i in range(3):
+        seal = artifacts[i * 3 + 1]
+        err = artifacts[i * 3 + 2]
+        assert seal.last_chunk is True
+        assert err.last_chunk is True
+        assert any(
+            "type" in p.metadata and p.metadata["type"] == "function_call"
+            for p in seal.artifact.parts
+        )
+        assert any(
+            "type" in p.metadata and p.metadata["type"] == "function_response"
+            for p in err.artifact.parts
+        )
+
+    # ctx.messages: user + 3×(assistant + tool) = 7
+    assert len(ctx.messages) == 7
+
+
+async def test_tool_result_normalized():
+    """Non-dict result wrapped as {"result": value}."""
+    llm = FakeLLM(
+        responder=lambda i, r: (
+            [_fc_chunk()] if i == 0 else [_chunk("done")]
+        )
+    )
+    tool = FakeTool(name="fake_tool", result="hello")
+    agent = LLMAgent(name="t", llm=llm, tools=[tool])
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+
+    fr = artifacts[2]
+    fr_data = json_format.MessageToDict(fr.artifact.parts[0].data)
+    assert fr_data["response"] == {"result": "hello"}
+
+
+async def test_function_call_id_consistency():
+    """function_call id in seal matches function_response id."""
+    llm = FakeLLM(
+        responder=lambda i, r: (
+            [_fc_chunk(id="call_42")] if i == 0 else [_chunk("done")]
+        )
+    )
+    tool = FakeTool(name="fake_tool", result={"ok": True})
+    agent = LLMAgent(name="t", llm=llm, tools=[tool])
+    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+
+    events = [e async for e in agent.run_async(ctx)]
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+
+    seal = artifacts[1]
+    fr = artifacts[2]
+
+    fc_id = json_format.MessageToDict(seal.artifact.parts[0].data)["id"]
+    fr_id = json_format.MessageToDict(fr.artifact.parts[0].data)["id"]
+    assert fc_id == fr_id == "call_42"
+
+
 # --- integration (real LLM) ---
 
 
@@ -207,7 +347,7 @@ class WeatherTool(BaseTool):
     name: str = "get_weather"
     description: str = "Get the current weather for a given city."
 
-    def _get_declaration(self) -> ChatCompletionToolParam:
+    def get_declaration(self) -> ChatCompletionToolParam:
         return {
             "type": "function",
             "function": {

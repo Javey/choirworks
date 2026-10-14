@@ -8,18 +8,16 @@ from new_choirworks.core.events.event import A2AEvent
 class EchoAgent(BaseAgent):
     name: str = "echo"
     description: str = "An agent that echoes messages."
-
-    def __init__(self, events: list[A2AEvent]):
-        self._events = events
+    events: list[A2AEvent]
 
     async def _run_async_impl(self, ctx: InvocationContext):
-        for event in self._events:
+        for event in self.events:
             yield event
 
 
 async def test_run_async_yields_events_in_order():
     events: list[A2AEvent] = [Message(), Message()]
-    agent = EchoAgent(events)
+    agent = EchoAgent(events=events)
     ctx = InvocationContext()
 
     yielded_events = []

@@ -22,7 +22,7 @@ class BaseTool(BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInher
     description: str
 
     @abc.abstractmethod
-    def _get_declaration(self) -> ChatCompletionToolParam:
+    def get_declaration(self) -> ChatCompletionToolParam:
         """Return the tool declaration in LLM tool format."""
         raise NotImplementedError
 

@@ -14,12 +14,20 @@ async def test_stream_yields_responses(llm_kwargs):
     assert all(isinstance(r, LLMResponse) for r in results)
 
     text = "".join(
-        part.text for r in results if r.content for part in r.content.parts if not part.thought
+        part.text
+        for r in results
+        if r.content
+        for part in r.content.parts
+        if not part.thought and part.text
     )
     assert text
 
     reasoning = "".join(
-        part.text for r in results if r.content for part in r.content.parts if part.thought
+        part.text
+        for r in results
+        if r.content
+        for part in r.content.parts
+        if part.thought and part.text
     )
     assert reasoning
 
