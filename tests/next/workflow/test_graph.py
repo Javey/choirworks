@@ -212,3 +212,60 @@ def test_terminal_node_names():
         ]
     )
     assert graph.terminal_node_names == {"b", "c"}
+
+
+# --- get_next_pending_nodes ---
+
+
+def test_get_next_unconditional():
+    a, b = _node("a"), _node("b")
+    graph = Graph(edges=[Edge(START, a), Edge(a, b)])
+    assert graph.get_next_pending_nodes("a", None) == ["b"]
+
+
+def test_get_next_route_match():
+    a, b = _node("a"), _node("b")
+    graph = Graph(edges=[Edge(START, a), Edge(a, b, route="x")])
+    assert graph.get_next_pending_nodes("a", "x") == ["b"]
+
+
+def test_get_next_route_no_match():
+    a, b = _node("a"), _node("b")
+    graph = Graph(edges=[Edge(START, a), Edge(a, b, route="x")])
+    assert graph.get_next_pending_nodes("a", "y") == []
+
+
+def test_get_next_default_fallback():
+    a, b, c = _node("a"), _node("b"), _node("c")
+    graph = Graph(
+        edges=[
+            Edge(START, a),
+            Edge(a, b, route="x"),
+            Edge(a, c, route=DEFAULT_ROUTE),
+        ]
+    )
+    assert graph.get_next_pending_nodes("a", "y") == ["c"]
+
+
+def test_get_next_route_and_default():
+    a, b, c = _node("a"), _node("b"), _node("c")
+    graph = Graph(
+        edges=[
+            Edge(START, a),
+            Edge(a, b, route="x"),
+            Edge(a, c, route=DEFAULT_ROUTE),
+        ]
+    )
+    assert graph.get_next_pending_nodes("a", "x") == ["b"]
+
+
+def test_get_next_route_list():
+    a, b = _node("a"), _node("b")
+    graph = Graph(edges=[Edge(START, a), Edge(a, b, route=["x", "y"])])
+    assert graph.get_next_pending_nodes("a", "y") == ["b"]
+
+
+def test_get_next_routes_to_match_list():
+    a, b = _node("a"), _node("b")
+    graph = Graph(edges=[Edge(START, a), Edge(a, b, route="x")])
+    assert graph.get_next_pending_nodes("a", ["x", "z"]) == ["b"]

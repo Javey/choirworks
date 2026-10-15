@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 
-from new_choirworks.core.workflow.base_node import START, BaseNode
+from new_choirworks.core.workflow.base_node import START, BaseNode, RouteValue
 from new_choirworks.core.workflow.errors import GraphValidationError
-from new_choirworks.core.workflow.graph import DEFAULT_ROUTE, Edge, RouteValue
+from new_choirworks.core.workflow.graph import DEFAULT_ROUTE, Edge
 
 
 def validate_graph(nodes: list[BaseNode], edges: list[Edge]) -> None:
