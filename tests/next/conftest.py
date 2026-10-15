@@ -26,7 +26,7 @@ def llm_kwargs() -> LLMKwargs:
         dict[str, dict[str, str]], yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
     )
     llm_cfg = cfg["llm"]
-    return {"model": llm_cfg["planner_model"], "base_url": llm_cfg["api_base"]}
+    return {"model": llm_cfg["model"], "base_url": llm_cfg["api_base"]}
 
 
 class FakeLLM(BaseLLM):

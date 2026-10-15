@@ -3,7 +3,7 @@ server:
   port: 8567
 
 llm:
-  planner_model: openai/glm-5.1
+  model: openai/glm-5.1
   api_base: https://kspmas.ksyun.com/v1/
   timeout_seconds: 60
   max_plan_retries: 2
