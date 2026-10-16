@@ -56,3 +56,9 @@ include = ["src/new_choirworks/**", "tests/next/**"]
 # 运行时无循环；保持可见但不再作为错误阻断。
 reportImportCycles = "none"
 reportMissingTypeStubs = "none"
+
+# 测试中用私有名做断言/驱动很常见（如直接调 _seed_start_triggers），
+# 只对 tests 放开，src 仍然生效。
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+reportPrivateUsage = false

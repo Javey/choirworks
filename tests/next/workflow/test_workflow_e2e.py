@@ -64,11 +64,17 @@ class _FakeNode(BaseNode):
 
 
 class _SlowNode(BaseNode):
+    cancelled: bool = False
+
     @override
     async def _run_impl(
         self, ctx: Context, node_input: object | None = None
     ) -> AsyncGenerator[A2AEvent, None]:
-        await asyncio.sleep(10)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
         return
         yield  # pyright: ignore[reportUnreachable]
 
@@ -175,6 +181,19 @@ async def test_workflow_failure():
         await _run(wf, ctx)
 
     assert b.received_inputs == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_failure_cancels_pending_tasks():
+    a = _FakeNode(name="a", fake_error="boom")
+    b = _SlowNode(name="b")
+    wf = Workflow(name="wf", edges=[Edge(START, a), Edge(START, b)])
+    ctx, _queue = _make_ctx(wf)
+
+    with pytest.raises(WorkflowError):
+        await _run(wf, ctx)
+
+    assert b.cancelled
 
 
 @pytest.mark.asyncio

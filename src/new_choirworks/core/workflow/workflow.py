@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import override
@@ -18,6 +19,8 @@ from new_choirworks.core.workflow.node_runner import NodeRunner
 from new_choirworks.core.workflow.node_state import NodeState
 from new_choirworks.core.workflow.node_status import NodeStatus
 from new_choirworks.core.workflow.trigger import Trigger
+
+logger = logging.getLogger(__name__)
 
 type TriggerBuffer = dict[str, list[Trigger]]
 type PendingNodes = dict[str, asyncio.Task[Context]]
@@ -74,7 +77,10 @@ class Workflow(BaseNode):
         loop_state = _LoopState()
         self._seed_start_triggers(loop_state, node_input)
 
-        await self._run_loop(ctx, loop_state)
+        try:
+            await self._run_loop(ctx, loop_state)
+        finally:
+            await self._cleanup_all_tasks(loop_state)
 
         self._finalize(loop_state, ctx)
 
@@ -237,10 +243,29 @@ class Workflow(BaseNode):
             ctx.output = terminal_outputs[0]
         elif terminal_outputs:
             raise WorkflowError(
-                f"Workflow {self.name}: multiple terminal nodes produced"
-                f" output ({len(terminal_outputs)}). A workflow must have"
-                " at most one terminal output."
+                f"Workflow {self.name}: multiple terminal nodes produced output ({len(terminal_outputs)}). A workflow must have at most one terminal output."  # noqa: E501
             )
+
+    async def _cleanup_all_tasks(self, loop_state: _LoopState) -> None:
+        """Cancel remaining tasks to prevent leaks."""
+        all_tasks = list(loop_state.pending_tasks.values())
+        if all_tasks:
+            logger.warning(
+                "Workflow %s: cancelling %d leftover tasks.",
+                self.name,
+                len(all_tasks),
+            )
+        for task in all_tasks:
+            if not task.done():
+                _ = task.cancel()
+        if all_tasks:
+            _ = await asyncio.gather(*all_tasks, return_exceptions=True)
+            for task in all_tasks:
+                if task.cancelled():
+                    for name, t in loop_state.pending_tasks.items():
+                        if t is task:
+                            loop_state.nodes[name].status = NodeStatus.CANCELLED
+                            break
 
 
 def _pop_trigger(trigger_buffer: TriggerBuffer, node_name: str) -> Trigger | None:

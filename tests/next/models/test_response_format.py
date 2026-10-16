@@ -3,8 +3,8 @@ from typing import cast
 from pydantic import BaseModel
 
 from new_choirworks.core.models.lite_llm import (
-    _enforce_strict_openai_schema,  # pyright: ignore[reportPrivateUsage]
-    _to_response_format,  # pyright: ignore[reportPrivateUsage]
+    _enforce_strict_openai_schema,
+    _to_response_format,
 )
 
 

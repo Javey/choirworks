@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 from new_choirworks.core.utils.schema_utils import (
-    _strip_json_code_fence,  # pyright: ignore[reportPrivateUsage]
+    _strip_json_code_fence,
     validate_schema,
 )
 

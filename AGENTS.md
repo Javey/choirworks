@@ -20,7 +20,8 @@
 
 ## 验证命令
 
-- 后端测试：`uv run pytest tests -q`
+- 后端测试：只跑定向测试（如 `uv run pytest tests/next/workflow -q`）；
+  **禁止跑全量 `uv run pytest tests`**——包含真实 LLM 调用，费 token 且慢
 - Lint：`uv run ruff check --fix src tests` && `uv run ruff format src tests`
 - 类型检查：`uv run basedpyright`（要求 0 errors；规则配置见 `pyproject.toml` 的 `[tool.basedpyright]`）
 - 前端（`frontend/`）：`npm test`、`npm run build`、`npm run lint`

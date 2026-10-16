@@ -40,8 +40,8 @@
    output/delta flushing 等；我们的 NodeRunner 只做：遍历 `node.run()` → enqueue 事件 → 返回 Context。
 4. **NodeState 简化** — ADK 的 NodeState 有 6 个字段（status、input、attempt_count、interrupts、
    resume_inputs、run_id）；我们的 NodeState 只有 2 个：`status`、`input`。
-5. **NodeStatus 简化** — ADK 有 7 个状态（INACTIVE/PENDING/RUNNING/COMPLETED/WAITING/FAILED/CANCELLED）；
-   我们只有 3 个：`RUNNING`、`COMPLETED`、`FAILED`。
+5. **NodeStatus 对齐** — 枚举值与 ADK 七态一一对应（INACTIVE/PENDING/RUNNING/COMPLETED/WAITING/FAILED/CANCELLED）；
+   引擎当前实际只会用到 `INACTIVE`、`RUNNING`、`COMPLETED`、`FAILED`、`CANCELLED`。
 6. **`_LoopState` 替代参数展开** — 所有循环状态放 `_LoopState` dataclass，和 ADK 一致。
 7. **无 trigger buffer replay** — ADK 有 replay manager 从 session 事件恢复；我们不做。
 8. **无 retry** — 暂不实现，等需要时在 `NodeRunner.run` 内部加。
@@ -113,11 +113,11 @@ tests/next/workflow/
 
 ### `node_state.py`
 
-- `NodeState` dataclass: `status: NodeStatus = NodeStatus.RUNNING`, `input: object | None = None`
+- `NodeState` dataclass: `status: NodeStatus = NodeStatus.INACTIVE`, `input: object | None = None`
 
 ### `node_status.py`
 
-- `NodeStatus(Enum)`: `RUNNING = 2`, `COMPLETED = 3`, `FAILED = 5`
+- `NodeStatus(Enum)`: 与 ADK 七态同值 — `INACTIVE = 0`, `PENDING = 1`, `RUNNING = 2`, `COMPLETED = 3`, `WAITING = 4`, `FAILED = 5`, `CANCELLED = 6`
 
 ### `errors.py`
 
@@ -147,7 +147,7 @@ tests/next/workflow/
 - `model_post_init` — 构造 Graph + validate_graph
 - `_get_static_node_by_name(name)` — 遍历 `graph.nodes` 查找
 - `_seed_start_triggers(loop_state, node_input)` — START 后继入 trigger_buffer，JoinNode 后继走 _buffer_barrier_trigger
-- `_run_impl(ctx, node_input)` — SETUP → _run_loop → _finalize → `return; yield`
+- `_run_impl(ctx, node_input)` — SETUP → _run_loop（try/finally 包 _cleanup_all_tasks）→ _finalize → `return; yield`
 - `_run_loop(ctx, loop_state)` — `asyncio.wait(FIRST_COMPLETED)` + `ordered_done` + `_pop_completed_task` + error/completion 处理
 - `_schedule_ready_nodes(ctx, loop_state)` — RUNNING 检查 + `_at_concurrency_limit` + `_pop_trigger` + `_prepare_node_state_for_starting` + `_start_node_task`
 - `_at_concurrency_limit(loop_state)` — `max_concurrency` 检查
@@ -158,6 +158,7 @@ tests/next/workflow/
 - `_handle_completion(loop_state, node_name, child_ctx)` — `NodeStatus.COMPLETED` + `node_outputs` + `_buffer_downstream_triggers`
 - `_buffer_downstream_triggers(loop_state, node_name, child_ctx)` — `get_next_pending_nodes` → 普通后继 Trigger / JoinNode 后继 _buffer_barrier_trigger
 - `_finalize(loop_state, ctx)` — 收集 terminal 节点输出；1 个 → `ctx.output`；多个 → raise `WorkflowError`
+- `_cleanup_all_tasks(loop_state)` — cancel 遗留 pending_tasks + `gather(return_exceptions=True)` + 被取消节点标 `NodeStatus.CANCELLED`
 - `_pop_trigger(trigger_buffer, node_name)` — 模块级函数，pop trigger
 
 ### `invocation_context.py`
@@ -208,6 +209,15 @@ LOOP (每轮):
 
     if not pending_tasks:
         break
+
+CLEANUP (try/finally):
+    _run_loop 退出（正常/异常/取消）→ _cleanup_all_tasks:
+        cancel 未完成的 pending_tasks
+        gather(return_exceptions=True) 等待取消完成
+        被取消的节点标 NodeStatus.CANCELLED
+
+FINALIZE:
+    _finalize → terminal 节点输出写回 ctx.output（多个 raise WorkflowError）
 ```
 
 ## 七、设计决策汇总
@@ -221,12 +231,13 @@ LOOP (每轮):
 | 5 | `_run_impl` 不 yield 事件 | 事件走 EventQueue 旁路 | ADK: `return; yield` 占位 |
 | 6 | `_LoopState` 携带所有循环状态 | 和 ADK 同构 | ADK: `_LoopState` |
 | 7 | `NodeState` 只有 status + input | 砍掉 retry/interrupt/resume/run_id | ADK: 6 个字段 |
-| 8 | `NodeStatus` 只有 RUNNING/COMPLETED/FAILED | 砍掉 INACTIVE/PENDING/WAITING/CANCELLED | ADK: 7 个状态 |
+| 8 | `NodeStatus` 枚举与 ADK 七态同值 | 当前仅用 INACTIVE/RUNNING/COMPLETED/FAILED/CANCELLED | ADK: 7 个状态 |
 | 9 | `Context` 只有 5 个字段 | 砍掉 node_path/branch/state/telemetry 等 | ADK: 20+ 字段 |
 | 10 | `_buffer_downstream_triggers` 接收 child_ctx | 用户设计选择 | ADK: 接收 output + route |
 | 11 | `asyncio.timeout` 替代 `asyncio.wait_for` | ruff ASYNC109 建议 | ADK: `asyncio.wait_for` |
 | 12 | 外层 `aclosing` 包裹 `node.run()` | 异常时触发内层 aclosing | ADK: `Aclosing` |
 | 13 | `_at_concurrency_limit` 在 RUNNING 检查后 | 和 ADK 一致 | ADK: `:528` |
+| 14 | `_cleanup_all_tasks` 取消遗留任务并标 CANCELLED | 防任务泄漏（失败/外部取消） | ADK: `_cleanup_all_tasks`（砍 dynamic tasks） |
 
 ## 八、ADK 同构规则
 
@@ -234,13 +245,13 @@ LOOP (每轮):
 
 ## 九、测试
 
-### 当前测试（36 tests）
+### 当前测试（38 tests）
 
 | 文件 | 测试数 | 内容 |
 |------|--------|------|
 | `test_graph.py` | 25 | 图校验 + get_next_pending_nodes |
-| `test_workflow.py` | 2 | _seed_start_triggers |
-| `test_workflow_e2e.py` | 9 | 线性/并行/Join/条件路由/失败/并发限制/terminal 输出/多 terminal 报错/节点超时 |
+| `test_workflow.py` | 3 | _seed_start_triggers + _cleanup_all_tasks 标 CANCELLED |
+| `test_workflow_e2e.py` | 10 | 线性/并行/Join/条件路由/失败/失败取消遗留任务/并发限制/terminal 输出/多 terminal 报错/节点超时 |
 
 ### 端到端测试模式
 
@@ -275,6 +286,7 @@ uv run basedpyright
 | `611a06e` | feat: workflow _run_loop 循环体 + _handle_completion + _buffer_downstream_triggers + _pop_completed_task |
 | `885d800` | test: workflow 端到端测试 — 5 场景 |
 | `0d2f7e6` | feat: workflow _at_concurrency_limit + 端到端并发限制测试 |
+| `c9712f8` | feat: workflow _finalize + 节点超时端到端测试 — 图引擎核心闭环 |
 
 ## 十三、修订记录
 
@@ -282,3 +294,4 @@ uv run basedpyright
 - 2026-10-15 更新 — 补充完整代码状态、ADK 对应关系、设计决策理由、测试模式。
 - 2026-10-16 重写 — 核心完成，更新为当前状态（Context/NodeRunner/NodeState/NodeStatus/双通道设计）。
 - 2026-10-16 补全 `_finalize`（terminal 输出写回 ctx.output，多 terminal raise WorkflowError）+ 节点超时端到端测试，图引擎核心闭环完成。
+- 2026-10-16 补 `_cleanup_all_tasks`（_run_loop 外包 try/finally，取消遗留任务 + 标 CANCELLED）；修正文档：NodeStatus 实为 ADK 七态同值、NodeState 默认 INACTIVE。
