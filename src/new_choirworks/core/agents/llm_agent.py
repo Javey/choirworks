@@ -1,7 +1,7 @@
 import json
 import uuid
 from collections.abc import AsyncGenerator
-from typing import cast, override
+from typing import Literal, cast, override
 
 from pydantic import BaseModel
 
@@ -29,6 +29,7 @@ class LLMAgent(BaseAgent):
     tools: list[BaseTool] = []
     max_retries: int = 3
     output_schema: type[BaseModel] | None = None
+    include_contents: Literal["default", "none"] = "default"
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
