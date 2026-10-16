@@ -112,12 +112,23 @@ class Workflow(BaseNode):
                 if node_state.status == NodeStatus.RUNNING:
                     continue
 
+            if self._at_concurrency_limit(loop_state):
+                break
+
             trigger = _pop_trigger(loop_state.trigger_buffer, node_name)
             if not trigger:
                 continue
 
             self._prepare_node_state_for_starting(loop_state, node_name, trigger)
             _started = self._start_node_task(ctx, loop_state, node_name, trigger)
+
+    def _at_concurrency_limit(self, loop_state: _LoopState) -> bool:
+        """Check if max_concurrency has been reached."""
+        return (
+            self.max_concurrency is not None
+            and self.max_concurrency > 0
+            and len(loop_state.pending_tasks) >= self.max_concurrency
+        )
 
     def _prepare_node_state_for_starting(
         self,

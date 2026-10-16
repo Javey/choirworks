@@ -163,3 +163,23 @@ async def test_workflow_failure():
         await _run(wf, ctx)
 
     assert b.received_inputs == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_concurrency_limit():
+    a = _FakeNode(name="a", fake_output="A")
+    b = _FakeNode(name="b", fake_output="B")
+    c = _FakeNode(name="c", fake_output="C")
+    wf = Workflow(
+        name="wf",
+        max_concurrency=2,
+        edges=[Edge(START, a), Edge(START, b), Edge(START, c)],
+    )
+    ctx, queue = _make_ctx(wf)
+    await _run(wf, ctx)
+
+    # 3 个节点都最终执行，但每次最多 2 个并行
+    assert len(queue.events) == 3
+    assert a.received_inputs == [None]
+    assert b.received_inputs == [None]
+    assert c.received_inputs == [None]
