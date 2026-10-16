@@ -287,6 +287,7 @@ uv run basedpyright
 | `885d800` | test: workflow 端到端测试 — 5 场景 |
 | `0d2f7e6` | feat: workflow _at_concurrency_limit + 端到端并发限制测试 |
 | `c9712f8` | feat: workflow _finalize + 节点超时端到端测试 — 图引擎核心闭环 |
+| `41d0f28` | feat: workflow _cleanup_all_tasks — 取消遗留任务+标 CANCELLED；AGENTS.md 禁全量测试；basedpyright tests 放开 reportPrivateUsage |
 
 ## 十三、修订记录
 
