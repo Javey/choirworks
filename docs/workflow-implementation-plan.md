@@ -147,7 +147,7 @@ tests/next/workflow/
 - `model_post_init` — 构造 Graph + validate_graph
 - `_get_static_node_by_name(name)` — 遍历 `graph.nodes` 查找
 - `_seed_start_triggers(loop_state, node_input)` — START 后继入 trigger_buffer，JoinNode 后继走 _buffer_barrier_trigger
-- `_run_impl(ctx, node_input)` — SETUP → _run_loop → `return; yield`
+- `_run_impl(ctx, node_input)` — SETUP → _run_loop → _finalize → `return; yield`
 - `_run_loop(ctx, loop_state)` — `asyncio.wait(FIRST_COMPLETED)` + `ordered_done` + `_pop_completed_task` + error/completion 处理
 - `_schedule_ready_nodes(ctx, loop_state)` — RUNNING 检查 + `_at_concurrency_limit` + `_pop_trigger` + `_prepare_node_state_for_starting` + `_start_node_task`
 - `_at_concurrency_limit(loop_state)` — `max_concurrency` 检查
@@ -157,6 +157,7 @@ tests/next/workflow/
 - `_pop_completed_task(loop_state, task)` — 从 pending_tasks 反查 task → node_name
 - `_handle_completion(loop_state, node_name, child_ctx)` — `NodeStatus.COMPLETED` + `node_outputs` + `_buffer_downstream_triggers`
 - `_buffer_downstream_triggers(loop_state, node_name, child_ctx)` — `get_next_pending_nodes` → 普通后继 Trigger / JoinNode 后继 _buffer_barrier_trigger
+- `_finalize(loop_state, ctx)` — 收集 terminal 节点输出；1 个 → `ctx.output`；多个 → raise `WorkflowError`
 - `_pop_trigger(trigger_buffer, node_name)` — 模块级函数，pop trigger
 
 ### `invocation_context.py`
@@ -233,13 +234,13 @@ LOOP (每轮):
 
 ## 九、测试
 
-### 当前测试（33 tests）
+### 当前测试（36 tests）
 
 | 文件 | 测试数 | 内容 |
 |------|--------|------|
 | `test_graph.py` | 25 | 图校验 + get_next_pending_nodes |
 | `test_workflow.py` | 2 | _seed_start_triggers |
-| `test_workflow_e2e.py` | 6 | 线性/并行/Join/条件路由/失败/并发限制 |
+| `test_workflow_e2e.py` | 9 | 线性/并行/Join/条件路由/失败/并发限制/terminal 输出/多 terminal 报错/节点超时 |
 
 ### 端到端测试模式
 
@@ -252,10 +253,8 @@ LOOP (每轮):
 
 | # | 内容 | 说明 |
 |---|------|------|
-| 1 | `_finalize` | 设 terminal output 到 ctx.output |
-| 2 | A2A 远端节点 | `A2ANode(BaseNode)` — 通过 A2A 协议调用远端 agent |
-| 3 | 编排 Agent | `OrchestratorAgent` — LLM 生成 DAG → 构建 Workflow → 执行 |
-| 4 | timeout 端到端测试 | 节点超时场景 |
+| 1 | A2A 远端节点 | `A2ANode(BaseNode)` — 通过 A2A 协议调用远端 agent |
+| 2 | 编排 Agent | `OrchestratorAgent` — LLM 生成 DAG → 构建 Workflow → 执行 |
 
 ## 十一、验证命令
 
@@ -282,3 +281,4 @@ uv run basedpyright
 - 2026-10-15 初始计划 — 从 ADK workflow 借鉴，分 13 步实现。
 - 2026-10-15 更新 — 补充完整代码状态、ADK 对应关系、设计决策理由、测试模式。
 - 2026-10-16 重写 — 核心完成，更新为当前状态（Context/NodeRunner/NodeState/NodeStatus/双通道设计）。
+- 2026-10-16 补全 `_finalize`（terminal 输出写回 ctx.output，多 terminal raise WorkflowError）+ 节点超时端到端测试，图引擎核心闭环完成。

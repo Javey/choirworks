@@ -76,6 +76,8 @@ class Workflow(BaseNode):
 
         await self._run_loop(ctx, loop_state)
 
+        self._finalize(loop_state, ctx)
+
         return
         yield  # pyright: ignore[reportUnreachable]
 
@@ -221,6 +223,24 @@ class Workflow(BaseNode):
                 loop_state.trigger_buffer.setdefault(target_name, []).append(
                     Trigger(input=child_ctx.output)
                 )
+
+    def _finalize(self, loop_state: _LoopState, ctx: Context) -> None:
+        """Set the terminal node's output on ctx so the parent can read it."""
+        assert self.graph is not None
+
+        terminal_outputs = [
+            loop_state.node_outputs[name]
+            for name in self.graph.terminal_node_names
+            if name in loop_state.node_outputs
+        ]
+        if len(terminal_outputs) == 1:
+            ctx.output = terminal_outputs[0]
+        elif terminal_outputs:
+            raise WorkflowError(
+                f"Workflow {self.name}: multiple terminal nodes produced"
+                f" output ({len(terminal_outputs)}). A workflow must have"
+                " at most one terminal output."
+            )
 
 
 def _pop_trigger(trigger_buffer: TriggerBuffer, node_name: str) -> Trigger | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import override
 
@@ -62,6 +63,16 @@ class _FakeNode(BaseNode):
         yield  # pyright: ignore[reportUnreachable]
 
 
+class _SlowNode(BaseNode):
+    @override
+    async def _run_impl(
+        self, ctx: Context, node_input: object | None = None
+    ) -> AsyncGenerator[A2AEvent, None]:
+        await asyncio.sleep(10)
+        return
+        yield  # pyright: ignore[reportUnreachable]
+
+
 class _CapturingJoinNode(JoinNode):
     received_inputs: list[object | None] = Field(default_factory=list)
 
@@ -102,7 +113,7 @@ async def test_workflow_linear():
 @pytest.mark.asyncio
 async def test_workflow_parallel():
     a = _FakeNode(name="a", fake_output="A")
-    b = _FakeNode(name="b", fake_output="B")
+    b = _FakeNode(name="b")
     wf = Workflow(name="wf", edges=[Edge(START, a), Edge(START, b)])
     ctx, queue = _make_ctx(wf)
     await _run(wf, ctx)
@@ -110,6 +121,7 @@ async def test_workflow_parallel():
     assert len(queue.events) == 2
     assert a.received_inputs == [None]
     assert b.received_inputs == [None]
+    assert ctx.output == "A"
 
 
 @pytest.mark.asyncio
@@ -166,9 +178,44 @@ async def test_workflow_failure():
 
 
 @pytest.mark.asyncio
-async def test_workflow_concurrency_limit():
+async def test_workflow_terminal_output():
+    a = _FakeNode(name="a", fake_output="hello")
+    b = _FakeNode(name="b", fake_output="world")
+    wf = Workflow(name="wf", edges=[Edge(START, a), Edge(a, b)])
+    ctx, _queue = _make_ctx(wf)
+    await _run(wf, ctx)
+
+    assert ctx.output == "world"
+
+
+@pytest.mark.asyncio
+async def test_workflow_multiple_terminal_outputs():
     a = _FakeNode(name="a", fake_output="A")
     b = _FakeNode(name="b", fake_output="B")
+    wf = Workflow(name="wf", edges=[Edge(START, a), Edge(START, b)])
+    ctx, _queue = _make_ctx(wf)
+
+    with pytest.raises(WorkflowError, match="multiple terminal nodes"):
+        await _run(wf, ctx)
+
+
+@pytest.mark.asyncio
+async def test_workflow_node_timeout():
+    a = _SlowNode(name="a", timeout=0.01)
+    b = _FakeNode(name="b", fake_output="B")
+    wf = Workflow(name="wf", edges=[Edge(START, a), Edge(a, b)])
+    ctx, _queue = _make_ctx(wf)
+
+    with pytest.raises(WorkflowError, match="timed out"):
+        await _run(wf, ctx)
+
+    assert b.received_inputs == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_concurrency_limit():
+    a = _FakeNode(name="a")
+    b = _FakeNode(name="b")
     c = _FakeNode(name="c", fake_output="C")
     wf = Workflow(
         name="wf",
@@ -183,3 +230,4 @@ async def test_workflow_concurrency_limit():
     assert a.received_inputs == [None]
     assert b.received_inputs == [None]
     assert c.received_inputs == [None]
+    assert ctx.output == "C"
