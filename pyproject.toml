@@ -48,7 +48,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
-ignore = ["B008"]  # FastAPI Depends() 在默认参数中调用是标准用法
+ignore = ["B008", "ASYNC109"]  # B008: FastAPI Depends(); ASYNC109: 内部方法需要 timeout 参数，与 ADK 一致
 
 [tool.basedpyright]
 include = ["src/new_choirworks/**", "tests/next/**"]

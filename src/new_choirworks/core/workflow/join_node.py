@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import override
+from typing import TYPE_CHECKING, override
 
-from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent
 from new_choirworks.core.workflow.base_node import BaseNode
+
+if TYPE_CHECKING:
+    from new_choirworks.core.workflow.context import Context
 
 
 class JoinNode(BaseNode):
@@ -27,9 +29,9 @@ class JoinNode(BaseNode):
 
     @override
     async def _run_impl(
-        self, _ctx: InvocationContext, node_input: object | None = None
+        self, ctx: Context, node_input: object | None = None
     ) -> AsyncGenerator[A2AEvent, None]:
         """JoinNode passes through the aggregated inputs as its output."""
-        self.output: object | None = node_input
+        ctx.output = node_input
         return
         yield  # pyright: ignore[reportUnreachable]

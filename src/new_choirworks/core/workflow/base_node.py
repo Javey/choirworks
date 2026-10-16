@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent
+
+if TYPE_CHECKING:
+    from new_choirworks.core.workflow.context import Context
 
 type RouteValue = bool | int | str
 
@@ -19,7 +21,8 @@ class BaseNode(BaseModel):
 
     Design reference: google-adk BaseNode (Apache-2.0, Copyright 2026 Google LLC).
     Simplified: no schema validation, no interrupt/resume,
-    no retry_config/timeout (managed by Workflow).
+    no retry_config. timeout is on BaseNode (like ADK), read by NodeRunner.
+    output/route are on Context (per-node), not on BaseNode fields.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
@@ -29,11 +32,10 @@ class BaseNode(BaseModel):
 
     name: str
     description: str = ""
-    output: object | None = None
-    route: RouteValue | None = None
+    timeout: float | None = None
 
     async def run(
-        self, ctx: InvocationContext, node_input: object | None = None
+        self, ctx: Context, node_input: object | None = None
     ) -> AsyncGenerator[A2AEvent, None]:
         """Execute the node, yielding A2A events.
 
@@ -45,7 +47,7 @@ class BaseNode(BaseModel):
                 yield event
 
     async def _run_impl(
-        self, _ctx: InvocationContext, _node_input: object | None = None
+        self, _ctx: Context, _node_input: object | None = None
     ) -> AsyncGenerator[A2AEvent, None]:
         """Override point for node execution logic.
 

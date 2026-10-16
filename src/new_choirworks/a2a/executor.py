@@ -50,6 +50,7 @@ class LLMAgentExecutor(AgentExecutor):
             messages=[{"role": "user", "content": user_text}],
             task_id=context.task_id,
             context_id=context.context_id,
+            event_queue=event_queue,
         )
         async for event in self._agent.run_async(ctx):
             await event_queue.enqueue_event(event)

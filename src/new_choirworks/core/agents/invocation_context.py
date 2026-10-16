@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from a2a.server.events import EventQueue
+
 from new_choirworks.core.models.llm_request import ChatMessage
 
 
@@ -11,3 +13,4 @@ class InvocationContext:
 
     context_id: str | None = None
     task_id: str | None = None
+    event_queue: EventQueue | None = None
