@@ -6,9 +6,10 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import TYPE_CHECKING
 
-from contextlib import aclosing
+from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 
 from new_choirworks.core.events.event import (
     A2AEvent,
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 
 
 async def run_llm_agent_as_node(
-    agent: LLMAgent, *, ctx: Context, node_input: AsyncGenerator[A2AEvent, None]
+    agent: LLMAgent, *, ctx: Context, node_input: object | None = None
 ) -> AsyncGenerator[A2AEvent, None]:
     """Runs an LLMAgent as a workflow node."""
     agent_ctx = prepare_llm_agent_context(agent, ctx)
@@ -60,7 +61,9 @@ def prepare_llm_agent_input(
         if isinstance(node_input, str)
         else json.dumps(node_input, ensure_ascii=False, default=str)
     )
-    ctx.invocation_context.messages.append({"role": "user", "content": agent_input})
+    ctx.invocation_context.messages.append(
+        OpenAIChatCompletionUserMessage(role="user", content=agent_input)
+    )
 
 def process_llm_agent_output(agent: LLMAgent, ctx: Context, event: A2AEvent) -> None:
     """Promotes the final artifact's text to the node output."""

@@ -1,12 +1,17 @@
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Literal, cast, override
 
 from pydantic import BaseModel
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent, to_a2a_artifact
+from new_choirworks.core.events.event import (
+    ARTIFACT_METADATA_STRUCTURED_OUTPUT,
+    A2AEvent,
+    to_a2a_artifact,
+)
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
@@ -17,6 +22,8 @@ from new_choirworks.core.models.llm_response import (
 )
 from new_choirworks.core.tools.base_tool import BaseTool
 from new_choirworks.core.utils.schema_utils import validate_schema
+from new_choirworks.core.workflow.context import Context
+from new_choirworks.core.workflow.llm_agent_wrapper import run_llm_agent_as_node
 
 from .base_agent import BaseAgent
 
@@ -82,7 +89,7 @@ class LLMAgent(BaseAgent):
                     error_message = response.error_message or ""
 
             final_response = self.close(thought_buf, text_buf, function_calls)
-            # TODO: 机构化输出adk同构
+            # TODO: 结构化输出adk同构
             structured: str | None = None
             if not function_calls and self.output_schema is not None:
                 structured = json.dumps(validate_schema(self.output_schema, "".join(text_buf)))
@@ -95,7 +102,7 @@ class LLMAgent(BaseAgent):
                     last_chunk=True,
                 )
                 if structured is not None:
-                    event.metadata["structured_output"] = structured
+                    event.metadata[ARTIFACT_METADATA_STRUCTURED_OUTPUT] = structured
                 yield event
 
             if not function_calls:
@@ -116,6 +123,15 @@ class LLMAgent(BaseAgent):
                 continue
 
             async for event in self._execute_tools(function_calls, tools_dict, ctx):
+                yield event
+
+    @override
+    async def _run_impl(
+        self, ctx: Context, node_input: object | None = None
+    ) -> AsyncGenerator[A2AEvent, None]:
+        """Runs the agent as a node in a workflow graph."""
+        async with aclosing(run_llm_agent_as_node(self, ctx=ctx, node_input=node_input)) as agen:
+            async for event in agen:
                 yield event
 
     async def _execute_tools(
