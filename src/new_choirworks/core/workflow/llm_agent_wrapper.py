@@ -8,12 +8,32 @@ import json
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
-from new_choirworks.core.events.event import A2AEvent
+from contextlib import aclosing
+
+from new_choirworks.core.events.event import (
+    A2AEvent,
+    extract_text,
+    has_function_calls,
+    is_final_artifact,
+)
+from new_choirworks.core.utils.schema_utils import validate_schema
 from new_choirworks.core.workflow.context import Context
 
 if TYPE_CHECKING:
     from new_choirworks.core.agents.llm_agent import LLMAgent
 
+
+async def run_llm_agent_as_node(
+    agent: LLMAgent, *, ctx: Context, node_input: AsyncGenerator[A2AEvent, None]
+) -> AsyncGenerator[A2AEvent, None]:
+    """Runs an LLMAgent as a workflow node."""
+    agent_ctx = prepare_llm_agent_context(agent, ctx)
+    prepare_llm_agent_input(agent, agent_ctx, node_input)
+
+    async with aclosing(agent.run_async(agent_ctx.invocation_context)) as run_iter:
+        async for event in run_iter:
+            process_llm_agent_output(agent, ctx, event)
+            yield event
 
 def prepare_llm_agent_context(agent: LLMAgent, ctx: Context) -> Context:
     """Prepares the context for the agent node.
@@ -29,7 +49,6 @@ def prepare_llm_agent_context(agent: LLMAgent, ctx: Context) -> Context:
     )
     return Context(invocation_context=ic, node=agent)
 
-
 def prepare_llm_agent_input(
     _agent: LLMAgent, ctx: Context, node_input: object | None
 ) -> None:
@@ -43,15 +62,16 @@ def prepare_llm_agent_input(
     )
     ctx.invocation_context.messages.append({"role": "user", "content": agent_input})
 
-
 def process_llm_agent_output(agent: LLMAgent, ctx: Context, event: A2AEvent) -> None:
     """Promotes the final artifact's text to the node output."""
-    raise NotImplementedError("process_llm_agent_output is not implemented.")
+    if (
+        not is_final_artifact(event)
+        or has_function_calls(event)
+    ):
+        return
 
-
-async def run_llm_agent_as_node(
-    agent: LLMAgent, *, ctx: Context, node_input: object | None
-) -> AsyncGenerator[A2AEvent, None]:
-    """Runs an LLMAgent as a workflow node."""
-    raise NotImplementedError("run_llm_agent_as_node is not implemented.")
-    yield  # pyright: ignore[reportUnreachable]
+    text = extract_text(event)
+    if agent.output_schema:
+        ctx.output = validate_schema(agent.output_schema, text) if text.strip() else None
+    else:
+        ctx.output = text

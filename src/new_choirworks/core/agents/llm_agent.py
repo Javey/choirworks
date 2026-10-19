@@ -82,6 +82,7 @@ class LLMAgent(BaseAgent):
                     error_message = response.error_message or ""
 
             final_response = self.close(thought_buf, text_buf, function_calls)
+            # TODO: 机构化输出adk同构
             structured: str | None = None
             if not function_calls and self.output_schema is not None:
                 structured = json.dumps(validate_schema(self.output_schema, "".join(text_buf)))

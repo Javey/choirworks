@@ -24,6 +24,12 @@ from new_choirworks.core.models.llm_response import LLMResponse
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
 
+PART_TYPE_FUNCTION_CALL = "function_call"
+PART_TYPE_FUNCTION_RESPONSE = "function_response"
+PART_METADATA_TYPE = "type"
+PART_METADATA_THOUGHT = "thought"
+ARTIFACT_METADATA_STRUCTURED_OUTPUT = "structured_output"
+
 
 def to_a2a_message(response: LLMResponse) -> Message:
     """Convert LLMResponse to A2A Message."""
@@ -105,11 +111,11 @@ def to_a2a_artifact(
         if part.text is not None:
             p = Part(text=part.text)
             if part.thought:
-                p.metadata["thought"] = "true"
+                p.metadata[PART_METADATA_THOUGHT] = "true"
             parts.append(p)
         if part.function_call is not None:
             p = Part()
-            p.metadata["type"] = "function_call"
+            p.metadata[PART_METADATA_TYPE] = PART_TYPE_FUNCTION_CALL
             _ = json_format.ParseDict(
                 {
                     "name": part.function_call.name,
@@ -121,7 +127,7 @@ def to_a2a_artifact(
             parts.append(p)
         if part.function_response is not None:
             p = Part()
-            p.metadata["type"] = "function_response"
+            p.metadata[PART_METADATA_TYPE] = PART_TYPE_FUNCTION_RESPONSE
             _ = json_format.ParseDict(
                 {
                     "name": part.function_response.name,
@@ -146,3 +152,39 @@ def to_a2a_artifact(
             ctx.messages.append(msg)
 
     return event
+
+
+def is_final_artifact(event: A2AEvent) -> bool:
+    """True if event is a final (non-streaming, non-append) artifact event."""
+    return (
+        isinstance(event, TaskArtifactUpdateEvent)
+        and not event.append
+        and event.last_chunk
+    )
+
+
+def has_function_calls(event: A2AEvent) -> bool:
+    """True if event's artifact contains any function_call parts."""
+    if not isinstance(event, TaskArtifactUpdateEvent):
+        return False
+    return any(
+        PART_METADATA_TYPE in p.metadata
+        and p.metadata[PART_METADATA_TYPE] == PART_TYPE_FUNCTION_CALL
+        for p in event.artifact.parts
+    )
+
+
+def extract_text(event: A2AEvent, include_thought: bool = False) -> str:
+    """Concatenate text parts from an artifact event, skipping thoughts by default."""
+    if not isinstance(event, TaskArtifactUpdateEvent):
+        return ""
+    return "".join(
+        p.text
+        for p in event.artifact.parts
+        if p.text
+        and (
+            include_thought
+            or PART_METADATA_THOUGHT not in p.metadata
+            or p.metadata[PART_METADATA_THOUGHT] != "true"
+        )
+    )
