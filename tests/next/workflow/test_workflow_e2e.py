@@ -250,3 +250,43 @@ async def test_workflow_concurrency_limit():
     assert b.received_inputs == [None]
     assert c.received_inputs == [None]
     assert ctx.output == "C"
+
+
+class _CountingNode(BaseNode):
+    """每次执行 run_count += 1，按 threshold 决定路由。"""
+
+    run_count: int = 0
+    threshold: int = 2
+    received_inputs: list[object | None] = Field(default_factory=list)
+
+    @override
+    async def _run_impl(
+        self, ctx: Context, node_input: object | None = None
+    ) -> AsyncGenerator[A2AEvent, None]:
+        self.received_inputs.append(node_input)
+        self.run_count += 1
+        ctx.output = self.run_count
+        ctx.route = "done" if self.run_count >= self.threshold else "loop"
+        return
+        yield  # pyright: ignore[reportUnreachable]
+
+
+@pytest.mark.asyncio
+async def test_workflow_completed_node_reruns_on_back_edge():
+    """COMPLETED 节点收到新 trigger 会被重新调度（条件回边场景）。"""
+    counter = _CountingNode(name="counter", threshold=2)
+    end = _FakeNode(name="end", fake_output="end")
+    wf = Workflow(
+        name="wf",
+        edges=[
+            Edge(START, counter),
+            Edge(counter, counter, route="loop"),
+            Edge(counter, end, route="done"),
+        ],
+    )
+    ctx, _queue = _make_ctx(wf)
+    await _run(wf, ctx)
+
+    assert counter.run_count == 2
+    assert end.received_inputs == [2]
+    assert ctx.output == "end"
