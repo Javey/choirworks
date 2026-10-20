@@ -8,9 +8,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from new_choirworks.core.events.event import A2AEvent
-
 if TYPE_CHECKING:
+    from new_choirworks.core.events.event import A2AEvent
     from new_choirworks.core.workflow.context import Context
 
 type RouteValue = bool | int | str

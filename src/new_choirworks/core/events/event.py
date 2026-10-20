@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -24,12 +25,67 @@ from new_choirworks.core.models.llm_response import LLMResponse
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
 
+# Must come after A2AEvent is defined to break the event_actions → base_node → event cycle.
+from .event_actions import EventActions  # noqa: E402
+
 PART_TYPE_FUNCTION_CALL = "function_call"
 PART_TYPE_FUNCTION_RESPONSE = "function_response"
 PART_METADATA_TYPE = "type"
 PART_METADATA_THOUGHT = "thought"
 ARTIFACT_METADATA_STRUCTURED_OUTPUT = "structured_output"
 
+# metadata
+EVENT_META_AUTHOR = "author"
+EVENT_META_OUTPUT = "output"
+EVENT_META_NODE_PATH = "node_path"
+
+
+class EventMeta:
+    _event: A2AEvent
+    _actions: EventActions
+
+    def __init__(self, event: A2AEvent):
+        self._event = event
+        self._actions = EventActions(event)
+
+    @property
+    def author(self) -> str:
+        if EVENT_META_AUTHOR not in self._event.metadata:
+            return ""
+        return cast(str, self._event.metadata[EVENT_META_AUTHOR])
+
+    @author.setter
+    def author(self, value: str) -> None:
+        self._event.metadata[EVENT_META_AUTHOR] = value
+
+    @property
+    def output(self) -> object | None:
+        if EVENT_META_OUTPUT not in self._event.metadata:
+            return None
+        return cast(object, json.loads(cast(str, self._event.metadata[EVENT_META_OUTPUT])))
+
+    @output.setter
+    def output(self, value: object) -> None:
+        self._event.metadata[EVENT_META_OUTPUT] = json.dumps(value, default=str)
+
+    @property
+    def node_path(self) -> str:
+        if EVENT_META_NODE_PATH not in self._event.metadata:
+            return ""
+        return cast(str, self._event.metadata[EVENT_META_NODE_PATH])
+
+    @node_path.setter
+    def node_path(self, value: str) -> None:
+        self._event.metadata[EVENT_META_NODE_PATH] = value
+
+    @property
+    def actions(self) -> EventActions:
+        return self._actions
+
+
+def meta(event: A2AEvent) -> EventMeta:
+    """Get typed EventMeta view for an A2A event."""
+    return EventMeta(event)
 
 def to_a2a_message(response: LLMResponse) -> Message:
     """Convert LLMResponse to A2A Message."""
@@ -156,11 +212,7 @@ def to_a2a_artifact(
 
 def is_final_artifact(event: A2AEvent) -> bool:
     """True if event is a final (non-streaming, non-append) artifact event."""
-    return (
-        isinstance(event, TaskArtifactUpdateEvent)
-        and not event.append
-        and event.last_chunk
-    )
+    return isinstance(event, TaskArtifactUpdateEvent) and not event.append and event.last_chunk
 
 
 def has_function_calls(event: A2AEvent) -> bool:

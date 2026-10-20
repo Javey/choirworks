@@ -36,6 +36,7 @@ async def run_llm_agent_as_node(
             process_llm_agent_output(agent, ctx, event)
             yield event
 
+
 def prepare_llm_agent_context(agent: LLMAgent, ctx: Context) -> Context:
     """Prepares the context for the agent node.
 
@@ -44,15 +45,12 @@ def prepare_llm_agent_context(agent: LLMAgent, ctx: Context) -> Context:
     """
     ic = copy.copy(ctx.invocation_context)
     ic.messages = (
-        list(ctx.invocation_context.messages)
-        if agent.include_contents == "default"
-        else []
+        list(ctx.invocation_context.messages) if agent.include_contents == "default" else []
     )
     return Context(invocation_context=ic, node=agent)
 
-def prepare_llm_agent_input(
-    _agent: LLMAgent, ctx: Context, node_input: object | None
-) -> None:
+
+def prepare_llm_agent_input(_agent: LLMAgent, ctx: Context, node_input: object | None) -> None:
     """Injects the node input as the agent's only user message."""
     if node_input is None:
         return
@@ -65,12 +63,10 @@ def prepare_llm_agent_input(
         OpenAIChatCompletionUserMessage(role="user", content=agent_input)
     )
 
+
 def process_llm_agent_output(agent: LLMAgent, ctx: Context, event: A2AEvent) -> None:
     """Promotes the final artifact's text to the node output."""
-    if (
-        not is_final_artifact(event)
-        or has_function_calls(event)
-    ):
+    if not is_final_artifact(event) or has_function_calls(event):
         return
 
     text = extract_text(event)
