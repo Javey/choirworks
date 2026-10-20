@@ -3,14 +3,15 @@ from collections.abc import AsyncGenerator
 from typing import cast, override
 
 import pytest
-from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
+from a2a.helpers.proto_helpers import new_message, new_text_part
+from a2a.types.a2a_pb2 import Role, TaskArtifactUpdateEvent
 from google.protobuf import json_format
 from litellm.types.llms.openai import ChatCompletionToolParam
 from pydantic import BaseModel, ValidationError
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
-from new_choirworks.core.events.event import to_a2a_artifact
+from new_choirworks.core.events.event import events_to_llm_messages, to_a2a_artifact
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
@@ -23,6 +24,10 @@ from new_choirworks.core.models.llm_response import (
 from new_choirworks.core.tools.base_tool import BaseTool
 
 from ..conftest import FakeLLM, FakeTool, LLMKwargs
+
+
+def _user_event(text: str):
+    return new_message(parts=[new_text_part(text=text)], role=Role.ROLE_USER)
 
 
 def _chunk(text: str, thought: bool = False) -> LLMResponse:
@@ -88,7 +93,7 @@ def test_to_a2a_artifact_marks_thought():
         )
     )
     event = to_a2a_artifact(_ctx(), response, artifact_id="aid", append=False, last_chunk=True)
-    assert event.artifact.parts[0].metadata["thought"] == "true"
+    assert event.artifact.parts[0].metadata["thought"] is True
     assert "thought" not in event.artifact.parts[1].metadata
     assert event.append is False
     assert event.last_chunk is True
@@ -161,12 +166,12 @@ async def test_thought_metadata():
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     # chunk 0: thought only
-    assert artifacts[0].artifact.parts[0].metadata["thought"] == "true"
+    assert artifacts[0].artifact.parts[0].metadata["thought"] is True
     # chunk 1: text only
     assert "thought" not in artifacts[1].artifact.parts[0].metadata
     # seal: both thought + text, thought part has metadata
     seal = artifacts[-1]
-    assert seal.artifact.parts[0].metadata["thought"] == "true"
+    assert seal.artifact.parts[0].metadata["thought"] is True
     assert "thought" not in seal.artifact.parts[1].metadata
 
 
@@ -188,7 +193,7 @@ async def test_instruction_added_as_system_message():
             yield  # pyright: ignore[reportUnreachable]
 
     agent = LLMAgent(name="t", llm=CaptureLLM(), instruction="You are helpful.")
-    ctx = InvocationContext(messages=[{"role": "user", "content": "Hi"}])
+    ctx = InvocationContext(events=[_user_event("Hi")])
     _ = [e async for e in agent.run_async(ctx)]
 
     req = captured[0]
@@ -208,7 +213,7 @@ async def test_tool_call_flow():
     )
     tool = FakeTool(name="fake_tool", result={"weather": "sunny"})
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
-    ctx = InvocationContext(messages=[{"role": "user", "content": "北京天气"}])
+    ctx = InvocationContext(events=[_user_event("北京天气")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -236,23 +241,24 @@ async def test_tool_call_flow():
     assert seal2.last_chunk is True
     assert all("type" not in p.metadata for p in seal2.artifact.parts)
 
-    # ctx.messages: user, assistant(tool_calls), tool, assistant(text)
-    assert len(ctx.messages) == 4
-    assert ctx.messages[0]["role"] == "user"
-    assert ctx.messages[1]["role"] == "assistant"
-    assert "tool_calls" in ctx.messages[1]
-    assert ctx.messages[1]["tool_calls"] is not None
-    assert ctx.messages[2]["role"] == "tool"
-    assert ctx.messages[3]["role"] == "assistant"
-    assert "tool_calls" in ctx.messages[3]
-    assert ctx.messages[3]["tool_calls"] is None
+    # events_to_llm_messages: user, assistant(tool_calls), tool, assistant(text)
+    messages = events_to_llm_messages(ctx.events)
+    assert len(messages) == 4
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert "tool_calls" in messages[1]
+    assert messages[1]["tool_calls"] is not None
+    assert messages[2]["role"] == "tool"
+    assert messages[3]["role"] == "assistant"
+    assert "tool_calls" in messages[3]
+    assert messages[3]["tool_calls"] is None
 
 
 async def test_error_retry():
     """3 rounds of malformed function_call, each yields seal + error response."""
     llm = FakeLLM(responder=lambda i, r: [_error_fc_chunk()])
     agent = LLMAgent(name="t", llm=llm, max_retries=3)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "hi"}])
+    ctx = InvocationContext(events=[_user_event("hi")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -274,8 +280,8 @@ async def test_error_retry():
             for p in err.artifact.parts
         )
 
-    # ctx.messages: user + 3×(assistant + tool) = 7
-    assert len(ctx.messages) == 7
+    # events_to_llm_messages: user + 3×(assistant + tool) = 7
+    assert len(events_to_llm_messages(ctx.events)) == 7
 
 
 async def test_tool_result_normalized():
@@ -283,7 +289,7 @@ async def test_tool_result_normalized():
     llm = FakeLLM(responder=lambda i, r: [_fc_chunk()] if i == 0 else [_chunk("done")])
     tool = FakeTool(name="fake_tool", result="hello")
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -298,7 +304,7 @@ async def test_function_call_id_consistency():
     llm = FakeLLM(responder=lambda i, r: [_fc_chunk(id="call_42")] if i == 0 else [_chunk("done")])
     tool = FakeTool(name="fake_tool", result={"ok": True})
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -317,7 +323,7 @@ async def test_function_call_id_consistency():
 async def test_text_response(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     agent = LLMAgent(name="test", llm=llm)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "Hello"}])
+    ctx = InvocationContext(events=[_user_event("Hello")])
 
     results = [e async for e in agent.run_async(ctx)]
 
@@ -367,7 +373,7 @@ class WeatherTool(BaseTool):
 async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     llm = LiteLLM(**llm_kwargs)
     agent = LLMAgent(name="test", llm=llm, tools=[WeatherTool()])
-    ctx = InvocationContext(messages=[{"role": "user", "content": "北京的天气怎么样？"}])
+    ctx = InvocationContext(events=[_user_event("北京的天气怎么样？")])
 
     results = [e async for e in agent.run_async(ctx)]
 
@@ -415,7 +421,7 @@ async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     )
     assert text
 
-    assert len(ctx.messages) > 1
+    assert len(events_to_llm_messages(ctx.events)) > 1
 
 
 # --- unit: structured output (FakeLLM) --
@@ -436,7 +442,7 @@ async def test_structured_output_passes_schema_to_request():
 
     llm = FakeLLM(responder=responder)
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     _ = [e async for e in agent.run_async(ctx)]
 
@@ -447,7 +453,7 @@ async def test_structured_output_valid_json():
     """Valid JSON text → structured_output in final artifact metadata."""
     llm = FakeLLM(responder=lambda i, r: [_chunk('{"name": "Alice", "age": 30}')])
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -463,7 +469,7 @@ async def test_structured_output_strips_code_fence():
     """Code-fenced JSON is accepted and validated."""
     llm = FakeLLM(responder=lambda i, r: [_chunk('```json\n{"name": "Bob", "age": 25}\n```')])
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -474,22 +480,22 @@ async def test_structured_output_strips_code_fence():
 
 
 async def test_structured_output_invalid_json_raises():
-    """Invalid JSON → ValidationError, no structured_output, ctx.messages not polluted."""
+    """Invalid JSON → ValidationError, no structured_output, ctx.events not polluted."""
     llm = FakeLLM(responder=lambda i, r: [_chunk("not json at all")])
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     with pytest.raises(ValidationError, match="Invalid JSON"):
         _ = [e async for e in agent.run_async(ctx)]
 
-    assert len(ctx.messages) == 1
+    assert len(events_to_llm_messages(ctx.events)) == 1
 
 
 async def test_structured_output_empty_text_raises():
     """Empty model output → ValidationError (no silent success)."""
     llm = FakeLLM(responder=lambda i, r: [])
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     with pytest.raises(ValidationError):
         _ = [e async for e in agent.run_async(ctx)]
@@ -507,7 +513,7 @@ async def test_structured_output_with_tools_intermediate_round():
     llm = FakeLLM(responder=responder)
     tool = FakeTool(name="fake_tool", result={"ok": True})
     agent = LLMAgent(name="t", llm=llm, tools=[tool], output_schema=_OutputSchema)
-    ctx = InvocationContext(messages=[{"role": "user", "content": "go"}])
+    ctx = InvocationContext(events=[_user_event("go")])
 
     events = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
@@ -536,9 +542,7 @@ async def test_structured_output_integration(llm_kwargs: LLMKwargs):
         output_schema=_WeatherReport,
         instruction="Return weather information as structured JSON.",
     )
-    ctx = InvocationContext(
-        messages=[{"role": "user", "content": "北京今天晴，25度。请返回结构化天气信息。"}]
-    )
+    ctx = InvocationContext(events=[_user_event("北京今天晴，25度。请返回结构化天气信息。")])
 
     results = [e async for e in agent.run_async(ctx)]
     artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]

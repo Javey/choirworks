@@ -9,7 +9,8 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from typing import TYPE_CHECKING
 
-from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
+from a2a.helpers.proto_helpers import new_message, new_text_part
+from a2a.types.a2a_pb2 import Role
 
 from new_choirworks.core.events.event import (
     A2AEvent,
@@ -44,9 +45,7 @@ def prepare_llm_agent_context(agent: LLMAgent, ctx: Context) -> Context:
     'none'（节点默认）：不带历史，只看本次 node_input。
     """
     ic = copy.copy(ctx.invocation_context)
-    ic.messages = (
-        list(ctx.invocation_context.messages) if agent.include_contents == "default" else []
-    )
+    ic.events = list(ctx.invocation_context.events) if agent.include_contents == "default" else []
     return Context(invocation_context=ic, node=agent)
 
 
@@ -59,9 +58,8 @@ def prepare_llm_agent_input(_agent: LLMAgent, ctx: Context, node_input: object |
         if isinstance(node_input, str)
         else json.dumps(node_input, ensure_ascii=False, default=str)
     )
-    ctx.invocation_context.messages.append(
-        OpenAIChatCompletionUserMessage(role="user", content=agent_input)
-    )
+    user_event = new_message(parts=[new_text_part(text=agent_input)], role=Role.ROLE_USER)
+    ctx.invocation_context.events.append(user_event)
 
 
 def process_llm_agent_output(agent: LLMAgent, ctx: Context, event: A2AEvent) -> None:

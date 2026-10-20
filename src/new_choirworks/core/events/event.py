@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import TYPE_CHECKING, TypeGuard, cast
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -17,11 +17,14 @@ from litellm.types.llms.openai import (
     ChatCompletionToolCallFunctionChunk,
     ChatCompletionToolMessage,
     OpenAIChatCompletionAssistantMessage,
+    OpenAIChatCompletionUserMessage,
 )
 
-from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.models.llm_request import ChatMessage
-from new_choirworks.core.models.llm_response import LLMResponse
+from new_choirworks.core.models.llm_response import FunctionCall, FunctionResponse, LLMResponse
+
+if TYPE_CHECKING:
+    from new_choirworks.core.agents.invocation_context import InvocationContext
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
 
@@ -86,6 +89,7 @@ class EventMeta:
 def meta(event: A2AEvent) -> EventMeta:
     """Get typed EventMeta view for an A2A event."""
     return EventMeta(event)
+
 
 def to_a2a_message(response: LLMResponse) -> Message:
     """Convert LLMResponse to A2A Message."""
@@ -167,7 +171,7 @@ def to_a2a_artifact(
         if part.text is not None:
             p = Part(text=part.text)
             if part.thought:
-                p.metadata[PART_METADATA_THOUGHT] = "true"
+                p.metadata[PART_METADATA_THOUGHT] = True
             parts.append(p)
         if part.function_call is not None:
             p = Part()
@@ -202,15 +206,10 @@ def to_a2a_artifact(
         last_chunk=last_chunk,
     )
 
-    if not append and last_chunk:
-        msg = to_chat_message(response)
-        if msg is not None:
-            ctx.messages.append(msg)
-
     return event
 
 
-def is_final_artifact(event: A2AEvent) -> bool:
+def is_final_artifact(event: A2AEvent) -> TypeGuard[TaskArtifactUpdateEvent]:
     """True if event is a final (non-streaming, non-append) artifact event."""
     return isinstance(event, TaskArtifactUpdateEvent) and not event.append and event.last_chunk
 
@@ -219,11 +218,7 @@ def has_function_calls(event: A2AEvent) -> bool:
     """True if event's artifact contains any function_call parts."""
     if not isinstance(event, TaskArtifactUpdateEvent):
         return False
-    return any(
-        PART_METADATA_TYPE in p.metadata
-        and p.metadata[PART_METADATA_TYPE] == PART_TYPE_FUNCTION_CALL
-        for p in event.artifact.parts
-    )
+    return any(is_function_call_part(p) for p in event.artifact.parts)
 
 
 def extract_text(event: A2AEvent, include_thought: bool = False) -> str:
@@ -233,10 +228,89 @@ def extract_text(event: A2AEvent, include_thought: bool = False) -> str:
     return "".join(
         p.text
         for p in event.artifact.parts
-        if p.text
-        and (
-            include_thought
-            or PART_METADATA_THOUGHT not in p.metadata
-            or p.metadata[PART_METADATA_THOUGHT] != "true"
-        )
+        if p.text and (include_thought or not is_thought_part(p))
     )
+
+
+def is_thought_part(part: Part) -> bool:
+    """True if part is a thought."""
+    return PART_METADATA_THOUGHT in part.metadata and cast(
+        bool, part.metadata[PART_METADATA_THOUGHT]
+    )
+
+
+def is_function_call_part(part: Part) -> bool:
+    """True if part is a function_call."""
+    return (
+        PART_METADATA_TYPE in part.metadata
+        and part.metadata[PART_METADATA_TYPE] == PART_TYPE_FUNCTION_CALL
+    )
+
+
+def is_function_response_part(part: Part) -> bool:
+    """True if part is a function_response."""
+    return (
+        PART_METADATA_TYPE in part.metadata
+        and part.metadata[PART_METADATA_TYPE] == PART_TYPE_FUNCTION_RESPONSE
+    )
+
+
+def events_to_llm_messages(events: list[A2AEvent]) -> list[ChatMessage]:
+    messages: list[ChatMessage] = []
+
+    for event in events:
+        if isinstance(event, Message) and event.role == Role.ROLE_USER:
+            text = "".join(p.text for p in event.parts if p.text)
+            if text:
+                messages.append(
+                    OpenAIChatCompletionUserMessage(
+                        role="user",
+                        content=text,
+                    )
+                )
+        elif is_final_artifact(event):
+            text_buf: list[str] = []
+            function_calls: list[FunctionCall] = []
+            function_responses: list[FunctionResponse] = []
+
+            for part in event.artifact.parts:
+                if part.text and not is_thought_part(part):
+                    text_buf.append(part.text)
+                elif is_function_call_part(part):
+                    fc_data = json_format.MessageToDict(part.data)
+                    function_calls.append(FunctionCall(**fc_data))
+                elif is_function_response_part(part):
+                    fr_data = json_format.MessageToDict(part.data)
+                    function_responses.append(FunctionResponse(**fr_data))
+
+            text = "".join(text_buf)
+            if text or function_calls:
+                messages.append(
+                    OpenAIChatCompletionAssistantMessage(
+                        role="assistant",
+                        content=text or None,
+                        tool_calls=[
+                            ChatCompletionAssistantToolCall(
+                                id=fc.id,
+                                type="function",
+                                function=ChatCompletionToolCallFunctionChunk(
+                                    name=fc.name,
+                                    arguments=json.dumps(fc.args),
+                                ),
+                            )
+                            for fc in function_calls
+                        ]
+                        or None,
+                    )
+                )
+            if function_responses:
+                for fr in function_responses:
+                    messages.append(
+                        ChatCompletionToolMessage(
+                            role="tool",
+                            content=json.dumps(fr.response),
+                            tool_call_id=fr.id,
+                        )
+                    )
+
+    return messages

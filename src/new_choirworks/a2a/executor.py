@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from typing import override
 
+from a2a.helpers.proto_helpers import new_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types.a2a_pb2 import (
-    Task,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-)
+from a2a.types.a2a_pb2 import Role, Task, TaskState, TaskStatus, TaskStatusUpdateEvent
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
@@ -46,8 +42,9 @@ class LLMAgentExecutor(AgentExecutor):
         )
 
         # 3. Build InvocationContext and forward all agent events
+        user_event = new_message(parts=[new_text_part(text=user_text)], role=Role.ROLE_USER)
         ctx = InvocationContext(
-            messages=[{"role": "user", "content": user_text}],
+            events=[user_event],
             task_id=context.task_id,
             context_id=context.context_id,
             event_queue=event_queue,

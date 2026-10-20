@@ -65,4 +65,5 @@ class NodeRunner:
 
     async def _enqueue_event(self, event: A2AEvent, ctx: Context) -> None:
         assert ctx.invocation_context.event_queue is not None
+        ctx.invocation_context.events.append(event)
         await ctx.invocation_context.event_queue.enqueue_event(event)

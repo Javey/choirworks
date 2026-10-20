@@ -24,9 +24,14 @@ class BaseAgent(BaseNode, abc.ABC):
     """
 
     async def run_async(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
-        """Run the agent asynchronously, yielding events as they occur."""
+        """Run the agent asynchronously, yielding events as they occur.
+
+        Each yielded event is appended to ctx.events (the single source of
+        truth) before being yielded, mirroring NodeRunner._enqueue_event.
+        """
         async with aclosing(self._run_async_impl(ctx)) as agen:
             async for event in agen:
+                ctx.events.append(event)
                 yield event
 
     @override
