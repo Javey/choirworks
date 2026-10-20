@@ -21,6 +21,11 @@ class Context:
 
     invocation_context: InvocationContext
     node: BaseNode
+    # TODO: 迁移到 event.output / event.actions.route（EventMeta）。
+    # 收益：① ADK 同构——_track_event_in_context promote 模式（event 为源，
+    # ctx 为派生）；② RemoteA2aAgent 产出的远端 event 自带 output，NodeRunner
+    # 统一 promote 到 ctx，RemoteA2aAgent 不需耦合 Context；③ event.metadata
+    # 随 A2A SDK 自动持久化，为 resume/replay 打基础。
     output: object | None = None
     route: RouteValue | None = None
     error: Exception | None = None
