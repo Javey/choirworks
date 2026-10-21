@@ -78,6 +78,17 @@ class RemoteA2aAgent(BaseAgent):
             return
 
         message_parts, context_id = self._build_message_parts_for_request(ctx)
+        if not message_parts:
+            yield add_author(
+                new_text_status_update_event(
+                    task_id=ctx.task_id,
+                    context_id=ctx.context_id,
+                    state=TaskState.TASK_STATE_FAILED,
+                    text=f"No parts to send to remote A2A agent {self.name}",
+                ),
+                self.name,
+            )
+            return
         a2a_request = SendMessageRequest(
             message=new_message(parts=message_parts, role=Role.ROLE_USER, context_id=context_id)
         )
@@ -223,8 +234,6 @@ class RemoteA2aAgent(BaseAgent):
                 agent_msg = present_other_agent_message(event)
                 if agent_msg:
                     parts = list(agent_msg.parts) + parts
-        if not parts:
-            raise ValueError(f"Failed to find user message in ctx.events for agent {self.name}")
 
         return parts, context_id
 
