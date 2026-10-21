@@ -37,6 +37,8 @@ from new_choirworks.core.flows.llm_flows.context.fencing import (
 )
 from new_choirworks.core.workflow.context import Context
 
+from ..events.event import a2a_meta
+
 DEFAULT_TIMEOUT = 600.0
 
 
@@ -213,11 +215,10 @@ class RemoteA2aAgent(BaseAgent):
         context_id: str | None = None
         for event in reversed(ctx.events):
             if meta(event).author == self.name:
+                context_id = a2a_meta(event).context_id
                 break
             if isinstance(event, Message) and event.role == Role.ROLE_USER:
                 parts = list(event.parts) + parts
-                if event.context_id:
-                    context_id = event.context_id
             elif is_other_agent_reply(self.name, event) and is_final_artifact(event):
                 agent_msg = present_other_agent_message(event)
                 if agent_msg:
@@ -249,9 +250,14 @@ class RemoteA2aAgent(BaseAgent):
             )
 
         if event is not None:
+            metadata = a2a_meta(event)
+            if event.context_id:
+                metadata.context_id = event.context_id
+            metadata.task_id = event.task_id
+            metadata.author = self.name
+
             event.task_id = ctx.task_id
             event.context_id = ctx.context_id
-            meta(event).author = self.name
 
             yield event
 
