@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import override
 
 import pytest
+from a2a.helpers.proto_helpers import new_text_artifact_update_event
 from a2a.server.events import EventQueue
 from a2a.types.a2a_pb2 import TaskState, TaskStatus, TaskStatusUpdateEvent
 from pydantic import Field
@@ -61,6 +62,17 @@ class _FakeNode(BaseNode):
         ctx.route = self.fake_route
         return
         yield  # pyright: ignore[reportUnreachable]
+
+
+class _YieldingNode(BaseNode):
+    events: list[A2AEvent]
+
+    @override
+    async def _run_impl(
+        self, ctx: Context, node_input: object | None = None
+    ) -> AsyncGenerator[A2AEvent, None]:
+        for event in self.events:
+            yield event
 
 
 class _SlowNode(BaseNode):
@@ -290,3 +302,37 @@ async def test_workflow_completed_node_reruns_on_back_edge():
     assert counter.run_count == 2
     assert end.received_inputs == [2]
     assert ctx.output == "end"
+
+
+@pytest.mark.asyncio
+async def test_workflow_partial_artifact_not_in_events():
+    partial = new_text_artifact_update_event(
+        task_id="t1",
+        context_id="c1",
+        name="a",
+        text="Hel",
+        last_chunk=False,
+    )
+    append_final = new_text_artifact_update_event(
+        task_id="t1",
+        context_id="c1",
+        name="a",
+        text="lo",
+        append=True,
+        last_chunk=True,
+    )
+    final = new_text_artifact_update_event(
+        task_id="t1",
+        context_id="c1",
+        name="a",
+        text="Hello",
+        last_chunk=True,
+    )
+    node = _YieldingNode(name="n", events=[partial, append_final, final])
+    wf = Workflow(name="wf", edges=[Edge(START, node)])
+    ctx, queue = _make_ctx(wf)
+
+    await _run(wf, ctx)
+
+    assert queue.events == [partial, append_final, final]
+    assert ctx.invocation_context.events == [final]

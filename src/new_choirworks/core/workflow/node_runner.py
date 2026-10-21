@@ -6,7 +6,7 @@ import asyncio
 from contextlib import aclosing
 from dataclasses import dataclass
 
-from new_choirworks.core.events.event import A2AEvent
+from new_choirworks.core.events.event import A2AEvent, is_partial_event
 from new_choirworks.core.workflow.base_node import BaseNode
 from new_choirworks.core.workflow.context import Context
 from new_choirworks.core.workflow.errors import NodeTimeoutError
@@ -65,5 +65,6 @@ class NodeRunner:
 
     async def _enqueue_event(self, event: A2AEvent, ctx: Context) -> None:
         assert ctx.invocation_context.event_queue is not None
-        ctx.invocation_context.events.append(event)
+        if not is_partial_event(event):
+            ctx.invocation_context.events.append(event)
         await ctx.invocation_context.event_queue.enqueue_event(event)

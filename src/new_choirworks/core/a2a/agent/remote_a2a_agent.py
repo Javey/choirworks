@@ -219,23 +219,34 @@ class RemoteA2aAgent(BaseAgent):
 
         return self.httpx_client
 
-    def _build_message_parts_for_request(
+    def _is_relayed_peer_event(self, event: A2AEvent) -> bool:
+        return bool(meta(event).author == self.name and a2a_meta(event).task_id is not None)
+
+    def _is_remote_response(self, event: A2AEvent) -> bool:
+        return self._is_relayed_peer_event(event)
+
+    def _construct_message_parts_from_session(
         self, ctx: InvocationContext
     ) -> tuple[list[Part], str | None]:
         parts: list[Part] = []
         context_id: str | None = None
         for event in reversed(ctx.events):
-            if meta(event).author == self.name:
+            if self._is_remote_response(event):
                 context_id = a2a_meta(event).context_id
                 break
             if isinstance(event, Message) and event.role == Role.ROLE_USER:
                 parts = list(event.parts) + parts
-            elif is_other_agent_reply(self.name, event) and is_final_artifact(event):
+            elif is_other_agent_reply(self.name, event):
                 agent_msg = present_other_agent_message(event)
                 if agent_msg:
                     parts = list(agent_msg.parts) + parts
 
         return parts, context_id
+
+    def _build_message_parts_for_request(
+        self, ctx: InvocationContext
+    ) -> tuple[list[Part], str | None]:
+        return self._construct_message_parts_from_session(ctx)
 
     async def _handle_a2a_response(
         self, response: StreamResponse, ctx: InvocationContext
@@ -253,8 +264,8 @@ class RemoteA2aAgent(BaseAgent):
         elif response.HasField("task"):
             task = response.task
             event = TaskStatusUpdateEvent(
-                task_id=ctx.task_id,
-                context_id=ctx.context_id,
+                task_id=task.id,
+                context_id=task.context_id,
                 status=task.status,
             )
 

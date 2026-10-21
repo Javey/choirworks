@@ -1,10 +1,14 @@
 from typing import override
 
-from a2a.types.a2a_pb2 import Message
+from a2a.helpers.proto_helpers import (
+    new_text_artifact_update_event,
+    new_text_status_update_event,
+)
+from a2a.types.a2a_pb2 import Message, TaskState
 
 from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent
+from new_choirworks.core.events.event import A2AEvent, is_partial_event
 from new_choirworks.core.workflow.context import Context
 
 
@@ -41,3 +45,43 @@ async def test_run_as_node_bridges_to_run_async():
         yielded_events.append(event)
 
     assert yielded_events == events
+
+
+def _artifact(*, append: bool, last_chunk: bool):
+    return new_text_artifact_update_event(
+        task_id="t1",
+        context_id="c1",
+        name="a",
+        text="x",
+        append=append,
+        last_chunk=last_chunk,
+    )
+
+
+def test_is_partial_event():
+    assert is_partial_event(_artifact(append=False, last_chunk=False)) is True
+    assert is_partial_event(_artifact(append=True, last_chunk=False)) is True
+    assert is_partial_event(_artifact(append=True, last_chunk=True)) is True
+    assert is_partial_event(_artifact(append=False, last_chunk=True)) is False
+    status = new_text_status_update_event(
+        task_id="t1",
+        context_id="c1",
+        state=TaskState.TASK_STATE_WORKING,
+        text="busy",
+    )
+    assert is_partial_event(status) is False
+    assert is_partial_event(Message()) is False
+
+
+async def test_run_async_keeps_partial_out_of_events():
+    partial = _artifact(append=False, last_chunk=False)
+    append_final = _artifact(append=True, last_chunk=True)
+    final = _artifact(append=False, last_chunk=True)
+    user = Message()
+    agent = EchoAgent(events=[partial, append_final, final])
+    ctx = InvocationContext(events=[user])
+
+    yielded = [event async for event in agent.run_async(ctx)]
+
+    assert yielded == [partial, append_final, final]
+    assert ctx.events == [user, final]

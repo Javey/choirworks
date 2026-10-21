@@ -4,6 +4,7 @@ from a2a.helpers.proto_helpers import (
     new_message,
     new_text_artifact_update_event,
     new_text_part,
+    new_text_status_update_event,
 )
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -27,6 +28,7 @@ from new_choirworks.core.events.event import (
     PART_TYPE_FUNCTION_CALL,
     PART_TYPE_FUNCTION_RESPONSE,
     A2AEvent,
+    add_author,
     extract_text,
     meta,
 )
@@ -185,6 +187,71 @@ def test_build_break_at_own_response_skips_older():
     assert context_id is None
 
 
+async def test_build_skips_failed_status_event_and_keeps_history():
+    agent = _agent()
+    failure = add_author(
+        new_text_status_update_event(
+            task_id=TASK_ID,
+            context_id=CTX_ID,
+            state=TaskState.TASK_STATE_FAILED,
+            text="Failed to send message to remote A2A agent remote",
+        ),
+        AGENT,
+    )
+    events = [
+        _user("first"),
+        _final_artifact(AGENT, "ok", remote_ctx="R"),
+        _user("second"),
+        failure,
+    ]
+
+    parts, context_id = agent._build_message_parts_for_request(_inv_ctx(events))
+
+    assert [p.text for p in parts] == ["second"]
+    assert context_id == "R"
+
+
+def test_is_remote_response_true_for_relayed_artifact():
+    agent = _agent()
+    assert agent._is_remote_response(_final_artifact(AGENT, "ok")) is True
+
+
+def test_is_remote_response_false_for_failed_status():
+    agent = _agent()
+    failure = add_author(
+        new_text_status_update_event(
+            task_id=TASK_ID,
+            context_id=CTX_ID,
+            state=TaskState.TASK_STATE_FAILED,
+            text="boom",
+        ),
+        AGENT,
+    )
+    assert agent._is_remote_response(failure) is False
+
+
+def test_is_remote_response_false_for_other_agent():
+    agent = _agent()
+    assert agent._is_remote_response(_final_artifact(OTHER, "ok")) is False
+
+
+def test_build_other_agent_message_fenced():
+    agent = _agent()
+    message = _remote_message(text="peer result")
+    meta(message).author = OTHER
+    events = [_user("a"), message]
+
+    parts, _ = agent._build_message_parts_for_request(_inv_ctx(events))
+
+    assert len(parts) == 3
+    assert parts[0].text == "a"
+    assert parts[1].text == OTHER_AGENT_CONTEXT_PREAMBLE
+    assert "[bob] said:" in parts[2].text
+    assert "peer result" in parts[2].text
+    assert QUOTED_CONTENT_BEGIN in parts[2].text
+    assert QUOTED_CONTENT_END in parts[2].text
+
+
 def test_build_other_agent_final_artifact_fenced():
     agent = _agent()
     events = [_user("a"), _final_artifact(OTHER, "result")]
@@ -326,10 +393,41 @@ async def test_handle_task_branch_streaming():
     assert event.context_id == CTX_ID
     assert event.status.state == TaskState.TASK_STATE_WORKING
     assert meta(event).author == AGENT
-    # NOTE: task branch stores LOCAL ids in metadata (remote ids lost).
-    # Known issue — task branch creates event with local ids before metadata save.
-    assert a2a_meta(event).task_id == TASK_ID
-    assert a2a_meta(event).context_id == CTX_ID
+
+
+async def test_handle_task_branch_keeps_remote_ids_in_metadata():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    resp = _stream_task(task)
+    events = await _collect(agent._handle_a2a_response(resp, _inv_ctx([])))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, TaskStatusUpdateEvent)
+    assert event.task_id == TASK_ID
+    assert event.context_id == CTX_ID
+    assert a2a_meta(event).task_id == REMOTE_TASK_ID
+    assert a2a_meta(event).context_id == REMOTE_CTX_ID
+
+
+async def test_build_uses_remote_context_id_after_task_response():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    response_events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    parts, context_id = agent._build_message_parts_for_request(
+        _inv_ctx([*response_events, _user("next")])
+    )
+
+    assert [p.text for p in parts] == ["next"]
+    assert context_id == REMOTE_CTX_ID
 
 
 async def test_handle_empty_response_no_yield():

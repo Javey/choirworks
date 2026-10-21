@@ -45,12 +45,19 @@ def is_other_agent_reply(current_agent_name: str, event: A2AEvent) -> bool:
 def present_other_agent_message(
     event: A2AEvent, *, include_thoughts: bool = False
 ) -> Message | None:
-    if not is_final_artifact(event):
+    # TODO: 当前只处理 Message 和 final artifact。ADK 会统一处理
+    # TaskStatusUpdateEvent.status.message、Task 快照 artifacts、append=True
+    # 的 final artifact 以及非 text Part；后续按需补齐。
+    if isinstance(event, Message):
+        event_parts = list(event.parts)
+    elif is_final_artifact(event):
+        event_parts = list(event.artifact.parts)
+    else:
         return None
 
     parts: list[Part] = [new_text_part(text=OTHER_AGENT_CONTEXT_PREAMBLE)]
     author = meta(event).author
-    for part in event.artifact.parts:
+    for part in event_parts:
         if is_thought_part(part):
             if include_thoughts and part.text and part.text.strip():
                 parts.append(

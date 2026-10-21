@@ -213,6 +213,11 @@ def is_final_artifact(event: A2AEvent) -> TypeGuard[TaskArtifactUpdateEvent]:
     return isinstance(event, TaskArtifactUpdateEvent) and not event.append and event.last_chunk
 
 
+def is_partial_event(event: A2AEvent) -> bool:
+    """True if event is an incomplete artifact snapshot."""
+    return isinstance(event, TaskArtifactUpdateEvent) and not is_final_artifact(event)
+
+
 def has_function_calls(event: A2AEvent) -> bool:
     """True if event's artifact contains any function_call parts."""
     if not isinstance(event, TaskArtifactUpdateEvent):
