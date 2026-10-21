@@ -221,13 +221,19 @@ def has_function_calls(event: A2AEvent) -> bool:
 
 
 def extract_text(event: A2AEvent, include_thought: bool = False) -> str:
-    """Concatenate text parts from an artifact event, skipping thoughts by default."""
+    """Concatenate text parts from an artifact event.
+
+    Skips thoughts (unless include_thought), function calls, and function responses.
+    """
     if not isinstance(event, TaskArtifactUpdateEvent):
         return ""
     return "".join(
         p.text
         for p in event.artifact.parts
-        if p.text and (include_thought or not is_thought_part(p))
+        if p.text
+        and not is_function_call_part(p)
+        and not is_function_response_part(p)
+        and (include_thought or not is_thought_part(p))
     )
 
 
