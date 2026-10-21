@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
-from typing import override
+from contextlib import aclosing
+from typing import cast, override
 from urllib.parse import urlparse
 
 import httpx
@@ -15,14 +16,21 @@ from a2a.client import (
 from a2a.client import (
     ClientFactory as A2AClientFactory,
 )
-from a2a.helpers.proto_helpers import new_text_status_update_event
-from a2a.types import AgentCard
-from a2a.types.a2a_pb2 import TaskState
+from a2a.helpers.proto_helpers import new_message, new_text_status_update_event
+from a2a.types import AgentCard, Message, Part, Role, SendMessageRequest
+from a2a.types.a2a_pb2 import StreamResponse, TaskState, TaskStatusUpdateEvent
 from pydantic import PrivateAttr
 
 from new_choirworks.core.agents.base_agent import BaseAgent
-from new_choirworks.core.events.event import A2AEvent, is_final_artifact
-from new_choirworks.core.workflow.context import Context, InvocationContext
+from new_choirworks.core.agents.invocation_context import InvocationContext
+from new_choirworks.core.events.event import (
+    A2AEvent,
+    add_author,
+    extract_text,
+    is_final_artifact,
+    meta,
+)
+from new_choirworks.core.workflow.context import Context
 
 DEFAULT_TIMEOUT = 600.0
 
@@ -50,15 +58,40 @@ class RemoteA2aAgent(BaseAgent):
         try:
             a2a_client = await self._ensure_resolved(ctx)
         except Exception as e:
-            yield new_text_status_update_event(
-                task_id=ctx.task_id,
-                context_id=ctx.context_id,
-                state=TaskState.TASK_STATE_FAILED,
-                text=f"Failed to initialize remote A2A agent {self.name} - {e}",
+            yield add_author(
+                new_text_status_update_event(
+                    task_id=ctx.task_id,
+                    context_id=ctx.context_id,
+                    state=TaskState.TASK_STATE_FAILED,
+                    text=f"Failed to initialize remote A2A agent {self.name} - {e}",
+                ),
+                self.name,
             )
             return
 
-        # message = self.
+        message_parts, context_id = self._build_message_parts_for_requests(ctx)
+        a2a_request = SendMessageRequest(
+            message=new_message(parts=message_parts, role=Role.ROLE_USER, context_id=context_id)
+        )
+
+        try:
+            async with aclosing(
+                cast(AsyncGenerator[StreamResponse, None], a2a_client.send_message(a2a_request))
+            ) as agen:
+                async for response in agen:
+                    async for event in self._handle_a2a_response(response, ctx):
+                        yield event
+        except Exception as e:
+            yield add_author(
+                new_text_status_update_event(
+                    task_id=ctx.task_id,
+                    context_id=ctx.context_id,
+                    state=TaskState.TASK_STATE_FAILED,
+                    text=f"Failed to send message to remote A2A agent {self.name} - {e}",
+                ),
+                self.name,
+            )
+            return
 
     @override
     async def _run_impl(
@@ -66,13 +99,17 @@ class RemoteA2aAgent(BaseAgent):
     ) -> AsyncGenerator[A2AEvent, None]:
         promoted = False
         async for event in super()._run_impl(ctx, node_input):
-            if not promoted and self._promote_response_to_output(event):
+            if not promoted and self._promote_response_to_output(event, ctx):
                 promoted = True
             yield event
 
-    def _promote_response_to_output(self, event: A2AEvent) -> bool:
+    def _promote_response_to_output(self, event: A2AEvent, ctx: Context) -> bool:
         if not is_final_artifact(event):
             return False
+        text = extract_text(event)
+        if not text:
+            return False
+        ctx.output = text
         return True
 
     async def _ensure_resolved(self, ctx: InvocationContext | None) -> A2AClient:
@@ -162,6 +199,43 @@ class RemoteA2aAgent(BaseAgent):
             )
 
         return self.httpx_client
+
+    def _build_message_parts_for_requests(
+        self, ctx: InvocationContext
+    ) -> tuple[list[Part], str | None]:
+        for event in reversed(ctx.events):
+            if isinstance(event, Message) and event.role == Role.ROLE_USER:
+                return list(event.parts), event.context_id or None
+
+        raise ValueError(f"Failed to find user message in ctx.events for agent {self.name}")
+
+    async def _handle_a2a_response(
+        self, response: StreamResponse, ctx: InvocationContext
+    ) -> AsyncGenerator[A2AEvent, None]:
+        assert ctx.task_id is not None
+        assert ctx.context_id is not None
+
+        event: A2AEvent | None = None
+        if response.HasField("message"):
+            event = response.message
+        elif response.HasField("status_update"):
+            event = response.status_update
+        elif response.HasField("artifact_update"):
+            event = response.artifact_update
+        elif response.HasField("task"):
+            task = response.task
+            event = TaskStatusUpdateEvent(
+                task_id=ctx.task_id,
+                context_id=ctx.context_id,
+                status=task.status,
+            )
+
+        if event is not None:
+            event.task_id = ctx.task_id
+            event.context_id = ctx.context_id
+            meta(event).author = self.name
+
+            yield event
 
     async def cleanup(self) -> None:
         if self._httpx_client_needs_cleanup and self.httpx_client:

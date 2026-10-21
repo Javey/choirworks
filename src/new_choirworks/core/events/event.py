@@ -91,6 +91,12 @@ def meta(event: A2AEvent) -> EventMeta:
     return EventMeta(event)
 
 
+def add_author(event: A2AEvent, author: str) -> A2AEvent:
+    """Add author metadata to an A2A event."""
+    meta(event).author = author
+    return event
+
+
 def to_a2a_message(response: LLMResponse) -> Message:
     """Convert LLMResponse to A2A Message."""
     msg = Message()
