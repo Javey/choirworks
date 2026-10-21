@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import TYPE_CHECKING, TypeGuard, cast
 
 from a2a.types.a2a_pb2 import (
@@ -183,11 +184,7 @@ def to_a2a_artifact(
             p = Part()
             p.metadata[PART_METADATA_TYPE] = PART_TYPE_FUNCTION_CALL
             _ = json_format.ParseDict(
-                {
-                    "name": part.function_call.name,
-                    "args": part.function_call.args or {},
-                    "id": part.function_call.id,
-                },
+                asdict(part.function_call),
                 p.data,
             )
             parts.append(p)
@@ -195,11 +192,7 @@ def to_a2a_artifact(
             p = Part()
             p.metadata[PART_METADATA_TYPE] = PART_TYPE_FUNCTION_RESPONSE
             _ = json_format.ParseDict(
-                {
-                    "name": part.function_response.name,
-                    "id": part.function_response.id,
-                    "response": part.function_response.response,
-                },
+                asdict(part.function_response),
                 p.data,
             )
             parts.append(p)

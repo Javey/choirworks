@@ -19,6 +19,7 @@ from a2a.client import (
 from a2a.helpers.proto_helpers import new_message, new_text_status_update_event
 from a2a.types import AgentCard, Message, Part, Role, SendMessageRequest
 from a2a.types.a2a_pb2 import StreamResponse, TaskState, TaskStatusUpdateEvent
+from a2a.utils.constants import TransportProtocol
 from pydantic import PrivateAttr
 
 from new_choirworks.core.agents.base_agent import BaseAgent
@@ -29,6 +30,10 @@ from new_choirworks.core.events.event import (
     extract_text,
     is_final_artifact,
     meta,
+)
+from new_choirworks.core.flows.llm_flows.context.fencing import (
+    is_other_agent_reply,
+    present_other_agent_message,
 )
 from new_choirworks.core.workflow.context import Context
 
@@ -44,6 +49,7 @@ class RemoteA2aAgent(BaseAgent):
     httpx_client: httpx.AsyncClient | None = None
     a2a_client_factory: A2AClientFactory | None = None
     timeout: float | None = DEFAULT_TIMEOUT
+    description: str = ""  # 不加，类型检查有警告：self.description = self._agent_card.description
 
     _agent_card: AgentCard | None = PrivateAttr(default=None)
     _a2a_client: A2AClient | None = PrivateAttr(default=None)
@@ -69,7 +75,7 @@ class RemoteA2aAgent(BaseAgent):
             )
             return
 
-        message_parts, context_id = self._build_message_parts_for_requests(ctx)
+        message_parts, context_id = self._build_message_parts_for_request(ctx)
         a2a_request = SendMessageRequest(
             message=new_message(parts=message_parts, role=Role.ROLE_USER, context_id=context_id)
         )
@@ -200,14 +206,26 @@ class RemoteA2aAgent(BaseAgent):
 
         return self.httpx_client
 
-    def _build_message_parts_for_requests(
+    def _build_message_parts_for_request(
         self, ctx: InvocationContext
     ) -> tuple[list[Part], str | None]:
+        parts: list[Part] = []
+        context_id: str | None = None
         for event in reversed(ctx.events):
+            if meta(event).author == self.name:
+                break
             if isinstance(event, Message) and event.role == Role.ROLE_USER:
-                return list(event.parts), event.context_id or None
+                parts = list(event.parts) + parts
+                if event.context_id:
+                    context_id = event.context_id
+            elif is_other_agent_reply(self.name, event) and is_final_artifact(event):
+                agent_msg = present_other_agent_message(event)
+                if agent_msg:
+                    parts = list(agent_msg.parts) + parts
+        if not parts:
+            raise ValueError(f"Failed to find user message in ctx.events for agent {self.name}")
 
-        raise ValueError(f"Failed to find user message in ctx.events for agent {self.name}")
+        return parts, context_id
 
     async def _handle_a2a_response(
         self, response: StreamResponse, ctx: InvocationContext
@@ -242,7 +260,9 @@ class RemoteA2aAgent(BaseAgent):
             await self.httpx_client.aclose()
 
 
-def _get_card_rpc_url(card: AgentCard, protocol_binding: str = "jsonrpc") -> str | None:
+def _get_card_rpc_url(
+    card: AgentCard, protocol_binding: TransportProtocol = TransportProtocol.JSONRPC
+) -> str | None:
     interfaces = list(card.supported_interfaces)
     if not interfaces:
         return None
