@@ -5,6 +5,7 @@ from typing import cast, override
 
 import pytest
 from a2a.server.events import EventQueue
+from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
@@ -61,6 +62,10 @@ async def test_workflow_with_llm_agent_node():
 
     assert ctx.output == "hello world"
     assert len(queue.events) == 3
+    tracked = [e for e in ic.events if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(tracked) == 1
+    assert tracked[0].last_chunk is True
+    assert tracked[0].append is False
 
 
 @pytest.mark.asyncio

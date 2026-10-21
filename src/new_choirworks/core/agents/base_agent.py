@@ -8,7 +8,7 @@ from contextlib import aclosing
 from typing import TYPE_CHECKING, override
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent, is_partial_event
+from new_choirworks.core.events.event import A2AEvent
 from new_choirworks.core.workflow.base_node import BaseNode
 
 if TYPE_CHECKING:
@@ -26,13 +26,11 @@ class BaseAgent(BaseNode, abc.ABC):
     async def run_async(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
         """Run the agent asynchronously, yielding events as they occur.
 
-        Non-partial events are appended to ctx.events (the single source of
-        truth) before being yielded, mirroring NodeRunner._enqueue_event.
+        Event tracking is the caller's responsibility: LLMAgentExecutor for
+        direct runs, NodeRunner for workflow nodes.
         """
         async with aclosing(self._run_async_impl(ctx)) as agen:
             async for event in agen:
-                if not is_partial_event(event):
-                    ctx.events.append(event)
                 yield event
 
     @override

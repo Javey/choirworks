@@ -10,6 +10,7 @@ from a2a.server.events import EventQueue
 from a2a.types.a2a_pb2 import TaskState, TaskStatus, TaskStatusUpdateEvent
 from pydantic import Field
 
+from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import A2AEvent
 from new_choirworks.core.workflow.base_node import START, BaseNode, RouteValue
@@ -71,6 +72,15 @@ class _YieldingNode(BaseNode):
     async def _run_impl(
         self, ctx: Context, node_input: object | None = None
     ) -> AsyncGenerator[A2AEvent, None]:
+        for event in self.events:
+            yield event
+
+
+class _YieldingAgent(BaseAgent):
+    events: list[A2AEvent]
+
+    @override
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
         for event in self.events:
             yield event
 
@@ -336,3 +346,16 @@ async def test_workflow_partial_artifact_not_in_events():
 
     assert queue.events == [partial, append_final, final]
     assert ctx.invocation_context.events == [final]
+
+
+@pytest.mark.asyncio
+async def test_workflow_base_agent_events_tracked_once():
+    events: list[A2AEvent] = [_fake_event(), _fake_event()]
+    agent = _YieldingAgent(name="a", events=events)
+    wf = Workflow(name="wf", edges=[Edge(START, agent)])
+    ctx, queue = _make_ctx(wf)
+
+    await _run(wf, ctx)
+
+    assert queue.events == events
+    assert ctx.invocation_context.events == events

@@ -9,6 +9,7 @@ from a2a.types.a2a_pb2 import Role, Task, TaskState, TaskStatus, TaskStatusUpdat
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
+from new_choirworks.core.events.event import is_partial_event
 
 
 class LLMAgentExecutor(AgentExecutor):
@@ -50,6 +51,8 @@ class LLMAgentExecutor(AgentExecutor):
             event_queue=event_queue,
         )
         async for event in self._agent.run_async(ctx):
+            if not is_partial_event(event):
+                ctx.events.append(event)
             await event_queue.enqueue_event(event)
 
         # 4. Terminal state

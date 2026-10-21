@@ -11,7 +11,12 @@ from pydantic import BaseModel, ValidationError
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
-from new_choirworks.core.events.event import events_to_llm_messages, to_a2a_artifact
+from new_choirworks.core.events.event import (
+    A2AEvent,
+    events_to_llm_messages,
+    is_partial_event,
+    to_a2a_artifact,
+)
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.lite_llm import LiteLLM
 from new_choirworks.core.models.llm_request import LLMRequest
@@ -28,6 +33,15 @@ from ..conftest import FakeLLM, FakeTool, LLMKwargs
 
 def _user_event(text: str):
     return new_message(parts=[new_text_part(text=text)], role=Role.ROLE_USER)
+
+
+async def _run_agent(agent: LLMAgent, ctx: InvocationContext) -> list[A2AEvent]:
+    events: list[A2AEvent] = []
+    async for event in agent.run_async(ctx):
+        if not is_partial_event(event):
+            ctx.events.append(event)
+        events.append(event)
+    return events
 
 
 def _chunk(text: str, thought: bool = False) -> LLMResponse:
@@ -126,7 +140,7 @@ def test_close_returns_none_for_empty_buffers():
 async def test_append_last_chunk_semantics():
     llm = FakeLLM(responder=lambda i, r: [_chunk("a"), _chunk("b"), _chunk("c")])
     agent = LLMAgent(name="t", llm=llm)
-    events = [e async for e in agent.run_async(_ctx())]
+    events = await _run_agent(agent, _ctx())
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     # 3 chunks + 1 seal = 4 events
@@ -147,7 +161,7 @@ async def test_append_last_chunk_semantics():
 async def test_seal_contains_full_text():
     llm = FakeLLM(responder=lambda i, r: [_chunk("你"), _chunk("好"), _chunk("！")])
     agent = LLMAgent(name="t", llm=llm)
-    events = [e async for e in agent.run_async(_ctx())]
+    events = await _run_agent(agent, _ctx())
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     seal = artifacts[-1]
@@ -162,7 +176,7 @@ async def test_seal_contains_full_text():
 async def test_thought_metadata():
     llm = FakeLLM(responder=lambda i, r: [_chunk("thinking...", thought=True), _chunk("answer")])
     agent = LLMAgent(name="t", llm=llm)
-    events = [e async for e in agent.run_async(_ctx())]
+    events = await _run_agent(agent, _ctx())
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     # chunk 0: thought only
@@ -194,7 +208,7 @@ async def test_instruction_added_as_system_message():
 
     agent = LLMAgent(name="t", llm=CaptureLLM(), instruction="You are helpful.")
     ctx = InvocationContext(events=[_user_event("Hi")])
-    _ = [e async for e in agent.run_async(ctx)]
+    _ = await _run_agent(agent, ctx)
 
     req = captured[0]
     assert req.system_instruction == "You are helpful."
@@ -215,7 +229,7 @@ async def test_tool_call_flow():
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
     ctx = InvocationContext(events=[_user_event("北京天气")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     # round 1: 1 text chunk + 1 fc chunk + 1 seal + 1 function_response
@@ -260,7 +274,7 @@ async def test_error_retry():
     agent = LLMAgent(name="t", llm=llm, max_retries=3)
     ctx = InvocationContext(events=[_user_event("hi")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     # 3 rounds × (1 fc chunk + 1 seal + 1 error response) = 9
@@ -291,7 +305,7 @@ async def test_tool_result_normalized():
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
     ctx = InvocationContext(events=[_user_event("go")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     fr = artifacts[2]
@@ -306,7 +320,7 @@ async def test_function_call_id_consistency():
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
     ctx = InvocationContext(events=[_user_event("go")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     seal = artifacts[1]
@@ -325,7 +339,7 @@ async def test_text_response(llm_kwargs: LLMKwargs):
     agent = LLMAgent(name="test", llm=llm)
     ctx = InvocationContext(events=[_user_event("Hello")])
 
-    results = [e async for e in agent.run_async(ctx)]
+    results = await _run_agent(agent, ctx)
 
     assert len(results) > 0
     artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]
@@ -375,7 +389,7 @@ async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     agent = LLMAgent(name="test", llm=llm, tools=[WeatherTool()])
     ctx = InvocationContext(events=[_user_event("北京的天气怎么样？")])
 
-    results = [e async for e in agent.run_async(ctx)]
+    results = await _run_agent(agent, ctx)
 
     # print(results)
 
@@ -444,7 +458,7 @@ async def test_structured_output_passes_schema_to_request():
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
     ctx = InvocationContext(events=[_user_event("go")])
 
-    _ = [e async for e in agent.run_async(ctx)]
+    _ = await _run_agent(agent, ctx)
 
     assert captured[0].response_schema is _OutputSchema
 
@@ -455,7 +469,7 @@ async def test_structured_output_valid_json():
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
     ctx = InvocationContext(events=[_user_event("go")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
     last = artifacts[-1]
     assert last.last_chunk is True
@@ -471,7 +485,7 @@ async def test_structured_output_strips_code_fence():
     agent = LLMAgent(name="t", llm=llm, output_schema=_OutputSchema)
     ctx = InvocationContext(events=[_user_event("go")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
     last = artifacts[-1]
     assert "structured_output" in last.metadata
@@ -486,7 +500,7 @@ async def test_structured_output_invalid_json_raises():
     ctx = InvocationContext(events=[_user_event("go")])
 
     with pytest.raises(ValidationError, match="Invalid JSON"):
-        _ = [e async for e in agent.run_async(ctx)]
+        _ = await _run_agent(agent, ctx)
 
     assert len(events_to_llm_messages(ctx.events)) == 1
 
@@ -498,7 +512,7 @@ async def test_structured_output_empty_text_raises():
     ctx = InvocationContext(events=[_user_event("go")])
 
     with pytest.raises(ValidationError):
-        _ = [e async for e in agent.run_async(ctx)]
+        _ = await _run_agent(agent, ctx)
 
 
 async def test_structured_output_with_tools_intermediate_round():
@@ -515,7 +529,7 @@ async def test_structured_output_with_tools_intermediate_round():
     agent = LLMAgent(name="t", llm=llm, tools=[tool], output_schema=_OutputSchema)
     ctx = InvocationContext(events=[_user_event("go")])
 
-    events = [e async for e in agent.run_async(ctx)]
+    events = await _run_agent(agent, ctx)
     artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
 
     last = artifacts[-1]
@@ -544,7 +558,7 @@ async def test_structured_output_integration(llm_kwargs: LLMKwargs):
     )
     ctx = InvocationContext(events=[_user_event("北京今天晴，25度。请返回结构化天气信息。")])
 
-    results = [e async for e in agent.run_async(ctx)]
+    results = await _run_agent(agent, ctx)
     artifacts = [e for e in results if isinstance(e, TaskArtifactUpdateEvent)]
     assert len(artifacts) > 0
 

@@ -73,15 +73,26 @@ def test_is_partial_event():
     assert is_partial_event(Message()) is False
 
 
-async def test_run_async_keeps_partial_out_of_events():
+async def test_run_async_does_not_track_events():
     partial = _artifact(append=False, last_chunk=False)
-    append_final = _artifact(append=True, last_chunk=True)
     final = _artifact(append=False, last_chunk=True)
     user = Message()
-    agent = EchoAgent(events=[partial, append_final, final])
+    agent = EchoAgent(events=[partial, final])
     ctx = InvocationContext(events=[user])
 
     yielded = [event async for event in agent.run_async(ctx)]
 
-    assert yielded == [partial, append_final, final]
-    assert ctx.events == [user, final]
+    assert yielded == [partial, final]
+    assert ctx.events == [user]
+
+
+async def test_run_as_node_does_not_track_parent_events():
+    events: list[A2AEvent] = [Message(), Message()]
+    agent = EchoAgent(events=events)
+    ic = InvocationContext()
+    ctx = Context(invocation_context=ic, node=agent)
+
+    yielded = [event async for event in agent.run(ctx)]
+
+    assert yielded == events
+    assert ic.events == []

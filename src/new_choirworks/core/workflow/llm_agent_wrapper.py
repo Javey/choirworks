@@ -17,6 +17,7 @@ from new_choirworks.core.events.event import (
     extract_text,
     has_function_calls,
     is_final_artifact,
+    is_partial_event,
 )
 from new_choirworks.core.utils.schema_utils import validate_schema
 from new_choirworks.core.workflow.context import Context
@@ -32,8 +33,13 @@ async def run_llm_agent_as_node(
     agent_ctx = prepare_llm_agent_context(agent, ctx)
     prepare_llm_agent_input(agent, agent_ctx, node_input)
 
+    # TODO: 后续改成共享 parent events，去掉这里的 append。
+    # 当前 wrapper 复制了 events，NodeRunner 只写 parent，LLM agent 的下一轮
+    # tool loop 需要从 copied events 里看到上一轮事件。
     async with aclosing(agent.run_async(agent_ctx.invocation_context)) as run_iter:
         async for event in run_iter:
+            if not is_partial_event(event):
+                agent_ctx.invocation_context.events.append(event)
             process_llm_agent_output(agent, ctx, event)
             yield event
 
