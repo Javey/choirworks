@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import TYPE_CHECKING, TypeGuard, cast
+from typing import TYPE_CHECKING, TypeGuard, TypeVar, cast
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -92,7 +92,10 @@ def meta(event: A2AEvent) -> EventMeta:
     return EventMeta(event)
 
 
-def add_author(event: A2AEvent, author: str) -> A2AEvent:
+T = TypeVar("T", bound=A2AEvent)
+
+
+def add_author[T: A2AEvent](event: T, author: str) -> T:
     """Add author metadata to an A2A event."""
     meta(event).author = author
     return event
@@ -265,10 +268,20 @@ def is_function_response_part(part: Part) -> bool:
     )
 
 
-def events_to_llm_messages(events: list[A2AEvent]) -> list[ChatMessage]:
+def events_to_llm_messages(events: list[A2AEvent], *, agent_name: str = "") -> list[ChatMessage]:
+    from new_choirworks.core.flows.llm_flows.context.fencing import (
+        is_other_agent_reply,
+        present_other_agent_message,
+    )
+
     messages: list[ChatMessage] = []
 
     for event in events:
+        if agent_name and is_other_agent_reply(agent_name, event):
+            fenced = present_other_agent_message(event)
+            if fenced is None:
+                continue
+            event = fenced
         if isinstance(event, Message) and event.role == Role.ROLE_USER:
             text = "".join(p.text for p in event.parts if p.text)
             if text:

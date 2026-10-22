@@ -6,6 +6,7 @@ from google.protobuf import json_format
 
 from new_choirworks.core.events.event import (
     A2AEvent,
+    add_author,
     is_final_artifact,
     is_function_call_part,
     is_function_response_part,
@@ -95,4 +96,5 @@ def present_other_agent_message(
     if len(parts) == 1:
         return None
 
-    return new_message(parts=parts, role=Role.ROLE_USER)
+    msg = new_message(parts=parts, role=Role.ROLE_USER)
+    return add_author(msg, "user")

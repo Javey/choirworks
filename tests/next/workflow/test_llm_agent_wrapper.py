@@ -118,3 +118,60 @@ async def test_workflow_llm_agent_events_have_author():
     tracked = [e for e in ic.events if isinstance(e, TaskArtifactUpdateEvent)]
     assert len(tracked) == 1
     assert meta(tracked[0]).author == "test"
+
+
+@pytest.mark.asyncio
+async def test_workflow_chain_b_sees_a_as_fenced_user():
+    """A → B chain, B sees A's events (include_contents='default').
+
+    A's final artifact should be fenced as user context in B's LLM request,
+    not treated as B's own assistant history.
+    """
+    llm_a = FakeLLM(responder=lambda i, r: [_chunk("A result")])
+    captured_b: list[LLMRequest] = []
+
+    class CaptureLLM(BaseLLM):
+        model: str = "fake"
+
+        @override
+        async def generate_content_async(
+            self, llm_request: LLMRequest, stream: bool = False
+        ) -> AsyncGenerator[LLMResponse, None]:
+            captured_b.append(llm_request)
+            yield _chunk("B result")
+
+    a = LLMAgent(name="a", llm=llm_a, include_contents="none")
+    b = LLMAgent(name="b", llm=CaptureLLM(), include_contents="default")
+    wf = Workflow(name="wf", edges=[Edge(START, a), Edge(a, b)])
+
+    queue = _FakeEventQueue()
+    ic = InvocationContext(event_queue=queue, task_id="t1", context_id="c1")
+    ctx = Context(invocation_context=ic, node=wf)
+
+    async for _ in wf.run(ctx):
+        pass
+
+    messages = captured_b[-1].messages
+
+    # A's output must not appear in any assistant message (not B's own history)
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert all("A result" not in str(m.get("content") or "") for m in assistant_msgs)
+
+    # A's output should appear as fenced user context
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    fenced = [m for m in user_msgs if "[a] said:" in str(m.get("content") or "")]
+    assert len(fenced) == 1
+
+
+def test_prepare_llm_agent_input_stamps_user_author():
+    """prepare_llm_agent_input 注入的 user event 应有 author='user'。"""
+    agent = LLMAgent(name="test", llm=FakeLLM(responder=lambda i, r: []), include_contents="none")
+    ic = InvocationContext()
+    ctx = Context(invocation_context=ic, node=agent)
+
+    from new_choirworks.core.workflow.llm_agent_wrapper import prepare_llm_agent_input
+
+    prepare_llm_agent_input(agent, ctx, "hello")
+
+    assert len(ic.events) == 1
+    assert meta(ic.events[0]).author == "user"

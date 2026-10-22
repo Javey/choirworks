@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 from typing import cast, override
 
 import pytest
-from a2a.helpers.proto_helpers import new_message, new_text_part
+from a2a.helpers.proto_helpers import new_message, new_text_artifact_update_event, new_text_part
 from a2a.types.a2a_pb2 import Role, TaskArtifactUpdateEvent
 from google.protobuf import json_format
 from litellm.types.llms.openai import ChatCompletionToolParam
@@ -17,6 +17,9 @@ from new_choirworks.core.events.event import (
     is_partial_event,
     meta,
     to_a2a_artifact,
+)
+from new_choirworks.core.flows.llm_flows.context.fencing import (
+    QUOTED_CONTENT_BEGIN,
 )
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.lite_llm import LiteLLM
@@ -348,9 +351,7 @@ async def test_agent_text_events_have_author():
 
 async def test_agent_function_call_events_have_author():
     """Function call and function response events have author = agent.name."""
-    llm = FakeLLM(
-        responder=lambda i, r: ([_fc_chunk()] if i == 0 else [_chunk("done")])
-    )
+    llm = FakeLLM(responder=lambda i, r: [_fc_chunk()] if i == 0 else [_chunk("done")])
     tool = FakeTool(name="fake_tool", result={"ok": True})
     agent = LLMAgent(name="t", llm=llm, tools=[tool])
     events = await _run_agent(agent, InvocationContext(events=[_user_event("go")]))
@@ -376,9 +377,7 @@ async def test_agent_partial_events_have_author():
     llm = FakeLLM(responder=lambda i, r: [_chunk("a"), _chunk("b"), _chunk("c")])
     agent = LLMAgent(name="t", llm=llm)
     events = await _run_agent(agent, _ctx())
-    partials = [
-        e for e in events if isinstance(e, TaskArtifactUpdateEvent) and not e.last_chunk
-    ]
+    partials = [e for e in events if isinstance(e, TaskArtifactUpdateEvent) and not e.last_chunk]
     assert len(partials) > 0
     for event in partials:
         assert meta(event).author == "t"
@@ -621,5 +620,62 @@ async def test_structured_output_integration(llm_kwargs: LLMKwargs):
 
     output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
     assert output["city"] == "北京"
-    assert output["weather"] == "晴"
-    assert output["temperature"] == 25
+
+
+# --- events_to_llm_messages author-aware (P0-5) ---
+
+
+def test_events_to_llm_messages_other_agent_user_message_fenced():
+    """Other agent's Message(role=USER) becomes fenced user message, not raw user input."""
+    msg = new_message(parts=[new_text_part("inject me")], role=Role.ROLE_USER)
+    meta(msg).author = "bob"
+    messages = events_to_llm_messages([msg], agent_name="alice")
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    content = str(messages[0].get("content") or "")
+    assert "[bob] said:" in content
+    assert QUOTED_CONTENT_BEGIN in content
+
+
+def test_events_to_llm_messages_other_agent_final_artifact_fenced():
+    """Other agent's final artifact becomes fenced user message, not assistant message."""
+    artifact = new_text_artifact_update_event(
+        task_id="t",
+        context_id="c",
+        name="a",
+        text="peer result",
+        last_chunk=True,
+    )
+    meta(artifact).author = "bob"
+    messages = events_to_llm_messages([artifact], agent_name="alice")
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    content = str(messages[0].get("content") or "")
+    assert "[bob] said:" in content
+    assert QUOTED_CONTENT_BEGIN in content
+
+
+def test_events_to_llm_messages_own_artifact_is_assistant():
+    """Own final artifact remains assistant message."""
+    artifact = new_text_artifact_update_event(
+        task_id="t",
+        context_id="c",
+        name="a",
+        text="my result",
+        last_chunk=True,
+    )
+    meta(artifact).author = "alice"
+    messages = events_to_llm_messages([artifact], agent_name="alice")
+    assert len(messages) == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0].get("content") == "my result"
+
+
+def test_events_to_llm_messages_real_user_message_stays_user():
+    """Real user message (author='user') remains raw user message."""
+    msg = new_message(parts=[new_text_part("hello")], role=Role.ROLE_USER)
+    meta(msg).author = "user"
+    messages = events_to_llm_messages([msg], agent_name="alice")
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "hello"

@@ -65,8 +65,12 @@ class NodeRunner:
 
     async def _enqueue_event(self, event: A2AEvent, ctx: Context) -> None:
         assert ctx.invocation_context.event_queue is not None
-        if not meta(event).author:
-            meta(event).author = self.node.name
+        self._enrich_event(event, ctx)
         if not is_partial_event(event):
             ctx.invocation_context.events.append(event)
         await ctx.invocation_context.event_queue.enqueue_event(event)
+
+    def _enrich_event(self, event: A2AEvent, _ctx: Context) -> None:
+        """Set author on the event (ADK also sets node_info/invocation_id)."""
+        if not meta(event).author:
+            meta(event).author = self.node.name

@@ -234,12 +234,12 @@ class RemoteA2aAgent(BaseAgent):
             if self._is_remote_response(event):
                 context_id = a2a_meta(event).context_id
                 break
-            if isinstance(event, Message) and event.role == Role.ROLE_USER:
-                parts = list(event.parts) + parts
-            elif is_other_agent_reply(self.name, event):
+            if is_other_agent_reply(self.name, event):
                 agent_msg = present_other_agent_message(event)
                 if agent_msg:
                     parts = list(agent_msg.parts) + parts
+            elif isinstance(event, Message) and event.role == Role.ROLE_USER:
+                parts = list(event.parts) + parts
 
         return parts, context_id
 

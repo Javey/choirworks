@@ -14,6 +14,7 @@ from a2a.types.a2a_pb2 import Role
 
 from new_choirworks.core.events.event import (
     A2AEvent,
+    add_author,
     extract_text,
     has_function_calls,
     is_final_artifact,
@@ -65,6 +66,7 @@ def prepare_llm_agent_input(_agent: LLMAgent, ctx: Context, node_input: object |
         else json.dumps(node_input, ensure_ascii=False, default=str)
     )
     user_event = new_message(parts=[new_text_part(text=agent_input)], role=Role.ROLE_USER)
+    user_event = add_author(user_event, "user")
     ctx.invocation_context.events.append(user_event)
 
 

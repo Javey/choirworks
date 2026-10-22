@@ -9,7 +9,7 @@ from a2a.types.a2a_pb2 import Role, Task, TaskState, TaskStatus, TaskStatusUpdat
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
-from new_choirworks.core.events.event import is_partial_event
+from new_choirworks.core.events.event import add_author, is_partial_event
 
 
 class LLMAgentExecutor(AgentExecutor):
@@ -43,7 +43,9 @@ class LLMAgentExecutor(AgentExecutor):
         )
 
         # 3. Build InvocationContext and forward all agent events
-        user_event = new_message(parts=[new_text_part(text=user_text)], role=Role.ROLE_USER)
+        user_event = add_author(
+            new_message(parts=[new_text_part(text=user_text)], role=Role.ROLE_USER), "user"
+        )
         ctx = InvocationContext(
             events=[user_event],
             task_id=context.task_id,
