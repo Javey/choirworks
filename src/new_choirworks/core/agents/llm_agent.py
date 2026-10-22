@@ -10,9 +10,9 @@ from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import (
     ARTIFACT_METADATA_STRUCTURED_OUTPUT,
     A2AEvent,
-    events_to_llm_messages,
     to_a2a_artifact,
 )
+from new_choirworks.core.flows.llm_flows.context.contents import get_contents
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
@@ -53,7 +53,7 @@ class LLMAgent(BaseAgent):
 
         while True:
             req = LLMRequest(
-                messages=events_to_llm_messages(ctx.events, agent_name=self.name),
+                messages=get_contents(ctx.events, agent_name=self.name),
                 tools=tool_params or None,
                 system_instruction=self.instruction or None,
                 response_schema=self.output_schema,

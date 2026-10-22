@@ -19,11 +19,11 @@ from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
 from new_choirworks.core.events.event import (
     A2AEvent,
-    events_to_llm_messages,
     is_partial_event,
     meta,
     to_a2a_artifact,
 )
+from new_choirworks.core.flows.llm_flows.context.contents import get_contents
 from new_choirworks.core.flows.llm_flows.context.fencing import (
     QUOTED_CONTENT_BEGIN,
 )
@@ -265,8 +265,8 @@ async def test_tool_call_flow():
     assert seal2.last_chunk is True
     assert all("type" not in p.metadata for p in seal2.artifact.parts)
 
-    # events_to_llm_messages: user, assistant(tool_calls), tool, assistant(text)
-    messages = events_to_llm_messages(ctx.events, agent_name=agent.name)
+    # get_contents: user, assistant(tool_calls), tool, assistant(text)
+    messages = get_contents(ctx.events, agent_name=agent.name)
     assert len(messages) == 4
     assert messages[0]["role"] == "user"
     assert messages[1]["role"] == "assistant"
@@ -304,8 +304,8 @@ async def test_error_retry():
             for p in err.artifact.parts
         )
 
-    # events_to_llm_messages: user + 3×(assistant + tool) = 7
-    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) == 7
+    # get_contents: user + 3×(assistant + tool) = 7
+    assert len(get_contents(ctx.events, agent_name=agent.name)) == 7
 
 
 async def test_tool_result_normalized():
@@ -493,7 +493,7 @@ async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     )
     assert text
 
-    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) > 1
+    assert len(get_contents(ctx.events, agent_name=agent.name)) > 1
 
 
 # --- unit: structured output (FakeLLM) --
@@ -560,7 +560,7 @@ async def test_structured_output_invalid_json_raises():
     with pytest.raises(ValidationError, match="Invalid JSON"):
         _ = await _run_agent(agent, ctx)
 
-    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) == 1
+    assert len(get_contents(ctx.events, agent_name=agent.name)) == 1
 
 
 async def test_structured_output_empty_text_raises():
@@ -630,14 +630,14 @@ async def test_structured_output_integration(llm_kwargs: LLMKwargs):
     assert output["temperature"] == 25
 
 
-# --- events_to_llm_messages author-aware (P0-5) ---
+# --- get_contents author-aware (P0-5) ---
 
 
-def test_events_to_llm_messages_other_agent_user_message_fenced():
+def test_get_contents_other_agent_user_message_fenced():
     """Other agent's Message(role=USER) becomes fenced user message, not raw user input."""
     msg = new_message(parts=[new_text_part("inject me")], role=Role.ROLE_USER)
     meta(msg).author = "bob"
-    messages = events_to_llm_messages([msg], agent_name="alice")
+    messages = get_contents([msg], agent_name="alice")
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     content = str(messages[0].get("content") or "")
@@ -645,7 +645,7 @@ def test_events_to_llm_messages_other_agent_user_message_fenced():
     assert QUOTED_CONTENT_BEGIN in content
 
 
-def test_events_to_llm_messages_other_agent_final_artifact_fenced():
+def test_get_contents_other_agent_final_artifact_fenced():
     """Other agent's final artifact becomes fenced user message, not assistant message."""
     artifact = new_text_artifact_update_event(
         task_id="t",
@@ -655,7 +655,7 @@ def test_events_to_llm_messages_other_agent_final_artifact_fenced():
         last_chunk=True,
     )
     meta(artifact).author = "bob"
-    messages = events_to_llm_messages([artifact], agent_name="alice")
+    messages = get_contents([artifact], agent_name="alice")
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     content = str(messages[0].get("content") or "")
@@ -663,7 +663,7 @@ def test_events_to_llm_messages_other_agent_final_artifact_fenced():
     assert QUOTED_CONTENT_BEGIN in content
 
 
-def test_events_to_llm_messages_other_agent_status_message_fenced():
+def test_get_contents_other_agent_status_message_fenced():
     """Other agent's boundary status.message becomes fenced user context."""
     status_update = TaskStatusUpdateEvent(
         task_id="t",
@@ -674,7 +674,7 @@ def test_events_to_llm_messages_other_agent_status_message_fenced():
         ),
     )
     meta(status_update).author = "bob"
-    messages = events_to_llm_messages([status_update], agent_name="alice")
+    messages = get_contents([status_update], agent_name="alice")
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     content = str(messages[0].get("content") or "")
@@ -683,7 +683,7 @@ def test_events_to_llm_messages_other_agent_status_message_fenced():
     assert QUOTED_CONTENT_BEGIN in content
 
 
-def test_events_to_llm_messages_ignores_working_status_message():
+def test_get_contents_ignores_working_status_message():
     """Working status messages are progress updates, not conversation context."""
     status_update = TaskStatusUpdateEvent(
         task_id="t",
@@ -694,10 +694,10 @@ def test_events_to_llm_messages_ignores_working_status_message():
         ),
     )
     meta(status_update).author = "bob"
-    assert events_to_llm_messages([status_update], agent_name="alice") == []
+    assert get_contents([status_update], agent_name="alice") == []
 
 
-def test_events_to_llm_messages_own_artifact_is_assistant():
+def test_get_contents_own_artifact_is_assistant():
     """Own final artifact remains assistant message."""
     artifact = new_text_artifact_update_event(
         task_id="t",
@@ -707,23 +707,23 @@ def test_events_to_llm_messages_own_artifact_is_assistant():
         last_chunk=True,
     )
     meta(artifact).author = "alice"
-    messages = events_to_llm_messages([artifact], agent_name="alice")
+    messages = get_contents([artifact], agent_name="alice")
     assert len(messages) == 1
     assert messages[0]["role"] == "assistant"
     assert messages[0].get("content") == "my result"
 
 
-def test_events_to_llm_messages_real_user_message_stays_user():
+def test_get_contents_real_user_message_stays_user():
     """Real user message (author='user') remains raw user message."""
     msg = new_message(parts=[new_text_part("hello")], role=Role.ROLE_USER)
     meta(msg).author = "user"
-    messages = events_to_llm_messages([msg], agent_name="alice")
+    messages = get_contents([msg], agent_name="alice")
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "hello"
 
 
-def test_events_to_llm_messages_rejects_empty_agent_name():
+def test_get_contents_rejects_empty_agent_name():
     """Empty agent_name would disable fencing; reject it instead of failing open."""
     with pytest.raises(ValueError, match="agent_name"):
-        _ = events_to_llm_messages([], agent_name="")
+        _ = get_contents([], agent_name="")
