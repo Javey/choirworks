@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from typing import override
 
 from a2a.helpers.proto_helpers import (
@@ -8,7 +9,7 @@ from a2a.types.a2a_pb2 import Message, TaskState
 
 from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent, is_partial_event
+from new_choirworks.core.events.event import A2AEvent, is_partial_event, meta
 from new_choirworks.core.workflow.context import Context
 
 
@@ -96,3 +97,42 @@ async def test_run_as_node_does_not_track_parent_events():
 
     assert yielded == events
     assert ic.events == []
+
+
+async def test_run_async_stamps_author():
+    """run_async stamps self.name on all yielded events."""
+    partial = _artifact(append=False, last_chunk=False)
+    final = _artifact(append=False, last_chunk=True)
+    agent = EchoAgent(name="myagent", events=[partial, final])
+    ctx = InvocationContext()
+
+    yielded = [event async for event in agent.run_async(ctx)]
+
+    assert len(yielded) == 2
+    for event in yielded:
+        assert meta(event).author == "myagent"
+
+
+class _WrapperAgent(BaseAgent):
+    """An agent that delegates to a child agent via run_async."""
+
+    name: str = "wrapper"
+    description: str = "A wrapper agent."
+    child: BaseAgent
+
+    @override
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
+        async for event in self.child.run_async(ctx):
+            yield event
+
+
+async def test_nested_agent_preserves_child_author():
+    """Parent run_async should not overwrite author set by child agent."""
+    child = EchoAgent(name="child", events=[_artifact(append=False, last_chunk=True)])
+    parent = _WrapperAgent(name="parent", child=child)
+    ctx = InvocationContext()
+
+    yielded = [event async for event in parent.run_async(ctx)]
+
+    assert len(yielded) == 1
+    assert meta(yielded[0]).author == "child"

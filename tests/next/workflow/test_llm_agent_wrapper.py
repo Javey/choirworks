@@ -10,6 +10,7 @@ from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
+from new_choirworks.core.events.event import meta
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
@@ -98,3 +99,22 @@ async def test_workflow_llm_agent_chain():
     assert ctx.output == " world"
     assert len(queue.events) == 4
     assert cast(OpenAIChatCompletionUserMessage, captured_b[-1].messages[-1])["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_workflow_llm_agent_events_have_author():
+    """LLMAgent as workflow node: events in ic.events have author = agent.name."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk("hello"), _chunk(" world")])
+    agent = LLMAgent(name="test", llm=llm, include_contents="none")
+    wf = Workflow(name="wf", edges=[Edge(START, agent)])
+
+    queue = _FakeEventQueue()
+    ic = InvocationContext(event_queue=queue, task_id="t1", context_id="c1")
+    ctx = Context(invocation_context=ic, node=wf)
+
+    async for _ in wf.run(ctx):
+        pass
+
+    tracked = [e for e in ic.events if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(tracked) == 1
+    assert meta(tracked[0]).author == "test"

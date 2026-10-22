@@ -15,6 +15,7 @@ from new_choirworks.core.events.event import (
     A2AEvent,
     events_to_llm_messages,
     is_partial_event,
+    meta,
     to_a2a_artifact,
 )
 from new_choirworks.core.models.base_llm import BaseLLM
@@ -329,6 +330,58 @@ async def test_function_call_id_consistency():
     fc_id = cast(str, json_format.MessageToDict(seal.artifact.parts[0].data)["id"])
     fr_id = cast(str, json_format.MessageToDict(fr.artifact.parts[0].data)["id"])
     assert fc_id == fr_id == "call_42"
+
+
+# --- author stamp ---
+
+
+async def test_agent_text_events_have_author():
+    """All artifact events from run_async have author = agent.name."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk("a"), _chunk("b"), _chunk("c")])
+    agent = LLMAgent(name="t", llm=llm)
+    events = await _run_agent(agent, _ctx())
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(artifacts) > 0
+    for event in artifacts:
+        assert meta(event).author == "t"
+
+
+async def test_agent_function_call_events_have_author():
+    """Function call and function response events have author = agent.name."""
+    llm = FakeLLM(
+        responder=lambda i, r: ([_fc_chunk()] if i == 0 else [_chunk("done")])
+    )
+    tool = FakeTool(name="fake_tool", result={"ok": True})
+    agent = LLMAgent(name="t", llm=llm, tools=[tool])
+    events = await _run_agent(agent, InvocationContext(events=[_user_event("go")]))
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(artifacts) > 0
+    for event in artifacts:
+        assert meta(event).author == "t"
+
+
+async def test_agent_error_retry_events_have_author():
+    """Error retry function_response events have author = agent.name."""
+    llm = FakeLLM(responder=lambda i, r: [_error_fc_chunk()])
+    agent = LLMAgent(name="t", llm=llm, max_retries=3)
+    events = await _run_agent(agent, InvocationContext(events=[_user_event("hi")]))
+    artifacts = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
+    assert len(artifacts) > 0
+    for event in artifacts:
+        assert meta(event).author == "t"
+
+
+async def test_agent_partial_events_have_author():
+    """Partial (non-final) artifact events also have author = agent.name."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk("a"), _chunk("b"), _chunk("c")])
+    agent = LLMAgent(name="t", llm=llm)
+    events = await _run_agent(agent, _ctx())
+    partials = [
+        e for e in events if isinstance(e, TaskArtifactUpdateEvent) and not e.last_chunk
+    ]
+    assert len(partials) > 0
+    for event in partials:
+        assert meta(event).author == "t"
 
 
 # --- integration (real LLM) ---

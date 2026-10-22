@@ -12,7 +12,7 @@ from pydantic import Field
 
 from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent
+from new_choirworks.core.events.event import A2AEvent, meta
 from new_choirworks.core.workflow.base_node import START, BaseNode, RouteValue
 from new_choirworks.core.workflow.context import Context
 from new_choirworks.core.workflow.errors import WorkflowError
@@ -359,3 +359,31 @@ async def test_workflow_base_agent_events_tracked_once():
 
     assert queue.events == events
     assert ctx.invocation_context.events == events
+
+
+@pytest.mark.asyncio
+async def test_workflow_base_agent_events_have_author():
+    """BaseAgent.run_async stamps author on all yielded events."""
+    events: list[A2AEvent] = [_fake_event(), _fake_event()]
+    agent = _YieldingAgent(name="a", events=events)
+    wf = Workflow(name="wf", edges=[Edge(START, agent)])
+    ctx, _ = _make_ctx(wf)
+
+    await _run(wf, ctx)
+
+    for event in ctx.invocation_context.events:
+        assert meta(event).author == "a"
+
+
+@pytest.mark.asyncio
+async def test_workflow_non_agent_node_events_have_author():
+    """Non-agent node (BaseNode, not BaseAgent) events should have author = node name."""
+    event = _fake_event()
+    node = _YieldingNode(name="mynode", events=[event])
+    wf = Workflow(name="wf", edges=[Edge(START, node)])
+    ctx, _ = _make_ctx(wf)
+
+    await _run(wf, ctx)
+
+    assert len(ctx.invocation_context.events) == 1
+    assert meta(ctx.invocation_context.events[0]).author == "mynode"

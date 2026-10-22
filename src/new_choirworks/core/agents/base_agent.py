@@ -8,7 +8,7 @@ from contextlib import aclosing
 from typing import TYPE_CHECKING, override
 
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.events.event import A2AEvent
+from new_choirworks.core.events.event import A2AEvent, meta
 from new_choirworks.core.workflow.base_node import BaseNode
 
 if TYPE_CHECKING:
@@ -31,6 +31,8 @@ class BaseAgent(BaseNode, abc.ABC):
         """
         async with aclosing(self._run_async_impl(ctx)) as agen:
             async for event in agen:
+                if not meta(event).author:
+                    meta(event).author = self.name
                 yield event
 
     @override
