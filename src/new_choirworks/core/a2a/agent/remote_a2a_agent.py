@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from typing import cast, override
@@ -60,7 +61,7 @@ class RemoteA2aAgent(BaseAgent):
     httpx_client: httpx.AsyncClient | None = None
     a2a_client_factory: A2AClientFactory | None = None
     timeout: float | None = DEFAULT_TIMEOUT
-    description: str = ""  # 不加，类型检查有警告：self.description = self._agent_card.description
+    description: str = ""  # 必须声明，否则 _ensure_resolved 赋值时报类型检查警告
 
     _agent_card: AgentCard | None = PrivateAttr(default=None)
     _a2a_client: A2AClient | None = PrivateAttr(default=None)
@@ -216,7 +217,7 @@ class RemoteA2aAgent(BaseAgent):
                 f"Invalid RPC URL for agent card {card_url} - error: {e}"
             ) from e
 
-        # TODO: _validate_card_rpc_targets
+        # TODO: SSRF 防护——校验 card RPC URL origin（同构 ADK _validate_card_rpc_targets）
 
     async def _ensure_httpx_client(self) -> httpx.AsyncClient:
         if not self.httpx_client:
@@ -350,7 +351,12 @@ class RemoteA2aAgent(BaseAgent):
 
     async def cleanup(self) -> None:
         if self._httpx_client_needs_cleanup and self.httpx_client:
-            await self.httpx_client.aclose()
+            try:
+                await self.httpx_client.aclose()
+            except Exception as e:
+                logging.warning("Failed to close HTTP client for agent %s: %s", self.name, e)
+            finally:
+                self.httpx_client = None
 
 
 def _get_card_rpc_url(
