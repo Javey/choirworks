@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import TYPE_CHECKING, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, TypeGuard, cast
 
 from a2a.types.a2a_pb2 import (
     Artifact,
@@ -10,6 +10,7 @@ from a2a.types.a2a_pb2 import (
     Part,
     Role,
     TaskArtifactUpdateEvent,
+    TaskState,
     TaskStatusUpdateEvent,
 )
 from google.protobuf import json_format
@@ -42,6 +43,29 @@ ARTIFACT_METADATA_STRUCTURED_OUTPUT = "structured_output"
 EVENT_META_AUTHOR = "author"
 EVENT_META_OUTPUT = "output"
 EVENT_META_NODE_PATH = "node_path"
+
+# Task states that finish the current interaction, including deliberate pauses.
+TASK_RESPONSE_BOUNDARY_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+        TaskState.TASK_STATE_REJECTED,
+    }
+)
+
+# States whose content is provisional and must not be promoted to node output.
+NON_FINAL_TASK_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_UNSPECIFIED,
+        TaskState.TASK_STATE_SUBMITTED,
+        TaskState.TASK_STATE_WORKING,
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+    }
+)
 
 
 class EventMeta:
@@ -90,9 +114,6 @@ class EventMeta:
 def meta(event: A2AEvent) -> EventMeta:
     """Get typed EventMeta view for an A2A event."""
     return EventMeta(event)
-
-
-T = TypeVar("T", bound=A2AEvent)
 
 
 def add_author[T: A2AEvent](event: T, author: str) -> T:
@@ -221,23 +242,37 @@ def is_partial_event(event: A2AEvent) -> bool:
     return isinstance(event, TaskArtifactUpdateEvent) and not is_final_artifact(event)
 
 
+def event_content_parts(event: A2AEvent) -> list[Part]:
+    """Return parts that carry presentable content for an A2A event.
+
+    Handles Message, final artifacts, and boundary-status messages. Working
+    status messages are progress updates and are intentionally excluded.
+    """
+    # TODO: append=True 的 artifact 需要按 artifact_id 聚合；聚合完成前按
+    # partial 处理，这里不返回内容。
+    if isinstance(event, Message):
+        return list(event.parts)
+    if is_final_artifact(event):
+        return list(event.artifact.parts)
+    if isinstance(event, TaskStatusUpdateEvent):
+        if event.status.state in TASK_RESPONSE_BOUNDARY_STATES:
+            return list(event.status.message.parts)
+    return []
+
+
 def has_function_calls(event: A2AEvent) -> bool:
-    """True if event's artifact contains any function_call parts."""
-    if not isinstance(event, TaskArtifactUpdateEvent):
-        return False
-    return any(is_function_call_part(p) for p in event.artifact.parts)
+    """True if event's presentable content contains any function_call parts."""
+    return any(is_function_call_part(p) for p in event_content_parts(event))
 
 
 def extract_text(event: A2AEvent, include_thought: bool = False) -> str:
-    """Concatenate text parts from an artifact event.
+    """Concatenate text parts from an event's presentable content.
 
     Skips thoughts (unless include_thought), function calls, and function responses.
     """
-    if not isinstance(event, TaskArtifactUpdateEvent):
-        return ""
     return "".join(
         p.text
-        for p in event.artifact.parts
+        for p in event_content_parts(event)
         if p.text
         and not is_function_call_part(p)
         and not is_function_response_part(p)
@@ -268,7 +303,10 @@ def is_function_response_part(part: Part) -> bool:
     )
 
 
-def events_to_llm_messages(events: list[A2AEvent], *, agent_name: str = "") -> list[ChatMessage]:
+def events_to_llm_messages(events: list[A2AEvent], *, agent_name: str) -> list[ChatMessage]:
+    if not agent_name:
+        raise ValueError("agent_name is required for author-aware fencing")
+
     from new_choirworks.core.flows.llm_flows.context.fencing import (
         is_other_agent_reply,
         present_other_agent_message,
@@ -276,8 +314,10 @@ def events_to_llm_messages(events: list[A2AEvent], *, agent_name: str = "") -> l
 
     messages: list[ChatMessage] = []
 
+    # TODO: 尚未处理 own TaskStatusUpdateEvent.status.message；当前只转换
+    # user Message 和 final artifact。
     for event in events:
-        if agent_name and is_other_agent_reply(agent_name, event):
+        if is_other_agent_reply(agent_name, event):
             fenced = present_other_agent_message(event)
             if fenced is None:
                 continue

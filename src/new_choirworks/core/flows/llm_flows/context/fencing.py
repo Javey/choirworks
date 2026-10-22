@@ -7,7 +7,7 @@ from google.protobuf import json_format
 from new_choirworks.core.events.event import (
     A2AEvent,
     add_author,
-    is_final_artifact,
+    event_content_parts,
     is_function_call_part,
     is_function_response_part,
     is_thought_part,
@@ -46,14 +46,10 @@ def is_other_agent_reply(current_agent_name: str, event: A2AEvent) -> bool:
 def present_other_agent_message(
     event: A2AEvent, *, include_thoughts: bool = False
 ) -> Message | None:
-    # TODO: 当前只处理 Message 和 final artifact。ADK 会统一处理
-    # TaskStatusUpdateEvent.status.message、Task 快照 artifacts、append=True
-    # 的 final artifact 以及非 text Part；后续按需补齐。
-    if isinstance(event, Message):
-        event_parts = list(event.parts)
-    elif is_final_artifact(event):
-        event_parts = list(event.artifact.parts)
-    else:
+    # TODO: 当前只处理 text/function_call/function_response。ADK 还会透传
+    # inline_data/file_data/code；append=True 的聚合也尚未实现。
+    event_parts = event_content_parts(event)
+    if not event_parts:
         return None
 
     parts: list[Part] = [new_text_part(text=OTHER_AGENT_CONTEXT_PREAMBLE)]

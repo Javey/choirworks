@@ -18,17 +18,26 @@ from a2a.client import (
 )
 from a2a.helpers.proto_helpers import new_message, new_text_status_update_event
 from a2a.types import AgentCard, Message, Part, Role, SendMessageRequest
-from a2a.types.a2a_pb2 import StreamResponse, TaskState, TaskStatusUpdateEvent
+from a2a.types.a2a_pb2 import (
+    Artifact,
+    StreamResponse,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatusUpdateEvent,
+)
 from a2a.utils.constants import TransportProtocol
 from pydantic import PrivateAttr
 
 from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.events.event import (
+    NON_FINAL_TASK_STATES,
+    TASK_RESPONSE_BOUNDARY_STATES,
     A2AEvent,
     add_author,
     extract_text,
-    is_final_artifact,
+    is_partial_event,
     meta,
 )
 from new_choirworks.core.flows.llm_flows.context.fencing import (
@@ -89,6 +98,8 @@ class RemoteA2aAgent(BaseAgent):
                 self.name,
             )
             return
+        # TODO: 暂停任务恢复：当前不传 task_id，无法 resume
+        # INPUT_REQUIRED / AUTH_REQUIRED 任务。
         a2a_request = SendMessageRequest(
             message=new_message(parts=message_parts, role=Role.ROLE_USER, context_id=context_id)
         )
@@ -123,7 +134,9 @@ class RemoteA2aAgent(BaseAgent):
             yield event
 
     def _promote_response_to_output(self, event: A2AEvent, ctx: Context) -> bool:
-        if not is_final_artifact(event):
+        if is_partial_event(event):
+            return False
+        if isinstance(event, TaskStatusUpdateEvent) and event.status.state in NON_FINAL_TASK_STATES:
             return False
         text = extract_text(event)
         if not text:
@@ -228,6 +241,7 @@ class RemoteA2aAgent(BaseAgent):
     def _construct_message_parts_from_session(
         self, ctx: InvocationContext
     ) -> tuple[list[Part], str | None]:
+        # TODO: 尚未实现 task mode / isolation_scope，当前会收集完整会话历史。
         parts: list[Part] = []
         context_id: str | None = None
         for event in reversed(ctx.events):
@@ -254,22 +268,17 @@ class RemoteA2aAgent(BaseAgent):
         assert ctx.task_id is not None
         assert ctx.context_id is not None
 
-        event: A2AEvent | None = None
+        events: list[A2AEvent] = []
         if response.HasField("message"):
-            event = response.message
+            events = [response.message]
         elif response.HasField("status_update"):
-            event = response.status_update
+            events = [response.status_update]
         elif response.HasField("artifact_update"):
-            event = response.artifact_update
+            events = [response.artifact_update]
         elif response.HasField("task"):
-            task = response.task
-            event = TaskStatusUpdateEvent(
-                task_id=task.id,
-                context_id=task.context_id,
-                status=task.status,
-            )
+            events = self._events_from_task(response.task)
 
-        if event is not None:
+        for event in events:
             metadata = a2a_meta(event)
             if event.context_id:
                 metadata.context_id = event.context_id
@@ -280,6 +289,64 @@ class RemoteA2aAgent(BaseAgent):
             event.context_id = ctx.context_id
 
             yield event
+
+    def _events_from_task(self, task: Task) -> list[A2AEvent]:
+        """Convert a full Task snapshot into content events.
+
+        A Task snapshot carries all artifacts and the current status. Keep the
+        final artifact content, boundary status messages, and a fallback agent
+        message from history instead of reducing the snapshot to its status.
+        """
+        events: list[A2AEvent] = []
+        # TODO: 多个 artifact 合并成一个 synthetic artifact 会丢失
+        # artifact_id、name 和 metadata；需要保留边界时再按 artifact 拆分。
+        artifact_parts = [part for artifact in task.artifacts for part in artifact.parts]
+        if artifact_parts:
+            events.append(
+                TaskArtifactUpdateEvent(
+                    task_id=task.id,
+                    context_id=task.context_id,
+                    artifact=Artifact(artifact_id=task.id, parts=artifact_parts),
+                    last_chunk=task.status.state not in NON_FINAL_TASK_STATES,
+                )
+            )
+
+        status_message = task.status.message
+        if status_message.parts and (
+            task.status.state
+            in (TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED)
+            or (not artifact_parts and task.status.state in TASK_RESPONSE_BOUNDARY_STATES)
+        ):
+            events.append(
+                TaskStatusUpdateEvent(
+                    task_id=task.id,
+                    context_id=task.context_id,
+                    status=task.status,
+                )
+            )
+
+        if not events and task.status.state in TASK_RESPONSE_BOUNDARY_STATES and task.history:
+            last_agent_message = next(
+                (
+                    message
+                    for message in reversed(task.history)
+                    if message.role == Role.ROLE_AGENT and message.parts
+                ),
+                None,
+            )
+            if last_agent_message:
+                events.append(last_agent_message)
+
+        if not events:
+            events.append(
+                TaskStatusUpdateEvent(
+                    task_id=task.id,
+                    context_id=task.context_id,
+                    status=task.status,
+                )
+            )
+
+        return events
 
     async def cleanup(self) -> None:
         if self._httpx_client_needs_cleanup and self.httpx_client:

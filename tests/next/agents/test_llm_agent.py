@@ -4,7 +4,13 @@ from typing import cast, override
 
 import pytest
 from a2a.helpers.proto_helpers import new_message, new_text_artifact_update_event, new_text_part
-from a2a.types.a2a_pb2 import Role, TaskArtifactUpdateEvent
+from a2a.types.a2a_pb2 import (
+    Role,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+)
 from google.protobuf import json_format
 from litellm.types.llms.openai import ChatCompletionToolParam
 from pydantic import BaseModel, ValidationError
@@ -260,7 +266,7 @@ async def test_tool_call_flow():
     assert all("type" not in p.metadata for p in seal2.artifact.parts)
 
     # events_to_llm_messages: user, assistant(tool_calls), tool, assistant(text)
-    messages = events_to_llm_messages(ctx.events)
+    messages = events_to_llm_messages(ctx.events, agent_name=agent.name)
     assert len(messages) == 4
     assert messages[0]["role"] == "user"
     assert messages[1]["role"] == "assistant"
@@ -299,7 +305,7 @@ async def test_error_retry():
         )
 
     # events_to_llm_messages: user + 3×(assistant + tool) = 7
-    assert len(events_to_llm_messages(ctx.events)) == 7
+    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) == 7
 
 
 async def test_tool_result_normalized():
@@ -487,7 +493,7 @@ async def test_tool_call_integration(llm_kwargs: LLMKwargs):
     )
     assert text
 
-    assert len(events_to_llm_messages(ctx.events)) > 1
+    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) > 1
 
 
 # --- unit: structured output (FakeLLM) --
@@ -554,7 +560,7 @@ async def test_structured_output_invalid_json_raises():
     with pytest.raises(ValidationError, match="Invalid JSON"):
         _ = await _run_agent(agent, ctx)
 
-    assert len(events_to_llm_messages(ctx.events)) == 1
+    assert len(events_to_llm_messages(ctx.events, agent_name=agent.name)) == 1
 
 
 async def test_structured_output_empty_text_raises():
@@ -620,6 +626,8 @@ async def test_structured_output_integration(llm_kwargs: LLMKwargs):
 
     output = cast(dict[str, object], json.loads(cast(str, last.metadata["structured_output"])))
     assert output["city"] == "北京"
+    assert output["weather"] == "晴"
+    assert output["temperature"] == 25
 
 
 # --- events_to_llm_messages author-aware (P0-5) ---
@@ -655,6 +663,40 @@ def test_events_to_llm_messages_other_agent_final_artifact_fenced():
     assert QUOTED_CONTENT_BEGIN in content
 
 
+def test_events_to_llm_messages_other_agent_status_message_fenced():
+    """Other agent's boundary status.message becomes fenced user context."""
+    status_update = TaskStatusUpdateEvent(
+        task_id="t",
+        context_id="c",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=new_message(parts=[new_text_part("请确认")], role=Role.ROLE_AGENT),
+        ),
+    )
+    meta(status_update).author = "bob"
+    messages = events_to_llm_messages([status_update], agent_name="alice")
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    content = str(messages[0].get("content") or "")
+    assert "[bob] said:" in content
+    assert "请确认" in content
+    assert QUOTED_CONTENT_BEGIN in content
+
+
+def test_events_to_llm_messages_ignores_working_status_message():
+    """Working status messages are progress updates, not conversation context."""
+    status_update = TaskStatusUpdateEvent(
+        task_id="t",
+        context_id="c",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_WORKING,
+            message=new_message(parts=[new_text_part("processing")], role=Role.ROLE_AGENT),
+        ),
+    )
+    meta(status_update).author = "bob"
+    assert events_to_llm_messages([status_update], agent_name="alice") == []
+
+
 def test_events_to_llm_messages_own_artifact_is_assistant():
     """Own final artifact remains assistant message."""
     artifact = new_text_artifact_update_event(
@@ -679,3 +721,9 @@ def test_events_to_llm_messages_real_user_message_stays_user():
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "hello"
+
+
+def test_events_to_llm_messages_rejects_empty_agent_name():
+    """Empty agent_name would disable fencing; reject it instead of failing open."""
+    with pytest.raises(ValueError, match="agent_name"):
+        _ = events_to_llm_messages([], agent_name="")

@@ -294,6 +294,50 @@ def test_present_other_agent_message_sets_user_author():
     assert meta(msg).author == "user"
 
 
+def test_build_other_agent_status_message_fenced():
+    status_update = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=new_message(
+                parts=[new_text_part(text="请确认公司名称")],
+                role=Role.ROLE_AGENT,
+            ),
+        ),
+    )
+    meta(status_update).author = OTHER
+    agent = _agent()
+
+    parts, _ = agent._build_message_parts_for_request(_inv_ctx([status_update]))
+
+    assert len(parts) == 2
+    assert parts[0].text == OTHER_AGENT_CONTEXT_PREAMBLE
+    assert "[bob] said:" in parts[1].text
+    assert "请确认公司名称" in parts[1].text
+    assert QUOTED_CONTENT_BEGIN in parts[1].text
+
+
+def test_build_other_agent_working_status_message_ignored():
+    status_update = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_WORKING,
+            message=new_message(
+                parts=[new_text_part(text="processing")],
+                role=Role.ROLE_AGENT,
+            ),
+        ),
+    )
+    meta(status_update).author = OTHER
+    agent = _agent()
+
+    parts, _ = agent._build_message_parts_for_request(_inv_ctx([status_update]))
+
+    assert parts == []
+
+
 def test_build_other_agent_partial_artifact_not_collected():
     agent = _agent()
     events = [_user("a"), _partial_artifact(OTHER, "x")]
@@ -442,6 +486,105 @@ async def test_handle_task_branch_keeps_remote_ids_in_metadata():
     assert a2a_meta(event).context_id == REMOTE_CTX_ID
 
 
+async def test_handle_task_branch_artifacts():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        artifacts=[
+            Artifact(artifact_id="a1", parts=[new_text_part(text="final answer")]),
+        ],
+    )
+    events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, TaskArtifactUpdateEvent)
+    assert event.last_chunk is True
+    assert event.append is False
+    assert extract_text(event) == "final answer"
+    assert a2a_meta(event).task_id == REMOTE_TASK_ID
+    assert a2a_meta(event).context_id == REMOTE_CTX_ID
+    assert meta(event).author == AGENT
+
+
+async def test_handle_task_branch_status_message():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=new_message(
+                parts=[new_text_part(text="请确认公司名称")],
+                role=Role.ROLE_AGENT,
+            ),
+        ),
+    )
+    events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, TaskStatusUpdateEvent)
+    assert event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+    assert extract_text(event) == "请确认公司名称"
+
+
+async def test_handle_task_branch_history_fallback():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        history=[_remote_message("history answer")],
+    )
+    events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, Message)
+    assert extract_text(event) == "history answer"
+    assert a2a_meta(event).task_id == REMOTE_TASK_ID
+
+
+async def test_handle_task_branch_artifacts_and_status_message():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=new_message(parts=[new_text_part("请确认")], role=Role.ROLE_AGENT),
+        ),
+        artifacts=[Artifact(artifact_id="a1", parts=[new_text_part("partial")])],
+    )
+    events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    assert len(events) == 2
+    artifact_event, status_event = events
+    assert isinstance(artifact_event, TaskArtifactUpdateEvent)
+    assert artifact_event.last_chunk is False
+    assert isinstance(status_event, TaskStatusUpdateEvent)
+    assert extract_text(status_event) == "请确认"
+
+
+async def test_handle_task_branch_working_history_ignored():
+    agent = _agent()
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+        history=[_remote_message("intermediate")],
+    )
+    events = await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, TaskStatusUpdateEvent)
+    assert extract_text(event) == ""
+
+
 async def test_build_uses_remote_context_id_after_task_response():
     agent = _agent()
     task = Task(
@@ -509,12 +652,50 @@ def test_promote_artifact_without_text_returns_false():
     assert ctx.output is None
 
 
-def test_promote_non_artifact_returns_false():
+def test_promote_message_with_text():
     agent = _agent()
-    event = _user("hi")
+    event = _remote_message("hello")
+    ctx = _node_ctx()
+    assert agent._promote_response_to_output(event, ctx) is True
+    assert ctx.output == "hello"
+
+
+def test_promote_message_without_text_returns_false():
+    agent = _agent()
+    event = new_message(parts=[], role=Role.ROLE_AGENT)
     ctx = _node_ctx()
     assert agent._promote_response_to_output(event, ctx) is False
     assert ctx.output is None
+
+
+def test_promote_status_message_input_required_returns_false():
+    agent = _agent()
+    event = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=new_message(parts=[new_text_part("请确认")], role=Role.ROLE_AGENT),
+        ),
+    )
+    ctx = _node_ctx()
+    assert agent._promote_response_to_output(event, ctx) is False
+    assert ctx.output is None
+
+
+def test_promote_status_message_completed_with_text():
+    agent = _agent()
+    event = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=new_message(parts=[new_text_part("done")], role=Role.ROLE_AGENT),
+        ),
+    )
+    ctx = _node_ctx()
+    assert agent._promote_response_to_output(event, ctx) is True
+    assert ctx.output == "done"
 
 
 # --- extract_text ---
@@ -577,5 +758,33 @@ def test_extract_text_only_function_response_returns_empty():
         context_id=CTX_ID,
         artifact=Artifact(artifact_id="aid", parts=[fr_part]),
         last_chunk=True,
+    )
+    assert extract_text(event) == ""
+
+
+def test_extract_text_from_message():
+    assert extract_text(_remote_message("hello")) == "hello"
+
+
+def test_extract_text_from_status_message():
+    event = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=new_message(parts=[new_text_part("done")], role=Role.ROLE_AGENT),
+        ),
+    )
+    assert extract_text(event) == "done"
+
+
+def test_extract_text_skips_working_status_message():
+    event = TaskStatusUpdateEvent(
+        task_id=TASK_ID,
+        context_id=CTX_ID,
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_WORKING,
+            message=new_message(parts=[new_text_part("processing")], role=Role.ROLE_AGENT),
+        ),
     )
     assert extract_text(event) == ""

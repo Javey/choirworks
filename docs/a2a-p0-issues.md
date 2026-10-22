@@ -2,7 +2,24 @@
 
 > 记录时间：2026-10-21
 > 范围：`src/new_choirworks/core/a2a`、workflow 事件链路
-> 状态：待修
+> 状态：已修复（工作区，待提交）
+
+## 当前状态
+
+| 问题 | 状态 |
+|---|---|
+| P0-1 本地 LLMAgent 事件没有 author | 已修复 |
+| P0-2 Task 快照内容被丢 | 已修复 |
+| P0-3 `status.message` 没参与上下文 | 已修复 |
+| P0-4 `_promote_response_to_output` 只认 final artifact | 已修复 |
+| P0-5 role/author 信任问题 | 已修复 |
+
+本次实现：
+
+- `event_content_parts` 统一 Message / final artifact / boundary `status.message` 的内容提取
+- `_events_from_task` 保留 Task snapshot 的 artifacts、status.message 和历史兜底
+- `_promote_response_to_output` 支持 Message、Task artifacts、终态 status.message
+- `present_other_agent_message` 与 `events_to_llm_messages` 复用同一套内容提取和 fencing
 
 ## 已修复（背景）
 

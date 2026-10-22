@@ -8,9 +8,14 @@ from a2a.server.events import EventQueue
 from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 from litellm.types.llms.openai import OpenAIChatCompletionUserMessage
 
+from new_choirworks.core.a2a.agent.remote_a2a_agent import RemoteA2aAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
 from new_choirworks.core.agents.llm_agent import LLMAgent
 from new_choirworks.core.events.event import meta
+from new_choirworks.core.flows.llm_flows.context.fencing import (
+    OTHER_AGENT_CONTEXT_PREAMBLE,
+    QUOTED_CONTENT_BEGIN,
+)
 from new_choirworks.core.models.base_llm import BaseLLM
 from new_choirworks.core.models.llm_request import LLMRequest
 from new_choirworks.core.models.llm_response import (
@@ -175,3 +180,28 @@ def test_prepare_llm_agent_input_stamps_user_author():
 
     assert len(ic.events) == 1
     assert meta(ic.events[0]).author == "user"
+
+
+@pytest.mark.asyncio
+async def test_remote_builder_fences_local_llm_agent_output():
+    """LLMAgent output stamped with author is fenced by RemoteA2aAgent builder."""
+    llm = FakeLLM(responder=lambda i, r: [_chunk("A result")])
+    a = LLMAgent(name="a", llm=llm, include_contents="none")
+    wf = Workflow(name="wf", edges=[Edge(START, a)])
+
+    queue = _FakeEventQueue()
+    ic = InvocationContext(event_queue=queue, task_id="t1", context_id="c1")
+    ctx = Context(invocation_context=ic, node=wf)
+
+    async for _ in wf.run(ctx):
+        pass
+
+    remote = RemoteA2aAgent(name="remote", agent_url="http://example.com")
+    parts, context_id = remote._build_message_parts_for_request(ic)
+
+    assert context_id is None
+    assert len(parts) == 2
+    assert parts[0].text == OTHER_AGENT_CONTEXT_PREAMBLE
+    assert "[a] said:" in parts[1].text
+    assert QUOTED_CONTENT_BEGIN in parts[1].text
+    assert "A result" in parts[1].text
