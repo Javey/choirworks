@@ -67,6 +67,7 @@ class RemoteA2aAgent(BaseAgent):
     _a2a_client: A2AClient | None = PrivateAttr(default=None)
     _is_resolved: bool = PrivateAttr(default=False)
     _httpx_client_needs_cleanup: bool = PrivateAttr(default=False)
+    _artifact_buffers: dict[str, list[Part]] = PrivateAttr(default_factory=dict)
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[A2AEvent, None]:
@@ -275,7 +276,7 @@ class RemoteA2aAgent(BaseAgent):
         elif response.HasField("status_update"):
             events = [response.status_update]
         elif response.HasField("artifact_update"):
-            events = [response.artifact_update]
+            events = self._aggregate_artifact_update(response.artifact_update)
         elif response.HasField("task"):
             events = self._events_from_task(response.task)
 
@@ -349,6 +350,46 @@ class RemoteA2aAgent(BaseAgent):
 
         return events
 
+    def _aggregate_artifact_update(self, event: TaskArtifactUpdateEvent) -> list[A2AEvent]:
+        """Buffer artifact chunks and emit a synthetic final when append streams end.
+
+        append=True streams carry incremental fragments; the last chunk
+        (append=True, last_chunk=True) does not satisfy is_final_artifact, so
+        without aggregation its content is silently lost. This method accumulates
+        parts by artifact_id and, on last_chunk, yields a synthetic
+        append=False, last_chunk=True event that is_final_artifact recognizes.
+        """
+        artifact_id = event.artifact.artifact_id
+
+        if event.append:
+            buffer = self._artifact_buffers.setdefault(artifact_id, [])
+            buffer.extend(event.artifact.parts)
+        else:
+            buffer = list(event.artifact.parts)
+            self._artifact_buffers[artifact_id] = buffer
+
+        events: list[A2AEvent] = [event]
+
+        if event.last_chunk:
+            if event.append:
+                artifact = Artifact()
+                artifact.CopyFrom(event.artifact)
+                artifact.parts.clear()
+                artifact.parts.extend(buffer)
+                events.append(
+                    TaskArtifactUpdateEvent(
+                        task_id=event.task_id,
+                        context_id=event.context_id,
+                        artifact=artifact,
+                        append=False,
+                        last_chunk=True,
+                        metadata=event.metadata,
+                    )
+                )
+            del self._artifact_buffers[artifact_id]
+
+        return events
+
     async def cleanup(self) -> None:
         if self._httpx_client_needs_cleanup and self.httpx_client:
             try:
@@ -357,6 +398,7 @@ class RemoteA2aAgent(BaseAgent):
                 logging.warning("Failed to close HTTP client for agent %s: %s", self.name, e)
             finally:
                 self.httpx_client = None
+        self._artifact_buffers.clear()
 
 
 def _get_card_rpc_url(

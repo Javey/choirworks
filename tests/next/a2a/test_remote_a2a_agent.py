@@ -30,6 +30,7 @@ from new_choirworks.core.events.event import (
     A2AEvent,
     add_author,
     extract_text,
+    is_final_artifact,
     meta,
 )
 from new_choirworks.core.flows.llm_flows.context.fencing import (
@@ -788,3 +789,146 @@ def test_extract_text_skips_working_status_message():
         ),
     )
     assert extract_text(event) == ""
+
+
+# --- append artifact aggregation ---
+
+
+def _append_chunk(
+    artifact_id: str,
+    text: str,
+    *,
+    last_chunk: bool = False,
+) -> TaskArtifactUpdateEvent:
+    return TaskArtifactUpdateEvent(
+        task_id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        artifact=Artifact(
+            artifact_id=artifact_id,
+            name="art",
+            parts=[new_text_part(text=text)],
+        ),
+        append=True,
+        last_chunk=last_chunk,
+    )
+
+
+def _first_chunk(
+    artifact_id: str,
+    text: str,
+    *,
+    last_chunk: bool = False,
+) -> TaskArtifactUpdateEvent:
+    return TaskArtifactUpdateEvent(
+        task_id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        artifact=Artifact(
+            artifact_id=artifact_id,
+            name="art",
+            parts=[new_text_part(text=text)],
+        ),
+        append=False,
+        last_chunk=last_chunk,
+    )
+
+
+async def test_handle_append_artifact_aggregates():
+    """append=True stream: chunks accumulate, last_chunk yields synthetic final."""
+    agent = _agent()
+    events: list[A2AEvent] = []
+    for chunk in [
+        _first_chunk("a1", "Hel", last_chunk=False),
+        _append_chunk("a1", "lo", last_chunk=False),
+        _append_chunk("a1", "!", last_chunk=True),
+    ]:
+        events.extend(
+            [
+                e
+                async for e in agent._handle_a2a_response(
+                    _stream_artifact_update(chunk), _inv_ctx([])
+                )
+            ]
+        )
+
+    assert len(events) == 4
+    assert is_final_artifact(events[-1])
+    assert extract_text(events[-1]) == "Hello!"
+    assert "a1" not in agent._artifact_buffers
+
+
+async def test_handle_non_append_final_not_duplicated():
+    """append=False stream: final chunk is already final, no synthetic."""
+    agent = _agent()
+    events: list[A2AEvent] = []
+    for chunk in [
+        _first_chunk("a1", "full1", last_chunk=False),
+        _first_chunk("a1", "full2", last_chunk=True),
+    ]:
+        events.extend(
+            [
+                e
+                async for e in agent._handle_a2a_response(
+                    _stream_artifact_update(chunk), _inv_ctx([])
+                )
+            ]
+        )
+
+    assert len(events) == 2
+    assert is_final_artifact(events[-1])
+    assert extract_text(events[-1]) == "full2"
+
+
+async def test_handle_append_multi_artifact_interleaved():
+    """Multiple artifacts interleaved: each aggregates independently."""
+    agent = _agent()
+    events: list[A2AEvent] = []
+    for chunk in [
+        _first_chunk("a", "A1", last_chunk=False),
+        _first_chunk("b", "B1", last_chunk=False),
+        _append_chunk("a", "A2", last_chunk=True),
+    ]:
+        events.extend(
+            [
+                e
+                async for e in agent._handle_a2a_response(
+                    _stream_artifact_update(chunk), _inv_ctx([])
+                )
+            ]
+        )
+
+    # 3 originals + 1 synthetic for artifact "a"
+    assert len(events) == 4
+    final = events[-1]
+    assert is_final_artifact(final)
+    assert extract_text(final) == "A1A2"
+    assert "a" not in agent._artifact_buffers
+    assert "b" in agent._artifact_buffers
+
+
+async def test_handle_single_final_artifact_no_aggregation():
+    """Single append=False, last_chunk=True: no synthetic."""
+    agent = _agent()
+    chunk = _first_chunk("a1", "complete", last_chunk=True)
+    events = [
+        e async for e in agent._handle_a2a_response(_stream_artifact_update(chunk), _inv_ctx([]))
+    ]
+
+    assert len(events) == 1
+    assert is_final_artifact(events[0])
+    assert "a1" not in agent._artifact_buffers
+
+
+async def test_cleanup_clears_artifact_buffers():
+    """cleanup clears leftover artifact buffers."""
+    agent = _agent()
+    _ = [
+        e
+        async for e in agent._handle_a2a_response(
+            _stream_artifact_update(_first_chunk("a1", "partial", last_chunk=False)), _inv_ctx([])
+        )
+    ]
+    assert "a1" in agent._artifact_buffers
+
+    await agent.cleanup()
+
+    assert agent._artifact_buffers == {}
