@@ -264,8 +264,16 @@ FINALIZE:
 
 | # | 内容 | 说明 |
 |---|------|------|
-| 1 | A2A 远端节点 | `A2ANode(BaseNode)` — 通过 A2A 协议调用远端 agent |
-| 2 | 编排 Agent | `OrchestratorAgent` — LLM 生成 DAG → 构建 Workflow → 执行 |
+| 1 | ~~A2A 远端节点~~ | 已完成：`RemoteA2aAgent`（core/a2a）+ `run_remote_node`（orchestrator） |
+| 2 | ~~编排 Agent~~ | 已完成：`OrchestratorAgent`（new_choirworks/orchestrator）+ Server 接线（`BaseAgentExecutor`） |
+
+### Orchestrator v0 限制（当前实现边界）
+
+- 任一 A2A 节点失败 → 整体失败（不自动重试、不交 Planner 重规划）。
+- `cancel()` 只取消本地 asyncio 任务并触发 agent 清理，不向远端发 `CancelTask`。
+- 无 HITL resume：远端 `INPUT_REQUIRED` / `AUTH_REQUIRED` 暂停态直接判失败（resume TODO）。
+- 无进程重启恢复：编排状态仅存于单次 invocation 内存。
+- Planner 结构化输出非法时直接失败，无错误反馈重试。
 
 ## 十一、验证命令
 

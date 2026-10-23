@@ -29,6 +29,13 @@ store:
 a2a:
   public_url: http://127.0.0.1:8567
 
+# 编排 Agent 目录：配置了 agents 则服务 OrchestratorAgent（DAG 多 agent 协作），
+# 未配置则回退单体 LLMAgent 助手。Planner 只会派发这里注册的 agent。
+orchestrator:
+  agents:
+    - {name: writer, url: "http://127.0.0.1:9001", description: Writes text}
+    - {name: reviewer, url: "http://127.0.0.1:9002", description: Reviews text}
+
 sim:
   start_agents: true
   agents:
