@@ -57,13 +57,17 @@ class Helper(BaseNode):
         parent = self.runtime.get_node(node_id)
         mentions = parse_mentions(output, set(self.runtime.agents))
 
-        # 自引用（agent 求助自己）与同一 source+agent 重复求助忽略（防无限扩计划）
-        candidates = [
-            (agent_name, instruction)
-            for agent_name, instruction in mentions
-            if agent_name != parent.agent_name
-            and not self.runtime.has_assist_for(node_id, agent_name)
-        ]
+        # 自引用（agent 求助自己）与重复求助忽略（防无限扩计划）：
+        # 同一输出内对同一 agent 的多次 mention 也只取第一次（评审 P1-2）
+        seen: set[str] = set()
+        candidates: list[tuple[str, str]] = []
+        for agent_name, instruction in mentions:
+            if agent_name == parent.agent_name or agent_name in seen:
+                continue
+            seen.add(agent_name)
+            if self.runtime.has_assist_for(node_id, agent_name):
+                continue
+            candidates.append((agent_name, instruction))
         if not candidates:
             ctx.route = DEFAULT_ROUTE
             return

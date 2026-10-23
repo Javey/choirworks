@@ -81,7 +81,8 @@ def build_planner_brief(runtime: DagRuntime) -> str:
         status = runtime.node_status.get(node.id)
         deps = ",".join(node.deps) if node.deps else "-"
         state = status.value if status else "?"
-        header = f"- {node.id} (agent={node.agent_name}, status={state}, deps={deps})"
+        assist = f", assist_for={node.assist_for}" if node.assist_for else ""
+        header = f"- {node.id} (agent={node.agent_name}, status={state}, deps={deps}{assist})"
         lines.append(f"{header}\n  instruction: {node.instruction}")
     if not runtime.plan.nodes:
         lines.append("(empty)")

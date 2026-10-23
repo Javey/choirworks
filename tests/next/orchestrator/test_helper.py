@@ -151,3 +151,13 @@ def test_parse_mentions_requires_space_after_name():
     assert parse_mentions("@reviewer\n请检查", AGENT_NAMES) == []
     assert parse_mentions("@reviewer,请检查", AGENT_NAMES) == []
     assert parse_mentions("mail me at a@b.com", AGENT_NAMES) == []
+
+
+async def test_helper_duplicate_mention_same_output_single_assist():
+    """评审 P1-2：同一输出内重复 mention 同一 agent 只建一个 assist。"""
+    rt = _runtime_with_output("@reviewer check this @reviewer check that")
+    ctx = await _run(rt, node_input="n1")
+
+    assert ctx.route == "execute"
+    parent = rt.get_node("n1")
+    assert len(parent.deps) == 1

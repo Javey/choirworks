@@ -87,8 +87,8 @@ class DagRuntime:
         - 空计划 = 完成（需求 15）：置 done_requested，此后只 drain、不再判定。
         """
         validate_plan(new_plan)
-        if not new_plan.nodes:
-            self.done_requested = True
+        self.done_requested = not new_plan.nodes
+        if self.done_requested:
             self.completions.clear()
 
         old = {n.id: n for n in self.plan.nodes}
@@ -100,12 +100,16 @@ class DagRuntime:
                 if status is None or status in (NodeStatus.PENDING, NodeStatus.CANCELLED):
                     self.node_status[node_id] = NodeStatus.PENDING
                 # RUNNING/WAITING_ASSIST/COMPLETED 状态保留：同 id 重加不重跑（幂等）
-            elif status == NodeStatus.WAITING_ASSIST:
-                merged: list[str] = []
-                for dep in list(node.deps) + old[node_id].deps:
-                    if dep not in merged and (dep in new or dep in self.node_outputs):
-                        merged.append(dep)
-                node.deps = merged
+            else:
+                # assist 接线属性不因 Planner 重写丢失（评审 P2-2，去重依赖它）
+                if old[node_id].assist_for is not None and node.assist_for is None:
+                    node.assist_for = old[node_id].assist_for
+                if status == NodeStatus.WAITING_ASSIST:
+                    merged: list[str] = []
+                    for dep in list(node.deps) + old[node_id].deps:
+                        if dep not in merged and (dep in new or dep in self.node_outputs):
+                            merged.append(dep)
+                    node.deps = merged
 
         self.plan = new_plan
 

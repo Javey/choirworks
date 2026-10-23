@@ -264,3 +264,31 @@ async def test_shutdown_cancels_running_tasks():
 
     assert cancelled == ["a"]
     assert rt.running_tasks == {}
+
+
+def test_empty_plan_reset_by_non_empty_plan():
+    """评审 P2-1：非空计划把 done_requested 重置回 False。"""
+    rt = _runtime(_node("a"))
+    rt.apply_plan(_plan())
+    assert rt.done_requested is True
+
+    rt.apply_plan(_plan(_node("a")))
+    assert rt.done_requested is False
+
+
+def test_apply_plan_preserves_assist_for():
+    """评审 P2-2：Planner 重写计划后 assist_for 不丢，去重仍有效。"""
+    rt = _runtime(_node("a"))
+    rt.record_completion("a", "help?")
+    assist_id = rt.add_assist("a", "reviewer", "help a")
+
+    rewritten = PlanNode(
+        id=assist_id,
+        name="assist:reviewer",
+        agent_name="reviewer",
+        instruction="help a (rewritten)",
+    )
+    rt.apply_plan(_plan(rewritten))
+
+    assert rewritten.assist_for == "a"
+    assert rt.has_assist_for("a", "reviewer") is True
