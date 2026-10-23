@@ -26,6 +26,16 @@ class A2AConfig(BaseModel):
     public_url: str = "http://localhost:8080"
 
 
+class AgentConfig(BaseModel):
+    name: str
+    url: str
+    description: str = ""
+
+
+class OrchestratorConfig(BaseModel):
+    agents: list[AgentConfig] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_prefix="CHOIRWORKS_",
@@ -38,6 +48,7 @@ class Settings(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
     a2a: A2AConfig = Field(default_factory=A2AConfig)
+    orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
 
 
 def load_settings(yaml_path: Path | str | None = None) -> Settings:

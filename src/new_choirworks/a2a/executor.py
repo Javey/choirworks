@@ -7,16 +7,16 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types.a2a_pb2 import Role, Task, TaskState, TaskStatus, TaskStatusUpdateEvent
 
+from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
-from new_choirworks.core.agents.llm_agent import LLMAgent
 from new_choirworks.core.events.event import add_author, is_partial_event
 
 
-class LLMAgentExecutor(AgentExecutor):
-    """Bridge LLMAgent to the A2A AgentExecutor interface."""
+class BaseAgentExecutor(AgentExecutor):
+    """Bridge BaseAgent (LLMAgent / OrchestratorAgent / ...) to the A2A AgentExecutor interface."""
 
-    def __init__(self, agent: LLMAgent) -> None:
-        self._agent: LLMAgent = agent
+    def __init__(self, agent: BaseAgent) -> None:
+        self._agent: BaseAgent = agent
 
     @override
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:

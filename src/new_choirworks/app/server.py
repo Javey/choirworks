@@ -15,24 +15,42 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from new_choirworks.a2a.card import build_agent_card
-from new_choirworks.a2a.executor import LLMAgentExecutor
+from new_choirworks.a2a.executor import BaseAgentExecutor
 from new_choirworks.config import Settings
+from new_choirworks.core.agents.base_agent import BaseAgent
 from new_choirworks.core.agents.llm_agent import LLMAgent
 from new_choirworks.core.models.lite_llm import LiteLLM
+from new_choirworks.orchestrator.catalog import AgentInfo
+from new_choirworks.orchestrator.orchestrator import OrchestratorAgent
 
 
 async def create_app(settings: Settings) -> FastAPI:
-    """Assemble a FastAPI app exposing LLMAgent via A2A protocol."""
+    """Assemble a FastAPI app exposing the agent via A2A protocol.
+
+    配置了 orchestrator.agents 则服务编排 Agent（DAG 多 agent 协作），
+    否则退化为单体 LLMAgent 助手。
+    """
 
     llm = LiteLLM(
         model=settings.llm.model,
         base_url=settings.llm.api_base,
     )
-    agent = LLMAgent(
-        name="choirworks",
-        llm=llm,
-        instruction="You are a helpful assistant.",
-    )
+    agent: BaseAgent
+    if settings.orchestrator.agents:
+        agent = OrchestratorAgent(
+            name="choirworks",
+            agents=[
+                AgentInfo(name=a.name, url=a.url, description=a.description)
+                for a in settings.orchestrator.agents
+            ],
+            llm=llm,
+        )
+    else:
+        agent = LLMAgent(
+            name="choirworks",
+            llm=llm,
+            instruction="You are a helpful assistant.",
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -47,7 +65,7 @@ async def create_app(settings: Settings) -> FastAPI:
         task_store = DatabaseTaskStore(engine=engine, create_table=True)
         await task_store.initialize()
 
-        executor = LLMAgentExecutor(agent)
+        executor = BaseAgentExecutor(agent)
         agent_card = build_agent_card(settings.a2a.public_url)
         request_handler = DefaultRequestHandler(
             agent_executor=executor,
