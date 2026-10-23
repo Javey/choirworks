@@ -156,3 +156,25 @@ async def test_events_forwarded_to_parent_stream():
     assert len(queue.events) == 2
     assert len(ic.events) == 2
     assert meta(ic.events[0]).author == "reviewer"
+
+
+async def test_failed_task_snapshot_makes_node_failed():
+    """评审 P1-1 链路：带 artifacts 的失败 Task 快照 → 节点必须失败，不能当成功。"""
+    from a2a.helpers.proto_helpers import new_text_part
+    from a2a.types.a2a_pb2 import Artifact, Task, TaskStatus
+
+    from new_choirworks.core.a2a.agent.remote_a2a_agent import RemoteA2aAgent
+
+    task = Task(
+        id="r1",
+        context_id="rc1",
+        status=TaskStatus(state=TaskState.TASK_STATE_FAILED),
+        artifacts=[Artifact(artifact_id="a1", parts=[new_text_part(text="partial result")])],
+    )
+    real = RemoteA2aAgent(name="reviewer", agent_url="http://reviewer")
+    _FakeRemoteA2aAgent.stream = list(real._events_from_task(task))
+
+    with pytest.raises(RemoteNodeError, match="failed"):
+        _ = await _run()
+
+    assert _FakeRemoteA2aAgent.instances[0].cleaned is True
