@@ -62,6 +62,10 @@ Helper 规则解析节点 output
 13. **Planner 只输出完整新计划**——不输出变更记录，编排层 diff 新旧 DagPlan 确定取消/新增/保留
 14. **replan 是默认动作**——无 @mention 即交 Planner，不需要 LLM 判定是否 replan
 15. **Planner 输出空计划 = 完成**——无需更新计划即为完成
+16. **失败整体失败**——任一 A2A 节点失败（FAILED/REJECTED/CANCELED）即终止整个编排，
+    不自动重试、不交 Planner 决策
+17. **远端节点消息 = 自包含 instruction + deps output**——不携带原始用户任务；
+    Planner 必须把任务所需上下文完整写进每个节点的 instruction
 
 ## 并行 + 重规划场景
 
@@ -98,6 +102,7 @@ Helper 规则解析节点 output
 
 - 已完成 A2A 节点的 **output 要能传递**给新 DAG 中的节点（含新增节点）
 - 已完成的节点**不重复执行**
+- 节点消息 = instruction（自包含）+ 依赖节点 output 注入；原始用户任务不随消息下发（需求 17）
 
 ## 验证目标
 

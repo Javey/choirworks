@@ -932,3 +932,52 @@ async def test_cleanup_clears_artifact_buffers():
     await agent.cleanup()
 
     assert agent._artifact_buffers == {}
+
+
+# --- 失败终态快照：有 artifacts 也必须保留 status event（评审 P1-1） ---
+
+
+async def _failure_snapshot_events(state: "TaskState", with_message: bool) -> "list[A2AEvent]":
+    agent = _agent()
+    status = TaskStatus(state=state)
+    if with_message:
+        status = TaskStatus(
+            state=state,
+            message=new_message(parts=[new_text_part(text="remote boom")], role=Role.ROLE_AGENT),
+        )
+    task = Task(
+        id=REMOTE_TASK_ID,
+        context_id=REMOTE_CTX_ID,
+        status=status,
+        artifacts=[Artifact(artifact_id="a1", parts=[new_text_part(text="partial result")])],
+    )
+    return await _collect(agent._handle_a2a_response(_stream_task(task), _inv_ctx([])))
+
+
+def _assert_failure_terminal(events: "list[A2AEvent]", state: "TaskState") -> None:
+    statuses = [e for e in events if isinstance(e, TaskStatusUpdateEvent)]
+    assert statuses, f"failure snapshot must keep status event, got {events}"
+    assert statuses[-1].status.state == state
+
+
+async def test_handle_task_branch_failed_with_artifacts_no_message():
+    events = await _failure_snapshot_events(TaskState.TASK_STATE_FAILED, with_message=False)
+    _assert_failure_terminal(events, TaskState.TASK_STATE_FAILED)
+
+
+async def test_handle_task_branch_failed_with_artifacts_and_message():
+    events = await _failure_snapshot_events(TaskState.TASK_STATE_FAILED, with_message=True)
+    _assert_failure_terminal(events, TaskState.TASK_STATE_FAILED)
+    assert any(
+        extract_text(e) == "remote boom" for e in events if isinstance(e, TaskStatusUpdateEvent)
+    )
+
+
+async def test_handle_task_branch_rejected_with_artifacts():
+    events = await _failure_snapshot_events(TaskState.TASK_STATE_REJECTED, with_message=False)
+    _assert_failure_terminal(events, TaskState.TASK_STATE_REJECTED)
+
+
+async def test_handle_task_branch_canceled_with_artifacts():
+    events = await _failure_snapshot_events(TaskState.TASK_STATE_CANCELED, with_message=False)
+    _assert_failure_terminal(events, TaskState.TASK_STATE_CANCELED)

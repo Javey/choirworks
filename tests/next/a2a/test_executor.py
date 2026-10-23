@@ -16,7 +16,7 @@ from a2a.types.a2a_pb2 import (
 )
 
 from new_choirworks.a2a.card import build_agent_card
-from new_choirworks.a2a.executor import LLMAgentExecutor
+from new_choirworks.a2a.executor import BaseAgentExecutor
 from new_choirworks.core.agents.llm_agent import LLMAgent
 from new_choirworks.core.models.lite_llm import LiteLLM
 
@@ -30,11 +30,11 @@ class _StreamingRequestHandler(Protocol):
 
 
 async def test_stream_text_response(llm_kwargs: LLMKwargs):
-    """End-to-end: LLMAgent + LLMAgentExecutor + DefaultRequestHandler + InMemoryTaskStore
+    """End-to-end: LLMAgent + BaseAgentExecutor + DefaultRequestHandler + InMemoryTaskStore
     → on_message_send_stream → verify event flow."""
     llm = LiteLLM(**llm_kwargs)
     agent = LLMAgent(name="test", llm=llm, instruction="You are a helpful assistant.")
-    executor = LLMAgentExecutor(agent)
+    executor = BaseAgentExecutor(agent)
     handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=InMemoryTaskStore(),

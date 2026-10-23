@@ -51,6 +51,14 @@ from ..events.event import a2a_meta
 
 DEFAULT_TIMEOUT = 600.0
 
+FAILURE_TERMINAL_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_REJECTED,
+        TaskState.TASK_STATE_CANCELED,
+    }
+)
+
 
 class AgentCardResolutionError(Exception):
     pass
@@ -314,10 +322,15 @@ class RemoteA2aAgent(BaseAgent):
             )
 
         status_message = task.status.message
-        if status_message.parts and (
-            task.status.state
-            in (TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED)
-            or (not artifact_parts and task.status.state in TASK_RESPONSE_BOUNDARY_STATES)
+        # 失败/拒绝/取消是终态：无论是否携带 artifacts / status.message，
+        # 必须保留 status event，否则失败快照会被下游当成成功（评审 P1-1）。
+        if task.status.state in FAILURE_TERMINAL_STATES or (
+            status_message.parts
+            and (
+                task.status.state
+                in (TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED)
+                or (not artifact_parts and task.status.state in TASK_RESPONSE_BOUNDARY_STATES)
+            )
         ):
             events.append(
                 TaskStatusUpdateEvent(
