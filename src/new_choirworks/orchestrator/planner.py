@@ -22,6 +22,8 @@ from new_choirworks.orchestrator.runtime import DagRuntime
 # pass validation.
 def constrained_plan_schema(agent_names: Sequence[str]) -> type[DagPlan]:
     """动态构造 DagPlan 子类，把 agent_name 约束到注册目录的 Literal 枚举。"""
+    if not agent_names:
+        raise ValueError("agent catalog is empty: at least one agent is required")
     constrained_node = create_model(
         "PlanNode",
         __base__=PlanNode,
@@ -48,7 +50,8 @@ def build_planner_instruction(agents: Sequence[AgentInfo]) -> str:
         "Rules:\n"
         "- agent_name is enum-constrained to the registered agents listed above.\n"
         "- Use deps to express ordering; independent nodes run in parallel.\n"
-        "- Put the exact instruction for the agent in each node's instruction field.\n"
+        "- Each instruction MUST be self-contained: restate everything the agent needs\n"
+        "  (including its slice of the user goal); agents have no conversation memory.\n"
         "- Reference another node's output in an instruction as {{output:<node_id>}}.\n"
         "- Keep completed nodes (same id) in the plan when their output is still needed;\n"
         "  completed nodes are never re-run, their output stays available.\n"

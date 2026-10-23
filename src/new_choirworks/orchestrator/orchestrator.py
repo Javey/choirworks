@@ -21,7 +21,11 @@ from new_choirworks.orchestrator.runtime import DagRuntime
 
 
 class DoneNode(BaseNode):
-    """终点节点：汇总 outputs registry（无 pending 无 running 后到达）。"""
+    """终点节点：无 pending 无 running 后到达（需求 11）。
+
+    输出为整个 outputs registry（含 ignored 节点），定位是内部可观测性数据；
+    最终交付物以节点事件流里的产出为准（编排器不检查、不总结，见 product.md）。
+    """
 
     runtime: DagRuntime
 
@@ -89,5 +93,9 @@ class OrchestratorAgent(BaseAgent):
         )
         workflow = build_workflow(runtime, self.llm, node_runner=self.node_runner)
         wf_ctx = Context(invocation_context=ctx, node=workflow)
-        async for event in workflow.run(wf_ctx, node_input=runtime.user_task):
-            yield event
+        try:
+            async for event in workflow.run(wf_ctx, node_input=runtime.user_task):
+                yield event
+        finally:
+            # 异常/取消/正常收口统一清理后台任务（评审 P0-4）
+            await runtime.shutdown()

@@ -9,13 +9,14 @@ from new_choirworks.core.workflow.graph import DEFAULT_ROUTE
 from new_choirworks.orchestrator.catalog import AgentInfo
 from new_choirworks.orchestrator.helper import Helper, parse_mentions
 from new_choirworks.orchestrator.plan import DagPlan, PlanNode
-from new_choirworks.orchestrator.runtime import DagRuntime, NodeStatus
+from new_choirworks.orchestrator.runtime import MAX_PLAN_NODES, DagRuntime, NodeStatus
 
 AGENTS = {
     "writer": AgentInfo(name="writer", url="http://writer"),
     "reviewer": AgentInfo(name="reviewer", url="http://reviewer"),
+    "editor": AgentInfo(name="editor", url="http://editor"),
 }
-AGENT_NAMES = {"writer", "reviewer"}
+AGENT_NAMES = {"writer", "reviewer", "editor"}
 
 
 def _runtime_with_output(output: str) -> DagRuntime:
@@ -99,17 +100,54 @@ async def test_helper_unknown_agent_mention_routes_default():
 
 
 async def test_helper_multiple_mentions_adds_multiple_nodes():
-    rt = _runtime_with_output("@writer rewrite chapter 1 @reviewer check it")
+    rt = _runtime_with_output("@reviewer check it @editor trim it")
     ctx = await _run(rt, node_input="n1")
 
     assert ctx.route == "execute"
     parent = rt.get_node("n1")
     assert len(parent.deps) == 2
     agents = {rt.get_node(pid).agent_name for pid in parent.deps}
-    assert agents == {"writer", "reviewer"}
+    assert agents == {"reviewer", "editor"}
 
 
 async def test_helper_missing_input_routes_default():
     rt = DagRuntime(agents=AGENTS)
     ctx = await _run(rt, node_input=None)
     assert ctx.route == DEFAULT_ROUTE
+
+
+async def test_helper_self_mention_routes_default():
+    rt = _runtime_with_output("@writer help me please")
+    ctx = await _run(rt, node_input="n1")
+    assert ctx.route == DEFAULT_ROUTE
+
+
+async def test_helper_duplicate_assist_routes_default():
+    rt = _runtime_with_output("@reviewer check this")
+    _ = await _run(rt, node_input="n1")
+    ctx = await _run(rt, node_input="n1")
+    assert ctx.route == DEFAULT_ROUTE
+
+
+async def test_helper_over_limit_routes_default():
+    rt = _runtime_with_output("@reviewer check this")
+    for i in range(MAX_PLAN_NODES):
+        rt.plan.nodes.append(
+            PlanNode(id=f"x{i}", name=f"x{i}", agent_name="writer", instruction="x")
+        )
+    ctx = await _run(rt, node_input="n1")
+    assert ctx.route == DEFAULT_ROUTE
+
+
+async def test_helper_removed_node_routes_default():
+    rt = _runtime_with_output("@reviewer check this")
+    rt.plan.nodes.clear()
+    ctx = await _run(rt, node_input="n1")
+    assert ctx.route == DEFAULT_ROUTE
+
+
+def test_parse_mentions_requires_space_after_name():
+    """语法契约：名后必须空格，换行/标点不命中（P2-3 文档化）。"""
+    assert parse_mentions("@reviewer\n请检查", AGENT_NAMES) == []
+    assert parse_mentions("@reviewer,请检查", AGENT_NAMES) == []
+    assert parse_mentions("mail me at a@b.com", AGENT_NAMES) == []

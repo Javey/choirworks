@@ -248,3 +248,100 @@ async def test_orchestrator_agent_wiring():
         pass
 
     assert [n for n, _ in runner.messages] == ["a"]
+
+
+async def test_removed_running_mention_is_ignored():
+    """P0-2：被移出计划的 running 节点完成（含 @mention）只留存结果，不触发判定。"""
+    runtime = DagRuntime(agents=AGENTS, user_task="do something")
+    log: list[str] = []
+    runner = _ScriptRunner(
+        {"writer": ["out_a", "out_c"], "reviewer": ["@writer help"]},
+        log,
+        delays={"b": 0.2},
+    )
+    llm = _llm(
+        [
+            _plan_json(_node("a"), _node("b", agent="reviewer")),
+            _plan_json(_node("a"), _node("c", deps=["a"])),
+            _plan_json(),
+        ],
+        log,
+    )
+
+    ctx = await _run_workflow(runtime, llm, runner)
+
+    assert _outputs(ctx)["b"] == "@writer help"  # 结果留存
+    assert len([x for x in log if x.startswith("llm:")]) == 3  # b 的完成不判定
+    assert not any(n.startswith("assist") for n, _ in runner.messages)
+
+
+async def test_empty_plan_drains_running_without_rejudging():
+    """P0-3：空计划 = 完成；running 节点跑完后直接 Done，不再触发 Helper/Planner。"""
+    runtime = DagRuntime(agents=AGENTS, user_task="do something")
+    log: list[str] = []
+    runner = _ScriptRunner(
+        {"writer": ["out_a"], "reviewer": ["@writer help"]},
+        log,
+        delays={"b": 0.2},
+    )
+    llm = _llm(
+        [_plan_json(_node("a"), _node("b", agent="reviewer")), _plan_json()],
+        log,
+    )
+
+    ctx = await _run_workflow(runtime, llm, runner)
+
+    assert len([x for x in log if x.startswith("llm:")]) == 2  # 空计划后零判定
+    assert _outputs(ctx)["b"] == "@writer help"
+    assert not any(n.startswith("assist") for n, _ in runner.messages)
+
+
+async def test_orchestrator_failure_cleans_up_background_tasks():
+    """P0-4：Planner 抛异常 → finally 清理后台任务。"""
+    log: list[str] = []
+    runner = _ScriptRunner({"writer": ["out_a"], "reviewer": ["x"]}, log, delays={"slow": 10.0})
+
+    def _responder(i: int, _req: LLMRequest) -> list[LLMResponse]:
+        if i == 0:
+            return [_chunk(_plan_json(_node("a"), _node("slow", agent="reviewer")))]
+        raise RuntimeError("llm exploded")
+
+    agent = OrchestratorAgent(
+        name="orchestrator",
+        agents=list(AGENTS.values()),
+        llm=FakeLLM(responder=_responder),
+        node_runner=runner,
+    )
+    ic = _ic()
+    with pytest.raises(WorkflowError, match="llm exploded"):
+        async for _event in agent.run_async(ic):
+            pass
+
+    assert runner.cancelled == ["slow"]
+
+
+async def test_orchestrator_cancel_cleans_up_background_tasks():
+    """P0-4：外部取消 → finally 清理后台任务（不泄漏）。"""
+    log: list[str] = []
+    runner = _ScriptRunner({"writer": ["x"]}, log, delays={"a": 10.0})
+    llm = _llm([_plan_json(_node("a")), _plan_json()], log)
+    agent = OrchestratorAgent(
+        name="orchestrator", agents=list(AGENTS.values()), llm=llm, node_runner=runner
+    )
+    ic = _ic()
+
+    gen = agent.run_async(ic)
+
+    async def _drain() -> None:
+        async for _event in gen:
+            pass
+
+    task = asyncio.create_task(_drain())
+    await asyncio.sleep(0.05)  # a 已派发并在途
+    assert [n for n, _ in runner.messages] == ["a"]
+    _ = task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await gen.aclose()
+
+    assert runner.cancelled == ["a"]

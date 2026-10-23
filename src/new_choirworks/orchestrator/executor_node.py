@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from typing import override
 
 from a2a.helpers.proto_helpers import new_message, new_text_part
-from a2a.types.a2a_pb2 import Role
+from a2a.types.a2a_pb2 import Role, TaskState, TaskStatusUpdateEvent
 
 from new_choirworks.core.a2a.agent.remote_a2a_agent import RemoteA2aAgent
 from new_choirworks.core.agents.invocation_context import InvocationContext
@@ -30,6 +31,24 @@ from new_choirworks.orchestrator.runtime import (
 
 type NodeRunFn = Callable[[Context, PlanNode, AgentInfo, str], Awaitable[str]]
 
+FAILURE_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_REJECTED,
+        TaskState.TASK_STATE_CANCELED,
+    }
+)
+PAUSE_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+    }
+)
+
+
+class RemoteNodeError(RuntimeError):
+    """远端 A2A 节点以失败/不支持的暂停态收尾。"""
+
 
 def build_node_message(runtime: DagRuntime, node: PlanNode) -> str:
     """构造派发消息：instruction 占位符解析 + deps output 注入（需求：output 传递）。"""
@@ -43,42 +62,82 @@ def build_node_message(runtime: DagRuntime, node: PlanNode) -> str:
 
 
 async def run_remote_node(ctx: Context, node: PlanNode, info: AgentInfo, message: str) -> str:
-    """默认节点执行器：经 A2A 调远端 agent，事件流出到共享 event_queue。
+    """默认节点执行器：经 RemoteA2aAgent 调远端 agent。
 
-    TODO(resume): A 续轮 / INPUT_REQUIRED 暂停态应以 Message.task_id 续跑原远端任务
-    （B 的 output 作为补充消息），待 RemoteA2aAgent 支持 resume 后接入
+    - 以 ``node.agent_name`` 为 agent 身份（事件 author / 日志）；
+    - 子 invocation 沿用父 task/context id，远端 id 保留 metadata（事件关联一致）；
+    - 终态语义：FAILED/REJECTED/CANCELED → 抛错（节点 FAILED）；
+      INPUT_REQUIRED/AUTH_REQUIRED → v0 不支持续跑，抛明确错误；
+    - ``finally`` 清理 RemoteA2aAgent（httpx client / artifact buffer）。
+
+    TODO(resume): INPUT_REQUIRED/AUTH_REQUIRED 暂停态应以 Message.task_id 续跑原
+    远端任务（B 的 output 作为补充消息），待 RemoteA2aAgent 支持 resume 后接入
     （见 core/a2a/agent/remote_a2a_agent.py 的 resume TODO）；当前统一新建远端任务下发。
     假设远端 agent stateful，消息不重放历史。
     """
+    parent_ic = ctx.invocation_context
     child_ic = InvocationContext(
-        event_queue=ctx.invocation_context.event_queue,
-        task_id=str(uuid.uuid4()),
-        context_id=str(uuid.uuid4()),
+        event_queue=parent_ic.event_queue,
+        task_id=parent_ic.task_id or str(uuid.uuid4()),
+        context_id=parent_ic.context_id or str(uuid.uuid4()),
     )
     user_msg = new_message(parts=[new_text_part(text=message)], role=Role.ROLE_USER)
     meta(user_msg).author = "user"
     child_ic.events.append(user_msg)
 
-    agent = RemoteA2aAgent(name=node.name, agent_url=info.url)
-    output = ""
-    async for event in agent.run_async(child_ic):
-        if not is_partial_event(event):
-            ctx.invocation_context.events.append(event)
-        if ctx.invocation_context.event_queue is not None:
-            await ctx.invocation_context.event_queue.enqueue_event(event)
-        text = extract_text(event)
-        if text and not is_partial_event(event):
-            output = text
-    return output
+    agent = RemoteA2aAgent(name=node.agent_name, agent_url=info.url)
+    node_ctx = Context(invocation_context=child_ic, node=agent)
+    failure: str | None = None
+    pause: str | None = None
+
+    try:
+        async with aclosing(agent.run(node_ctx, node_input=None)) as agen:
+            async for event in agen:
+                if not is_partial_event(event):
+                    parent_ic.events.append(event)
+                if parent_ic.event_queue is not None:
+                    await parent_ic.event_queue.enqueue_event(event)
+                state = _status_state(event)
+                if state is None:
+                    continue
+                text = extract_text(event)
+                if state in FAILURE_STATES and failure is None:
+                    failure = text or f"remote task ended in {_state_name(state)}"
+                elif state in PAUSE_STATES and pause is None:
+                    pause = (
+                        f"remote task paused in {_state_name(state)}"
+                        + (f": {text}" if text else "")
+                        + " (resume not supported in v0)"
+                    )
+    finally:
+        await agent.cleanup()
+
+    if failure is not None:
+        raise RemoteNodeError(f"remote agent {node.agent_name} failed: {failure}")
+    if pause is not None:
+        raise RemoteNodeError(f"remote agent {node.agent_name}: {pause}")
+    output = node_ctx.output
+    return output if isinstance(output, str) else ""
+
+
+def _state_name(state: TaskState) -> str:
+    return TaskState.Name(state)
+
+
+def _status_state(event: A2AEvent) -> TaskState | None:
+    if isinstance(event, TaskStatusUpdateEvent):
+        return event.status.state
+    return None
 
 
 class ExecutorNode(BaseNode):
     """确定性 DAG 执行节点：消费优先循环（评估暂停语义，需求 12）。
 
     1. Planner 产出的新计划（node_input）→ apply_plan diff；
-    2. 边界队列非空 → 逐个 pop → route="judge"（评估期间不派发）；
-    3. 队列空 → 派发就绪节点；无 pending 无 running → DEFAULT → Done；
-    4. 否则等第一个完成 → route="judge"。
+    2. done_requested（空计划=完成）→ drain 在途任务 → DEFAULT → Done；
+    3. 边界队列非空 → 逐个 pop → route="judge"（评估期间不派发）；
+    4. 队列空 → 派发就绪节点；无 pending 无 running → DEFAULT → Done；
+    5. 否则等第一个完成 → route="judge"。
 
     在途任务跨调用存活（已运行不取消）；FAILED → 整体失败。
     """
@@ -93,6 +152,16 @@ class ExecutorNode(BaseNode):
         runtime = self.runtime
         self._apply_plan_input(node_input)
         self._collect_done()
+
+        if runtime.done_requested:
+            # 空计划 = 完成（需求 15）：不再判定，drain 在途任务后收口（不取消）
+            while runtime.running_tasks:
+                await self._wait_one()
+                self._collect_done()
+            ctx.route = DEFAULT_ROUTE
+            return
+            yield  # pyright: ignore[reportUnreachable]
+
         await self._abort_if_failed()
 
         rec = runtime.pop_completion()

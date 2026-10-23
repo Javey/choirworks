@@ -14,6 +14,12 @@ from new_choirworks.orchestrator.plan import (
     validate_plan,
 )
 
+MAX_ASSIST_DEPTH = 3
+"""assist 链最大深度（A→B→C→D 拒绝），防 @mention 无限扩计划。"""
+
+MAX_PLAN_NODES = 20
+"""计划节点总数上限，与 validate_plan 默认值一致。"""
+
 
 class NodeStatus(Enum):
     PENDING = "pending"
@@ -44,7 +50,8 @@ class DagRuntime:
 
     - ``node_outputs`` 是只增不删的 registry（结果留存，供 ``{{output:id}}`` 引用）；
     - ``completions`` 是待判定边界队列（消费优先，评估暂停语义）；
-    - ``running_tasks`` 跨节点调用存活（已运行不取消）。
+    - ``running_tasks`` 跨节点调用存活（已运行不取消）；
+    - ``done_requested``：Planner 空计划 = 完成，之后只 drain 在途任务、不再判定。
     """
 
     def __init__(self, agents: dict[str, AgentInfo], user_task: str = "") -> None:
@@ -55,7 +62,9 @@ class DagRuntime:
         self.node_outputs: dict[str, str] = {}
         self.running_tasks: dict[str, asyncio.Task[str]] = {}
         self.completions: deque[CompletionRecord] = deque()
+        self.done_requested = False
         self._assist_seq = 0
+        self._assist_depth: dict[str, int] = {}
 
     # ---- 计划 ----
 
@@ -73,17 +82,17 @@ class DagRuntime:
         - PENDING / WAITING_ASSIST 且新计划保留：采用新规格；
           WAITING_ASSIST 的 deps 取并集（只保留仍可达的），保住 assist 接线，
           保证「B 的 output 交还给 A」不被重规划打断。
-        - 旧有新无：PENDING/WAITING_ASSIST 不再派发；RUNNING 继续跑完。
+        - 旧有新无：不再派发（状态历史保留，重新加入不重跑）；RUNNING 继续跑完。
         - 新增：PENDING。
+        - 空计划 = 完成（需求 15）：置 done_requested，此后只 drain、不再判定。
         """
         validate_plan(new_plan)
+        if not new_plan.nodes:
+            self.done_requested = True
+            self.completions.clear()
+
         old = {n.id: n for n in self.plan.nodes}
         new = {n.id: n for n in new_plan.nodes}
-
-        for node_id in old.keys() - new.keys():
-            if self.node_status.get(node_id) == NodeStatus.RUNNING:
-                continue
-            _ = self.node_status.pop(node_id, None)
 
         for node_id, node in new.items():
             status = self.node_status.get(node_id)
@@ -105,6 +114,9 @@ class DagRuntime:
             if node.id == node_id:
                 return node
         raise KeyError(f"node {node_id} not found in plan")
+
+    def in_plan(self, node_id: str) -> bool:
+        return any(node.id == node_id for node in self.plan.nodes)
 
     # ---- 调度 ----
 
@@ -129,28 +141,58 @@ class DagRuntime:
 
     # ---- 边界事件 ----
 
+    def _judgable(self, node_id: str) -> bool:
+        """是否交给 Helper/Planner 判定：在当前计划内且未宣告完成。
+
+        被移出计划的节点（含空计划后）只留存结果，不触发判定——避免
+        ignored 完成被当成正常边界事件（评审 P0-2 / P0-3）。
+        """
+        return not self.done_requested and self.in_plan(node_id)
+
     def record_completion(self, node_id: str, output: str) -> None:
         self.node_status[node_id] = NodeStatus.COMPLETED
         self.node_outputs[node_id] = output
-        self.completions.append(CompletionRecord(node_id=node_id, output=output))
+        if self._judgable(node_id):
+            self.completions.append(CompletionRecord(node_id=node_id, output=output))
 
     def record_failure(self, node_id: str, error: str) -> None:
         self.node_status[node_id] = NodeStatus.FAILED
-        self.completions.append(CompletionRecord(node_id=node_id, error=error))
+        if self._judgable(node_id):
+            self.completions.append(CompletionRecord(node_id=node_id, error=error))
 
     def pop_completion(self) -> CompletionRecord | None:
-        return self.completions.popleft() if self.completions else None
+        """弹出下一个可判定的边界事件（丢弃已被移出计划的过期记录）。"""
+        while self.completions:
+            rec = self.completions.popleft()
+            if self._judgable(rec.node_id):
+                return rec
+        return None
 
     def failed_completion(self) -> CompletionRecord | None:
-        return next((rec for rec in self.completions if not rec.ok), None)
+        return next(
+            (rec for rec in self.completions if not rec.ok and self._judgable(rec.node_id)),
+            None,
+        )
 
     # ---- assist 生命周期（规则接线，Helper 调用） ----
+
+    def has_assist_for(self, parent_id: str, agent_name: str) -> bool:
+        """同一 source + agent 的 assist 是否已存在（去重，防重复扩计划）。"""
+        return any(
+            node.assist_for == parent_id and node.agent_name == agent_name
+            for node in self.plan.nodes
+        )
+
+    def can_add_assists(self, parent_id: str, count: int) -> bool:
+        """容量检查：assist 深度 ≤ MAX_ASSIST_DEPTH 且总数 ≤ MAX_PLAN_NODES。"""
+        depth = self._assist_depth.get(parent_id, 0) + 1
+        return depth <= MAX_ASSIST_DEPTH and len(self.plan.nodes) + count <= MAX_PLAN_NODES
 
     def add_assist(self, parent_id: str, agent_name: str, instruction: str) -> str:
         """@mention 命中：加 assist 节点并接线「结果交还给父节点」（需求 6 / 行 94）。
 
         - assist 节点 deps=[]（立即可派发），instruction 附父节点 output 引用；
-        - 父节点 deps += assist、instruction 附 ``{{output:assist}}`` 引用、
+        - 父节点 deps += assist、instruction 附 ``{{output:assist}}`` 引用，
           标 WAITING_ASSIST（不标记完成，等待续轮）。
         """
         self._assist_seq += 1
@@ -167,6 +209,7 @@ class DagRuntime:
         )
         self.plan.nodes.append(assist)
         self.node_status[assist_id] = NodeStatus.PENDING
+        self._assist_depth[assist_id] = self._assist_depth.get(parent_id, 0) + 1
 
         if assist_id not in parent.deps:
             parent.deps.append(assist_id)
@@ -174,10 +217,10 @@ class DagRuntime:
         self.node_status[parent_id] = NodeStatus.WAITING_ASSIST
         return assist_id
 
-    # ---- 整体失败 ----
+    # ---- 生命周期 ----
 
-    async def abort(self, cause: str) -> None:
-        """FAILED → 整体失败：取消本地在途任务后抛 WorkflowError。
+    async def shutdown(self) -> None:
+        """取消并收拢全部本地在途任务（幂等；整体失败/异常/取消统一走这里）。
 
         TODO(cancel): 应向在途远端任务发 CancelTask（a2a Client.cancel_task）并停
         本地流消费，待 RemoteA2aAgent 支持 cancel 后接入；当前仅取消本地 asyncio 任务。
@@ -189,4 +232,8 @@ class DagRuntime:
                 _ = task.cancel()
         if tasks:
             _ = await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def abort(self, cause: str) -> None:
+        """FAILED → 整体失败：清理后抛 WorkflowError。"""
+        await self.shutdown()
         raise WorkflowError(cause)

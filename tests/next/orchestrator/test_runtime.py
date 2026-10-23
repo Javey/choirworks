@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+
 from new_choirworks.orchestrator.catalog import AgentInfo
 from new_choirworks.orchestrator.plan import DagPlan, PlanNode
-from new_choirworks.orchestrator.runtime import DagRuntime, NodeStatus
+from new_choirworks.orchestrator.runtime import (
+    MAX_PLAN_NODES,
+    DagRuntime,
+    NodeStatus,
+)
 
 AGENTS = {"writer": AgentInfo(name="writer", url="http://writer")}
 
@@ -69,7 +75,9 @@ def test_apply_plan_keeps_completed_and_outputs():
     assert rt.node_status["a"] == NodeStatus.COMPLETED
     assert rt.node_outputs["a"] == "out_a"
     assert rt.node_status["c"] == NodeStatus.PENDING
-    assert "b" not in rt.node_status
+    # 移出计划不删状态历史（P1-1），但不可再派发
+    assert "b" in rt.node_status
+    assert rt.in_plan("b") is False
 
 
 def test_apply_plan_running_not_cancelled():
@@ -142,3 +150,117 @@ def test_completion_records():
 
     rt.record_failure("a", "boom")
     assert rt.failed_completion() is not None
+
+
+# --- 评审回归：状态历史 / ignored 完成 / 空计划 / assist 限流 ---
+
+
+def test_apply_plan_keeps_status_history():
+    """P1-1：移出计划不删状态历史，重新加入不重跑。"""
+    rt = _runtime(_node("a"))
+    rt.record_completion("a", "out_a")
+
+    rt.apply_plan(_plan(_node("b")))
+    assert rt.node_status["a"] == NodeStatus.COMPLETED
+    assert rt.in_plan("a") is False
+
+    rt.apply_plan(_plan(_node("a")))
+    assert rt.node_status["a"] == NodeStatus.COMPLETED
+    assert rt.dispatchable() == []
+
+
+def test_removed_running_completion_not_judged():
+    """P0-2：被移出计划的 running 节点完成后只留存结果，不触发判定。"""
+    rt = _runtime(_node("a"))
+    rt.node_status["a"] = NodeStatus.RUNNING
+    rt.apply_plan(_plan(_node("b")))
+
+    rt.record_completion("a", "@writer help")
+
+    assert rt.node_outputs["a"] == "@writer help"
+    assert rt.pop_completion() is None
+
+
+def test_removed_failure_not_judged():
+    """P1-2：被移出计划的节点失败只记录，不 abort 整体。"""
+    rt = _runtime(_node("a"))
+    rt.node_status["a"] = NodeStatus.RUNNING
+    rt.apply_plan(_plan(_node("b")))
+
+    rt.record_failure("a", "boom")
+
+    assert rt.node_status["a"] == NodeStatus.FAILED
+    assert rt.failed_completion() is None
+    assert rt.pop_completion() is None
+
+
+def test_empty_plan_stops_judgment():
+    """P0-3：空计划 = 完成，之后的完成不再判定。"""
+    rt = _runtime(_node("a"), _node("b"))
+    rt.record_completion("a", "out_a")
+    assert rt.pop_completion() is not None
+
+    rt.record_completion("b", "out_b")
+    rt.apply_plan(_plan())
+
+    assert rt.done_requested is True
+    assert rt.pop_completion() is None  # 队列被清空
+    rt.record_completion("a", "again")
+    assert rt.pop_completion() is None
+
+
+def test_has_assist_for_dedupes():
+    rt = _runtime(_node("a"))
+    rt.record_completion("a", "help?")
+    _ = rt.add_assist("a", "writer", "help a")
+    assert rt.has_assist_for("a", "writer") is True
+    assert rt.has_assist_for("a", "reviewer") is False
+
+
+def test_assist_depth_limit():
+    rt = _runtime(_node("a"))
+    rt.record_completion("a", "help?")
+    assert rt.can_add_assists("a", 1) is True
+    aid1 = rt.add_assist("a", "writer", "help")
+    assert rt.can_add_assists(aid1, 1) is True
+    aid2 = rt.add_assist(aid1, "reviewer", "help")
+    assert rt.can_add_assists(aid2, 1) is True
+    aid3 = rt.add_assist(aid2, "writer", "help")
+    # 深度 4 超过 MAX_ASSIST_DEPTH=3
+    assert rt.can_add_assists(aid3, 1) is False
+
+
+def test_assist_total_limit():
+    rt = _runtime(_node("a"))
+    rt.record_completion("a", "help?")
+    for i in range(MAX_PLAN_NODES - 2):
+        rt.plan.nodes.append(
+            PlanNode(id=f"x{i}", name=f"x{i}", agent_name="writer", instruction="x")
+        )
+    assert rt.can_add_assists("a", 1) is True
+    _ = rt.add_assist("a", "writer", "help")
+    assert rt.can_add_assists("a", 1) is False
+
+
+async def test_shutdown_cancels_running_tasks():
+    rt = _runtime(_node("a"))
+    started = asyncio.Event()
+    cancelled: list[str] = []
+
+    async def _slow() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.append("a")
+            raise
+        return "never"
+
+    rt.node_status["a"] = NodeStatus.RUNNING
+    rt.running_tasks["a"] = asyncio.create_task(_slow())
+    _ = await started.wait()
+
+    await rt.shutdown()
+
+    assert cancelled == ["a"]
+    assert rt.running_tasks == {}
