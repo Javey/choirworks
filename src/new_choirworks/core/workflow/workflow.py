@@ -34,6 +34,7 @@ class _LoopState:
     pending_tasks: PendingNodes = field(default_factory=dict)
     nodes: dict[str, NodeState] = field(default_factory=dict)
     node_outputs: dict[str, object] = field(default_factory=dict)
+    run_counters: dict[str, int] = field(default_factory=dict)
 
 
 class Workflow(BaseNode):
@@ -145,9 +146,12 @@ class Workflow(BaseNode):
         trigger: Trigger,
     ) -> None:
         """Prepare NodeState for starting a node."""
+        run_id = str(loop_state.run_counters.get(node_name, 0) + 1)
+        loop_state.run_counters[node_name] = int(run_id)
         loop_state.nodes[node_name] = NodeState(
             status=NodeStatus.RUNNING,
             input=trigger.input,
+            run_id=run_id,
         )
 
     def _start_node_task(
@@ -156,10 +160,15 @@ class Workflow(BaseNode):
         assert self.graph is not None
 
         node = self._get_static_node_by_name(node_name)
-        _is_ternimal = node_name in self.graph.terminal_node_names
+        node_state = loop_state.nodes[node_name]
 
         loop_state.pending_tasks[node_name] = asyncio.create_task(
-            NodeRunner(node=node, parent_ctx=ctx).run(trigger.input)
+            NodeRunner(
+                node=node,
+                parent_ctx=ctx,
+                run_id=node_state.run_id or "1",
+                parent_path=ctx.node_path,
+            ).run(trigger.input)
         )
         return True
 

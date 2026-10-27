@@ -29,3 +29,7 @@ class Context:
     output: object | None = None
     route: RouteValue | None = None
     error: Exception | None = None
+    node_path: str = ""
+    run_id: str | None = None
+    branch: str | None = None
+    isolation_scope: str | None = None

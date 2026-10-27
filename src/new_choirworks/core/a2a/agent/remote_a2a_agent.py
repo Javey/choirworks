@@ -152,6 +152,7 @@ class RemoteA2aAgent(BaseAgent):
         if not text:
             return False
         ctx.output = text
+        meta(event).output = text
         return True
 
     async def _ensure_resolved(self, ctx: InvocationContext | None) -> A2AClient:

@@ -19,6 +19,7 @@ from new_choirworks.core.events.event import (
     has_function_calls,
     is_final_artifact,
     is_partial_event,
+    meta,
 )
 from new_choirworks.core.utils.schema_utils import validate_schema
 from new_choirworks.core.workflow.context import Context
@@ -80,3 +81,5 @@ def process_llm_agent_output(agent: LLMAgent, ctx: Context, event: A2AEvent) -> 
         ctx.output = validate_schema(agent.output_schema, text) if text.strip() else None
     else:
         ctx.output = text
+    if text:
+        meta(event).output = text

@@ -11,3 +11,5 @@ class NodeState:
 
     status: NodeStatus = NodeStatus.INACTIVE
     input: object | None = None
+    attempt_count: int = 1
+    run_id: str | None = None

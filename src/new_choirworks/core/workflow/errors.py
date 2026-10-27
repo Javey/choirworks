@@ -6,6 +6,10 @@ class WorkflowError(RuntimeError):
     """Raised when a workflow execution fails."""
 
 
+class WorkflowInvariantError(RuntimeError):
+    """A workflow replay/sequence invariant was violated."""
+
+
 class NodeTimeoutError(Exception):
     """Raised when a node exceeds its configured timeout."""
 

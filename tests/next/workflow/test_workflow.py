@@ -61,3 +61,15 @@ async def test_cleanup_all_tasks_marks_cancelled():
 
     assert loop_state.nodes["a"].status == NodeStatus.CANCELLED
     assert loop_state.pending_tasks["a"].cancelled()
+
+
+def test_prepare_node_state_assigns_incrementing_run_ids() -> None:
+    workflow = Workflow(name="wf", edges=[Edge(START, _node("a"))])
+    loop_state = _loop_state()
+    trigger = Trigger(input=None)
+
+    workflow._prepare_node_state_for_starting(loop_state, "a", trigger)
+    assert loop_state.nodes["a"].run_id == "1"
+
+    workflow._prepare_node_state_for_starting(loop_state, "a", trigger)
+    assert loop_state.nodes["a"].run_id == "2"

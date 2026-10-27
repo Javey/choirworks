@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, TypeGuard, cast
 
 from a2a.types.a2a_pb2 import (
@@ -13,7 +13,7 @@ from a2a.types.a2a_pb2 import (
     TaskState,
     TaskStatusUpdateEvent,
 )
-from google.protobuf import json_format
+from google.protobuf import json_format, struct_pb2
 from litellm.types.llms.openai import (
     ChatCompletionAssistantToolCall,
     ChatCompletionToolCallFunctionChunk,
@@ -21,16 +21,17 @@ from litellm.types.llms.openai import (
     OpenAIChatCompletionAssistantMessage,
 )
 
+from new_choirworks.core.events.node_path_builder import NodePathBuilder
 from new_choirworks.core.models.llm_request import ChatMessage
 from new_choirworks.core.models.llm_response import LLMResponse
+
+from .event_actions import EventActions
 
 if TYPE_CHECKING:
     from new_choirworks.core.agents.invocation_context import InvocationContext
 
 A2AEvent = TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Message
 
-# Must come after A2AEvent is defined to break the event_actions → base_node → event cycle.
-from .event_actions import EventActions  # noqa: E402
 
 PART_TYPE_FUNCTION_CALL = "function_call"
 PART_TYPE_FUNCTION_RESPONSE = "function_response"
@@ -41,7 +42,9 @@ ARTIFACT_METADATA_STRUCTURED_OUTPUT = "structured_output"
 # metadata
 EVENT_META_AUTHOR = "author"
 EVENT_META_OUTPUT = "output"
-EVENT_META_NODE_PATH = "node_path"
+EVENT_META_NODE_INFO = "node_info"
+EVENT_META_BRANCH = "branch"
+EVENT_META_ISOLATION_SCOPE = "isolation_scope"
 
 # Task states that finish the current interaction, including deliberate pauses.
 TASK_RESPONSE_BOUNDARY_STATES = frozenset(
@@ -67,47 +70,142 @@ NON_FINAL_TASK_STATES = frozenset(
 )
 
 
+@dataclass
+class NodeInfo:
+    """Workflow node metadata attached to an event（ADK 同构，扁平存储）。
+
+    ``path`` 形如 ``wf@1/node_a@2``；``output_for`` 表示这条 output 事件
+    同时属于哪些节点路径（嵌套 workflow / use_as_output 场景）；
+    ``message_as_output`` 表示事件内容本身就是节点 output。
+    """
+
+    path: str = ""
+    output_for: list[str] | None = None
+    message_as_output: bool | None = None
+
+    @property
+    def run_id(self) -> str:
+        return NodePathBuilder.from_string(self.path).run_id or ""
+
+    @property
+    def parent_run_id(self) -> str | None:
+        parent = NodePathBuilder.from_string(self.path).parent
+        return parent.run_id if parent else None
+
+
 class EventMeta:
     _event: A2AEvent
-    _actions: EventActions
 
     def __init__(self, event: A2AEvent):
         self._event = event
-        self._actions = EventActions(event)
+
+    @property
+    def _metadata(self) -> struct_pb2.Struct:
+        """Returns the persistence-safe metadata carrier for an A2A event.
+
+        ``TaskArtifactUpdateEvent`` is persisted by the A2A SDK from
+        ``event.artifact`` only, so its event-level metadata is dropped. Keep the
+        metadata on ``artifact.metadata`` so author/node_info/actions/output and
+        A2A ids survive persistence.
+        """
+        event = self._event
+        if isinstance(event, TaskArtifactUpdateEvent):
+            return event.artifact.metadata
+        return event.metadata
 
     @property
     def author(self) -> str:
-        if EVENT_META_AUTHOR not in self._event.metadata:
+        if EVENT_META_AUTHOR not in self._metadata:
             return ""
-        return cast(str, self._event.metadata[EVENT_META_AUTHOR])
+        return cast(str, self._metadata[EVENT_META_AUTHOR])
 
     @author.setter
     def author(self, value: str) -> None:
-        self._event.metadata[EVENT_META_AUTHOR] = value
+        self._metadata[EVENT_META_AUTHOR] = value
 
     @property
     def output(self) -> object | None:
-        if EVENT_META_OUTPUT not in self._event.metadata:
+        if EVENT_META_OUTPUT not in self._metadata:
             return None
-        return cast(object, json.loads(cast(str, self._event.metadata[EVENT_META_OUTPUT])))
+        return cast(object, json.loads(cast(str, self._metadata[EVENT_META_OUTPUT])))
 
     @output.setter
     def output(self, value: object) -> None:
-        self._event.metadata[EVENT_META_OUTPUT] = json.dumps(value, default=str)
+        self._metadata[EVENT_META_OUTPUT] = json.dumps(value, default=str)
 
     @property
-    def node_path(self) -> str:
-        if EVENT_META_NODE_PATH not in self._event.metadata:
-            return ""
-        return cast(str, self._event.metadata[EVENT_META_NODE_PATH])
+    def node_info(self) -> NodeInfo:
+        if EVENT_META_NODE_INFO not in self._metadata:
+            return NodeInfo()
+        node = self._metadata[EVENT_META_NODE_INFO]
+        if not isinstance(node, struct_pb2.Struct):
+            return NodeInfo()
+        path = cast(str, node["path"]) if "path" in node else ""
+        output_for: list[str] | None = None
+        if "output_for" in node:
+            output_for = [
+                cast(str, item) for item in cast(struct_pb2.ListValue, node["output_for"])
+            ]
+        message_as_output = (
+            cast(bool, node["message_as_output"]) if "message_as_output" in node else None
+        )
+        return NodeInfo(
+            path=path,
+            output_for=output_for,
+            message_as_output=message_as_output,
+        )
 
-    @node_path.setter
-    def node_path(self, value: str) -> None:
-        self._event.metadata[EVENT_META_NODE_PATH] = value
+    @node_info.setter
+    def node_info(self, value: NodeInfo) -> None:
+        node = struct_pb2.Struct()
+        if value.path:
+            node["path"] = value.path
+        if value.output_for is not None:
+            node["output_for"] = value.output_for
+        if value.message_as_output is not None:
+            node["message_as_output"] = value.message_as_output
+        if not node.fields:
+            if EVENT_META_NODE_INFO in self._metadata:
+                del self._metadata[EVENT_META_NODE_INFO]
+            return
+        self._metadata[EVENT_META_NODE_INFO] = node
+
+    @property
+    def branch(self) -> str | None:
+        if EVENT_META_BRANCH not in self._metadata:
+            return None
+        return cast(str, self._metadata[EVENT_META_BRANCH])
+
+    @branch.setter
+    def branch(self, value: str | None) -> None:
+        if value is None:
+            if EVENT_META_BRANCH in self._metadata:
+                del self._metadata[EVENT_META_BRANCH]
+            return
+        self._metadata[EVENT_META_BRANCH] = value
+
+    @property
+    def isolation_scope(self) -> str | None:
+        if EVENT_META_ISOLATION_SCOPE not in self._metadata:
+            return None
+        return cast(str, self._metadata[EVENT_META_ISOLATION_SCOPE])
+
+    @isolation_scope.setter
+    def isolation_scope(self, value: str | None) -> None:
+        if value is None:
+            if EVENT_META_ISOLATION_SCOPE in self._metadata:
+                del self._metadata[EVENT_META_ISOLATION_SCOPE]
+            return
+        self._metadata[EVENT_META_ISOLATION_SCOPE] = value
+
+    @property
+    def partial(self) -> bool:
+        """派生：A2A 用 artifact 的 append/last_chunk 表达 partial。"""
+        return is_partial_event(self._event)
 
     @property
     def actions(self) -> EventActions:
-        return self._actions
+        return EventActions(self._metadata)
 
 
 def meta(event: A2AEvent) -> EventMeta:
